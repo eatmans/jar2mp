@@ -1,19 +1,32 @@
 package com.z0fsec.jar2mp.ui;
 
-import com.z0fsec.jar2mp.core.*;
+import com.formdev.flatlaf.util.SystemFileChooser;
+import com.z0fsec.jar2mp.core.JarAnalyzer;
+import com.z0fsec.jar2mp.core.PomGenerator;
+import com.z0fsec.jar2mp.core.ProjectBuilder;
 import com.z0fsec.jar2mp.db.PackagePrefixDatabase;
-import com.z0fsec.jar2mp.model.*;
+import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.ProjectConfig;
 import com.z0fsec.jar2mp.util.IoUtils;
 
 import javax.swing.*;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.Transferable;
+import java.awt.dnd.DnDConstants;
+import java.awt.dnd.DropTarget;
+import java.awt.dnd.DropTargetAdapter;
+import java.awt.dnd.DropTargetDropEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.InputStream;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 public class MainPanel extends BasePanel {
@@ -87,12 +100,24 @@ public class MainPanel extends BasePanel {
         c.fill = GridBagConstraints.HORIZONTAL;
 
         // Row 0: 文件列表 + 右侧控件
-        c.gridx = 0; c.gridy = 0; c.weightx = 0;
+        c.gridx = 0;
+        c.gridy = 0;
+        c.weightx = 0;
         panel.add(new JLabel("JAR/WAR 文件:"), c);
 
-        c.gridx = 1; c.weightx = 1; c.gridheight = 3; c.fill = GridBagConstraints.BOTH;
+        c.gridx = 1;
+        c.weightx = 1;
+        c.gridheight = 3;
+        c.fill = GridBagConstraints.BOTH;
         fileListModel = new DefaultListModel<>();
         fileJList = new JList<>(fileListModel);
+
+        // 启用拖拽支持
+        enableDragAndDrop();
+
+        // 启用右键菜单
+        enableContextMenu();
+
         fileJList.setCellRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value, int index,
@@ -122,7 +147,10 @@ public class MainPanel extends BasePanel {
         panel.add(listScroll, c);
 
         // 右侧: 按钮和输出目录
-        c.gridx = 2; c.weightx = 0; c.gridheight = 1; c.fill = GridBagConstraints.HORIZONTAL;
+        c.gridx = 2;
+        c.weightx = 0;
+        c.gridheight = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
 
         JButton addBtn = new JButton("添加文件...");
         addBtn.addActionListener(e -> browseAndAddFiles());
@@ -140,31 +168,41 @@ public class MainPanel extends BasePanel {
         panel.add(removeBtn, c);
 
         // Row 3: 输出目录
-        c.gridx = 0; c.gridy = 3; c.weightx = 0; c.gridheight = 1; c.fill = GridBagConstraints.HORIZONTAL;
+        c.gridx = 0;
+        c.gridy = 3;
+        c.weightx = 0;
+        c.gridheight = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
         panel.add(new JLabel("输出目录:"), c);
 
-        c.gridx = 1; c.weightx = 1;
+        c.gridx = 1;
+        c.weightx = 1;
         outputDirField = new JTextField();
         outputDirField.setText(new File(".").getAbsolutePath());
         panel.add(outputDirField, c);
 
-        c.gridx = 2; c.weightx = 0;
+        c.gridx = 2;
+        c.weightx = 0;
         JButton outputBrowseBtn = new JButton("选择...");
         outputBrowseBtn.addActionListener(e -> browseOutputDir());
         panel.add(outputBrowseBtn, c);
 
         // Row 4: 操作按钮
-        c.gridx = 0; c.gridy = 4; c.weightx = 0;
+        c.gridx = 0;
+        c.gridy = 4;
+        c.weightx = 0;
         JButton analyzeBtn = new JButton("分析全部");
         analyzeBtn.addActionListener(e -> doAnalyzeAll());
         panel.add(analyzeBtn, c);
 
-        c.gridx = 1; c.weightx = 0;
+        c.gridx = 1;
+        c.weightx = 0;
         JButton genPomBtn = new JButton("生成 pom.xml");
         genPomBtn.addActionListener(e -> doGeneratePom());
         panel.add(genPomBtn, c);
 
-        c.gridx = 2; c.weightx = 0;
+        c.gridx = 2;
+        c.weightx = 0;
         JButton buildBtn = new JButton("构建全部");
         buildBtn.addActionListener(e -> doBuildAll());
         panel.add(buildBtn, c);
@@ -177,13 +215,14 @@ public class MainPanel extends BasePanel {
     // ========== 文件列表操作 ==========
 
     private void browseAndAddFiles() {
-        JFileChooser chooser = new JFileChooser();
+        SystemFileChooser chooser = new SystemFileChooser();
         chooser.setMultiSelectionEnabled(true);
-        chooser.setFileFilter(new FileNameExtensionFilter("JAR/WAR 文件", "jar", "war"));
-        if (fileListModel.size() > 0) {
+        SystemFileChooser.FileNameExtensionFilter filter = new SystemFileChooser.FileNameExtensionFilter("JAR/WAR 文件 (*.jar, *.war)", "jar", "war");
+        chooser.setFileFilter(filter);
+        if (!fileListModel.isEmpty()) {
             chooser.setCurrentDirectory(fileListModel.get(0).getParentFile());
         }
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+        if (chooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
             for (File f : chooser.getSelectedFiles()) {
                 if (!containsFile(f)) {
                     fileListModel.addElement(f);
@@ -194,9 +233,9 @@ public class MainPanel extends BasePanel {
     }
 
     private void browseAndAddDirectory() {
-        JFileChooser chooser = new JFileChooser();
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+        SystemFileChooser chooser = new SystemFileChooser();
+        chooser.setFileSelectionMode(SystemFileChooser.DIRECTORIES_ONLY);
+        if (chooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
             File dir = chooser.getSelectedFile();
             File[] jars = dir.listFiles((d, name) ->
                     name.toLowerCase().endsWith(".jar") || name.toLowerCase().endsWith(".war"));
@@ -217,20 +256,27 @@ public class MainPanel extends BasePanel {
 
     private void removeSelectedFiles() {
         int[] indices = fileJList.getSelectedIndices();
+        if (indices.length == 0) {
+            appendWarning("请选择要移除的文件");
+            return;
+        }
+
         for (int i = indices.length - 1; i >= 0; i--) {
             File f = fileListModel.get(indices[i]);
             resultMap.remove(f);
             pomPreviewPanel.clearCache(f.getName());
             fileListModel.remove(indices[i]);
         }
+
         currentResult = null;
-        if (fileListModel.size() > 0) {
-            fileJList.setSelectedIndex(0);
-        } else {
+        if (fileListModel.isEmpty()) {
             analysisPanel.clearData();
             dependencyPanel.clearData();
             pomPreviewPanel.clearAllCache();
+            return;
         }
+
+        fileJList.setSelectedIndex(0);
     }
 
     private boolean containsFile(File f) {
@@ -243,10 +289,138 @@ public class MainPanel extends BasePanel {
     }
 
     private void browseOutputDir() {
-        JFileChooser chooser = new JFileChooser();
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+        SystemFileChooser chooser = new SystemFileChooser();
+        chooser.setFileSelectionMode(SystemFileChooser.DIRECTORIES_ONLY);
+        if (chooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
             outputDirField.setText(chooser.getSelectedFile().getAbsolutePath());
+        }
+    }
+
+    // ========== 拖拽支持 ==========
+    private void enableDragAndDrop() {
+        new DropTarget(fileJList, DnDConstants.ACTION_COPY_OR_MOVE, new DropTargetAdapter() {
+            @Override
+            public void drop(DropTargetDropEvent dtde) {
+                try {
+                    dtde.acceptDrop(DnDConstants.ACTION_COPY_OR_MOVE);
+                    Transferable transferable = dtde.getTransferable();
+
+                    // 处理文件拖拽
+                    if (transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                        @SuppressWarnings("unchecked")
+                        List<File> files = (List<File>) transferable.getTransferData(DataFlavor.javaFileListFlavor);
+
+                        int addedCount = 0;
+                        for (File file : files) {
+                            if (file.isDirectory()) {
+                                // 如果是目录，扫描其中的 JAR/WAR 文件
+                                File[] jars = file.listFiles((d, name) ->
+                                        name.toLowerCase().endsWith(".jar") || name.toLowerCase().endsWith(".war"));
+                                if (jars != null) {
+                                    for (File jar : jars) {
+                                        if (!containsFile(jar)) {
+                                            fileListModel.addElement(jar);
+                                            addedCount++;
+                                        }
+                                    }
+                                }
+                            } else if (file.getName().toLowerCase().endsWith(".jar")
+                                    || file.getName().toLowerCase().endsWith(".war")) {
+                                // 如果是 JAR/WAR 文件，直接添加
+                                if (!containsFile(file)) {
+                                    fileListModel.addElement(file);
+                                    addedCount++;
+                                }
+                            }
+                        }
+
+                        if (addedCount > 0) {
+                            appendInfo("已添加 " + addedCount + " 个文件");
+                        } else {
+                            appendWarning("文件已存在或不是有效的 JAR/WAR 文件");
+                        }
+                    }
+
+                    dtde.dropComplete(true);
+                } catch (Exception e) {
+                    appendError("拖拽失败: " + e.getMessage());
+                    dtde.dropComplete(false);
+                }
+            }
+        }, true);
+
+        // 添加视觉提示
+        fileJList.setToolTipText("拖拽 JAR/WAR 文件或目录到此处");
+    }
+
+    // ========== 右键菜单 ==========
+
+    private void enableContextMenu() {
+        JPopupMenu popupMenu = new JPopupMenu();
+
+        // 如果有选中项，添加移除选项
+        JMenuItem removeMenuItem = new JMenuItem("移除选中");
+        removeMenuItem.addActionListener(e -> removeSelectedFiles());
+        popupMenu.add(removeMenuItem);
+
+        JMenuItem clearMenuItem = new JMenuItem("清空列表");
+        clearMenuItem.addActionListener(e -> clearFileList());
+        popupMenu.add(clearMenuItem);
+
+        // 监听鼠标事件显示菜单
+        fileJList.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                showPopupIfTrigger(e, popupMenu);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                showPopupIfTrigger(e, popupMenu);
+            }
+
+            private void showPopupIfTrigger(MouseEvent e, JPopupMenu menu) {
+                if (e.isPopupTrigger()) {
+                    // 如果点击位置没有选中项，先取消选择
+                    int index = fileJList.locationToIndex(e.getPoint());
+                    if (index < 0 || !fileJList.isSelectedIndex(index)) {
+                        fileJList.clearSelection();
+                    }
+                    menu.show(fileJList, e.getX(), e.getY());
+                }
+            }
+        });
+    }
+
+    private void clearFileList() {
+        if (fileListModel.isEmpty()) {
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "确定要清空所有文件吗？",
+                "确认清空",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            // 保存当前编辑
+            if (currentResult != null) {
+                dependencyPanel.syncToResult();
+                pomPreviewPanel.saveCurrentCache();
+            }
+
+            // 清空所有数据
+            resultMap.clear();
+            pomPreviewPanel.clearAllCache();
+            fileListModel.clear();
+            currentResult = null;
+
+            // 清空面板显示
+            analysisPanel.clearData();
+            dependencyPanel.clearData();
+
+            appendInfo("已清空文件列表");
         }
     }
 

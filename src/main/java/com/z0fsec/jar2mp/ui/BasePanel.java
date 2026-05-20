@@ -3,9 +3,15 @@ package com.z0fsec.jar2mp.ui;
 import com.z0fsec.jar2mp.util.TimeUtils;
 
 import javax.swing.*;
-import javax.swing.text.*;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.Element;
+import javax.swing.text.Style;
+import javax.swing.text.StyleConstants;
+import javax.swing.text.StyleContext;
+import javax.swing.text.StyledDocument;
 import java.awt.*;
-import java.util.Date;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -69,6 +75,10 @@ public abstract class BasePanel extends JPanel {
         logDocument = logArea.getStyledDocument();
         logArea.setEditable(false);
         setOptimalFont(logArea);
+
+        // 启用右键菜单
+        enableLogContextMenu();
+
         JScrollPane scrollPane = new JScrollPane(logArea);
         scrollPane.setPreferredSize(new Dimension(600, 150));
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
@@ -76,6 +86,39 @@ public abstract class BasePanel extends JPanel {
         panel.setBorder(BorderFactory.createTitledBorder("操作日志"));
         panel.add(scrollPane, BorderLayout.CENTER);
         return panel;
+    }
+
+    private void enableLogContextMenu() {
+        JPopupMenu popupMenu = new JPopupMenu();
+
+        JMenuItem clearMenuItem = new JMenuItem("清空日志");
+        clearMenuItem.addActionListener(e -> {
+            if (externalLogWriter != null) {
+                externalLogWriter.clearLog();
+            } else {
+                clearLog();
+            }
+        });
+        popupMenu.add(clearMenuItem);
+
+        // 监听鼠标事件显示菜单
+        logArea.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                showPopupIfTrigger(e);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                showPopupIfTrigger(e);
+            }
+
+            private void showPopupIfTrigger(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    popupMenu.show(logArea, e.getX(), e.getY());
+                }
+            }
+        });
     }
 
     private void setOptimalFont(JTextPane textPane) {

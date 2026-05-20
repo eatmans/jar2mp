@@ -12,7 +12,7 @@
         <maven.compiler.source>8</maven.compiler.source>
         <maven.compiler.target>8</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <flatlaf.version>3.5.1</flatlaf.version>
+        <flatlaf.version>3.7.1</flatlaf.version>
         <cfr.version>0.152</cfr.version>
         <gson.version>2.13.2</gson.version>
         <mainClass>com.z0fsec.jar2mp.Jar2MpApp</mainClass>

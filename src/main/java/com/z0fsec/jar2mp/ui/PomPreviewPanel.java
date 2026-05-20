@@ -2,6 +2,8 @@ package com.z0fsec.jar2mp.ui;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -38,6 +40,10 @@ public class PomPreviewPanel extends BasePanel {
         pomArea.setEditable(true);
         pomArea.setFont(new Font("Monospaced", Font.PLAIN, 13));
         pomArea.setTabSize(4);
+
+        // 启用右键菜单
+        enablePomContextMenu();
+
         contentPanel.add(new JScrollPane(pomArea), BorderLayout.CENTER);
 
         add(contentPanel, BorderLayout.CENTER);
@@ -132,6 +138,46 @@ public class PomPreviewPanel extends BasePanel {
                 appendError("保存失败: " + e.getMessage());
             }
         }
+    }
+
+    // ========== 右键菜单 ==========
+
+    private void enablePomContextMenu() {
+        JPopupMenu popupMenu = new JPopupMenu();
+
+        JMenuItem copyMenuItem = new JMenuItem("复制");
+        copyMenuItem.addActionListener(e -> copySelectedText());
+        popupMenu.add(copyMenuItem);
+
+        // 监听鼠标事件显示菜单
+        pomArea.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                showPopupIfTrigger(e);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                showPopupIfTrigger(e);
+            }
+
+            private void showPopupIfTrigger(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    popupMenu.show(pomArea, e.getX(), e.getY());
+                }
+            }
+        });
+    }
+
+    private void copySelectedText() {
+        String selectedText = pomArea.getSelectedText();
+        if (selectedText == null || selectedText.isEmpty()) {
+            appendWarning("请先选择要复制的内容");
+            return;
+        }
+        java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(
+                new java.awt.datatransfer.StringSelection(selectedText), null);
+        appendSuccess("已复制选中内容到剪贴板（" + selectedText.length() + " 个字符）");
     }
 
     public void clearData() {

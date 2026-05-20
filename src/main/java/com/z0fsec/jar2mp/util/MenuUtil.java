@@ -1,10 +1,8 @@
 package com.z0fsec.jar2mp.util;
 
-import com.formdev.flatlaf.*;
-import com.formdev.flatlaf.themes.*;
+import com.formdev.flatlaf.FlatLaf;
 
 import javax.swing.*;
-import java.awt.*;
 
 public class MenuUtil {
 
@@ -29,6 +27,8 @@ public class MenuUtil {
 
         // 主题子菜单
         JMenu themeMenu = new JMenu("主题");
+        ButtonGroup themeGroup = new ButtonGroup();
+
         String[][] themes = {
                 {"Flat Light", "com.formdev.flatlaf.FlatLightLaf"},
                 {"Flat Dark", "com.formdev.flatlaf.FlatDarkLaf"},
@@ -37,11 +37,20 @@ public class MenuUtil {
                 {"Flat Mac Dark", "com.formdev.flatlaf.themes.FlatMacDarkLaf"},
                 {"Flat Mac Light", "com.formdev.flatlaf.themes.FlatMacLightLaf"},
         };
-        for (String[] theme : themes) {
-            JMenuItem item = new JMenuItem(theme[0]);
+
+        JRadioButtonMenuItem[] themeItems = new JRadioButtonMenuItem[themes.length];
+        for (int i = 0; i < themes.length; i++) {
+            String[] theme = themes[i];
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(theme[0]);
             item.addActionListener(ev -> switchTheme(theme[1], frame));
+            themeGroup.add(item);
             themeMenu.add(item);
+            themeItems[i] = item;
         }
+
+        // 设置当前选中的主题
+        setSelectedTheme(themeItems, themes);
+
         settingsMenu.add(themeMenu);
         menuBar.add(settingsMenu);
 
@@ -60,10 +69,25 @@ public class MenuUtil {
         return menuBar;
     }
 
+    private static void setSelectedTheme(JRadioButtonMenuItem[] themeItems, String[][] themes) {
+        String currentTheme = ConfigUtil.get(ConfigUtil.THEME_KEY, ConfigUtil.DEFAULT_THEME);
+
+        for (int i = 0; i < themes.length; i++) {
+            if (themes[i][1].equals(currentTheme)) {
+                themeItems[i].setSelected(true);
+                break;
+            }
+        }
+    }
+
     private static void switchTheme(String className, JFrame frame) {
         try {
             FlatLaf laf = (FlatLaf) Class.forName(className).getDeclaredConstructor().newInstance();
             UIManager.setLookAndFeel(laf);
+
+            // 保存主题偏好设置到配置文件
+            ConfigUtil.set(ConfigUtil.THEME_KEY, className);
+
             SwingUtilities.updateComponentTreeUI(frame);
         } catch (Exception e) {
             JOptionPane.showMessageDialog(frame, "切换主题失败: " + e.getMessage(),

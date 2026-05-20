@@ -1,8 +1,9 @@
 package com.z0fsec.jar2mp;
 
-import com.formdev.flatlaf.themes.FlatMacLightLaf;
+import com.formdev.flatlaf.FlatLaf;
 import com.z0fsec.jar2mp.cli.CliRunner;
 import com.z0fsec.jar2mp.ui.MainPanel;
+import com.z0fsec.jar2mp.util.ConfigUtil;
 import com.z0fsec.jar2mp.util.Jar2MpConstants;
 import com.z0fsec.jar2mp.util.MenuUtil;
 
@@ -45,7 +46,10 @@ public class Jar2MpApp {
 
     private void initializeLookAndFeel() {
         try {
-            UIManager.setLookAndFeel(new FlatMacLightLaf());
+            // 从配置文件中读取保存的主题，如果没有则使用默认主题
+            String savedTheme = ConfigUtil.get("theme", ConfigUtil.DEFAULT_THEME);
+            FlatLaf laf = (FlatLaf) Class.forName(savedTheme).getDeclaredConstructor().newInstance();
+            UIManager.setLookAndFeel(laf);
 
             Font font = new Font("Microsoft YaHei UI", Font.PLAIN, 13);
             UIManager.put("Label.font", font);
