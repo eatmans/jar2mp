@@ -14,6 +14,7 @@ public class CliOptions {
     private boolean showVersion = false;
     private String exportDepsFile;
     private String importDepsFile;
+    private String traceFile;
 
     public List<String> getInputFiles() { return inputFiles; }
     public void addInputFile(String file) { this.inputFiles.add(file); }
@@ -31,6 +32,8 @@ public class CliOptions {
     public void setExportDepsFile(String exportDepsFile) { this.exportDepsFile = exportDepsFile; }
     public String getImportDepsFile() { return importDepsFile; }
     public void setImportDepsFile(String importDepsFile) { this.importDepsFile = importDepsFile; }
+    public String getTraceFile() { return traceFile; }
+    public void setTraceFile(String traceFile) { this.traceFile = traceFile; }
 
     public static void printHelp() {
         System.out.println("Usage: java -jar jar2mp.jar [options] <jar-or-war-files...>");

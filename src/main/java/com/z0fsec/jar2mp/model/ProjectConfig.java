@@ -17,6 +17,7 @@ public class ProjectConfig {
     private String verifyGoal = "compile";
     private String customMappingFile;
     private String packaging;
+    private String traceFile;
 
     public String getOutputDir() { return outputDir; }
     public void setOutputDir(String outputDir) { this.outputDir = outputDir; }
@@ -50,4 +51,6 @@ public class ProjectConfig {
     public void setCustomMappingFile(String customMappingFile) { this.customMappingFile = customMappingFile; }
     public String getPackaging() { return packaging; }
     public void setPackaging(String packaging) { this.packaging = packaging; }
+    public String getTraceFile() { return traceFile; }
+    public void setTraceFile(String traceFile) { this.traceFile = traceFile; }
 }

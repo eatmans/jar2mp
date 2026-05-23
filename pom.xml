@@ -15,6 +15,7 @@
         <flatlaf.version>3.7.1</flatlaf.version>
         <cfr.version>0.152</cfr.version>
         <fernflower.version>2.5.0.Final</fernflower.version>
+        <bytebuddy.version>1.18.8</bytebuddy.version>
         <gson.version>2.13.2</gson.version>
         <junit.version>5.11.4</junit.version>
         <mainClass>com.z0fsec.jar2mp.Jar2MpApp</mainClass>
@@ -37,6 +38,18 @@
             <groupId>org.jboss.windup.decompiler.fernflower</groupId>
             <artifactId>fernflower</artifactId>
             <version>${fernflower.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+            <version>${bytebuddy.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+            <version>${bytebuddy.version}</version>
         </dependency>
 
         <dependency>
@@ -87,6 +100,32 @@
                             </archive>
                         </configuration>
                         <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>trace-agent</id>
+                        <configuration>
+                            <attach>false</attach>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <finalName>${project.artifactId}-${project.version}-trace-agent</finalName>
+                            <descriptorRefs>
+                                <descriptorRef>jar-with-dependencies</descriptorRef>
+                            </descriptorRefs>
+                            <archive>
+                                <manifest>
+                                    <addClasspath>false</addClasspath>
+                                </manifest>
+                                <manifestEntries>
+                                    <Premain-Class>com.z0fsec.jar2mp.traceagent.TraceAgent</Premain-Class>
+                                    <Can-Redefine-Classes>true</Can-Redefine-Classes>
+                                    <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                                    <Multi-Release>true</Multi-Release>
+                                </manifestEntries>
+                            </archive>
+                        </configuration>
+                        <phase>process-classes</phase>
                         <goals>
                             <goal>single</goal>
                         </goals>
