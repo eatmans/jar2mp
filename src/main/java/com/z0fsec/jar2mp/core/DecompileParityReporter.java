@@ -1,6 +1,7 @@
 package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.util.IoUtils;
 
 import java.io.*;
@@ -41,16 +42,22 @@ public class DecompileParityReporter {
 
             File sourceFile = new File(outputDir, "src/main/java/" + classPath.replace(".class", ".java"));
             String source = sourceFile.isFile() ? IoUtils.readFileToString(sourceFile) : "";
+            DecompileFinding finding = findFinding(analysis, classPath);
 
-            appendClassReport(report, fingerprint, source, sourceFile.toPath());
+            appendClassReport(report, fingerprint, source, sourceFile.toPath(), finding);
         }
 
         IoUtils.writeStringToFile(new File(outputDir, "decompile-parity-report.md"), report.toString());
     }
 
     private void appendClassReport(StringBuilder report, BytecodeFingerprint fingerprint,
-                                   String source, Path sourcePath) {
+                                   String source, Path sourcePath, DecompileFinding finding) {
         report.append("## ").append(fingerprint.getClassName()).append("\n\n");
+        report.append("- Selected engine: ").append(selectedEngine(finding)).append("\n");
+        if (finding != null && finding.getFallbackReason() != null && !finding.getFallbackReason().trim().isEmpty()) {
+            report.append("- Fallback reason: ").append(finding.getFallbackReason().trim()).append("\n");
+        }
+        report.append("- Source coverage: ").append(source.isEmpty() ? "missing" : "present").append("\n");
         report.append("- Source: ");
         if (source.isEmpty()) {
             report.append("missing or not generated");
@@ -107,13 +114,19 @@ public class DecompileParityReporter {
     }
 
     private String riskLevel(BytecodeFingerprint.MethodFingerprint method, String source) {
-        if (source.isEmpty() || !method.hasCode() || hasReflection(method)) {
-            return "HIGH";
+        if (source.isEmpty()) {
+            return "HIGH (source missing)";
+        }
+        if (!method.hasCode()) {
+            return "HIGH (no bytecode body)";
+        }
+        if (hasReflection(method)) {
+            return "HIGH (reflection call detected)";
         }
         if (!method.getInvokedynamicCalls().isEmpty() || method.getLocalVariableNames().isEmpty()) {
-            return "MEDIUM";
+            return "MEDIUM (dynamic bytecode or missing debug names)";
         }
-        return "LOW";
+        return "LOW (source and bytecode facts align for basic checks)";
     }
 
     private void appendReflectionFindings(StringBuilder report, BytecodeFingerprint.MethodFingerprint method) {
@@ -186,6 +199,22 @@ public class DecompileParityReporter {
 
     private String classNameFromPath(String classPath) {
         return classPath.replace(".class", "").replace('/', '.');
+    }
+
+    private DecompileFinding findFinding(JarAnalysisResult analysis, String classPath) {
+        for (DecompileFinding finding : analysis.getDecompileFindings()) {
+            if (classPath.equals(finding.getClassPath())) {
+                return finding;
+            }
+        }
+        return null;
+    }
+
+    private String selectedEngine(DecompileFinding finding) {
+        if (finding == null || finding.getSelectedEngine() == null || finding.getSelectedEngine().trim().isEmpty()) {
+            return "unknown";
+        }
+        return finding.getSelectedEngine().trim();
     }
 
     private byte[] readAllBytes(JarFile jarFile, JarEntry entry) throws IOException {

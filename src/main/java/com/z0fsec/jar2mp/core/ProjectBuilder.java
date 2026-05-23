@@ -125,19 +125,24 @@ public class ProjectBuilder {
 
                         DecompilerBridge.DecompileResult decompileResult =
                                 decompiler.decompileDetailed(bytes, className);
+                        DecompileFinding finding = new DecompileFinding(
+                                classPath,
+                                null,
+                                decompileResult.getFailureMessage());
+                        finding.setSelectedEngine(decompileResult.getSelectedEngine());
+                        finding.setFallbackReason(decompileResult.getFallbackReason());
                         if (decompileResult.isSuccess()) {
                             String javaSource = decompileResult.getSource();
                             IoUtils.ensureDirectory(outputFile.getParentFile());
                             IoUtils.writeStringToFile(outputFile, javaSource);
+                            decompileFindings.add(finding);
                         } else {
                             File retainedClassFile = resolveOutputFile(targetOriginalClasses, classPath);
                             if (retainedClassFile != null) {
                                 IoUtils.ensureDirectory(retainedClassFile.getParentFile());
                                 Files.write(retainedClassFile.toPath(), bytes);
-                                decompileFindings.add(new DecompileFinding(
-                                        classPath,
-                                        relativize(outputDir, retainedClassFile),
-                                        decompileResult.getFailureMessage()));
+                                finding.setRetainedClassPath(relativize(outputDir, retainedClassFile));
+                                decompileFindings.add(finding);
                             }
                         }
                     }

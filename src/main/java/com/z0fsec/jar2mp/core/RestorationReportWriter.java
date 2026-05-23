@@ -93,7 +93,7 @@ public class RestorationReportWriter {
         report.append("- Framework findings: ").append(analysis.getFrameworkFindings().size()).append("\n");
         report.append("- Startup candidates: ").append(analysis.getStartupFindings().size()).append("\n");
         report.append("- Resource findings: ").append(analysis.getResourceFindings().size()).append("\n");
-        report.append("- Decompile failures: ").append(analysis.getDecompileFindings().size()).append("\n\n");
+        report.append("- Decompile failures: ").append(countDecompileFailures(analysis)).append("\n\n");
         report.append("Generated reports:\n");
         report.append("- `restoration-report.md`\n");
         report.append("- `resource-inventory.md`\n");
@@ -106,11 +106,20 @@ public class RestorationReportWriter {
     public void writeDecompileFailures(File outputDir, JarAnalysisResult analysis) throws IOException {
         StringBuilder report = new StringBuilder();
         report.append("# Decompile failures\n\n");
-        if (analysis.getDecompileFindings().isEmpty()) {
+        if (countDecompileFailures(analysis) == 0) {
             report.append("No decompilation failures detected.\n");
         } else {
             for (DecompileFinding finding : analysis.getDecompileFindings()) {
+                if (!finding.hasRetainedClassPath()) {
+                    continue;
+                }
                 report.append("- Failed to decompile `").append(finding.getClassPath()).append("`");
+                if (finding.getSelectedEngine() != null && !finding.getSelectedEngine().trim().isEmpty()) {
+                    report.append("; Selected engine: ").append(finding.getSelectedEngine().trim());
+                }
+                if (finding.getFallbackReason() != null && !finding.getFallbackReason().trim().isEmpty()) {
+                    report.append("; Fallback reason: ").append(finding.getFallbackReason().trim());
+                }
                 report.append("; raw class retained at `").append(finding.getRetainedClassPath()).append("`");
                 if (finding.getMessage() != null && !finding.getMessage().trim().isEmpty()) {
                     report.append("; ").append(finding.getMessage().trim());
@@ -119,6 +128,16 @@ public class RestorationReportWriter {
             }
         }
         IoUtils.writeStringToFile(new File(outputDir, "decompile-failures.md"), report.toString());
+    }
+
+    private int countDecompileFailures(JarAnalysisResult analysis) {
+        int count = 0;
+        for (DecompileFinding finding : analysis.getDecompileFindings()) {
+            if (finding.hasRetainedClassPath()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private String escapeCell(String value) {

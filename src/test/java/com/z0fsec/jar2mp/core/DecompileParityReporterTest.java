@@ -1,6 +1,7 @@
 package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.DecompileFinding;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -55,6 +56,10 @@ class DecompileParityReporterTest {
 
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.getClassFiles().add("demo/ReflectiveFlow.class");
+        DecompileFinding finding = new DecompileFinding("demo/ReflectiveFlow.class", null, null);
+        finding.setSelectedEngine("fernflower");
+        finding.setFallbackReason("cfr emitted stub-only output");
+        analysis.getDecompileFindings().add(finding);
 
         try (JarFile jarFile = new JarFile(jarPath.toFile())) {
             new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
@@ -64,6 +69,8 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Decompile parity report"));
         assertTrue(report.contains("demo/ReflectiveFlow"));
         assertTrue(report.contains("run(Ljava/lang/String;)Ljava/lang/String;"));
+        assertTrue(report.contains("Selected engine: fernflower"));
+        assertTrue(report.contains("Fallback reason: cfr emitted stub-only output"));
         assertTrue(report.contains("Variable names: present in source"));
         assertTrue(report.contains("java/lang/Class.forName(Ljava/lang/String;)Ljava/lang/Class;"));
         assertTrue(report.contains("Control flow"));

@@ -4,6 +4,8 @@ public class DecompileFinding {
     private String classPath;
     private String retainedClassPath;
     private String message;
+    private String selectedEngine;
+    private String fallbackReason;
 
     public DecompileFinding() {
     }
@@ -20,4 +22,11 @@ public class DecompileFinding {
     public void setRetainedClassPath(String retainedClassPath) { this.retainedClassPath = retainedClassPath; }
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }
+    public String getSelectedEngine() { return selectedEngine; }
+    public void setSelectedEngine(String selectedEngine) { this.selectedEngine = selectedEngine; }
+    public String getFallbackReason() { return fallbackReason; }
+    public void setFallbackReason(String fallbackReason) { this.fallbackReason = fallbackReason; }
+    public boolean hasRetainedClassPath() {
+        return retainedClassPath != null && !retainedClassPath.trim().isEmpty();
+    }
 }

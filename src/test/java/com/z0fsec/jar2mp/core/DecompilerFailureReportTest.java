@@ -39,6 +39,8 @@ class DecompilerFailureReportTest {
         String report = new String(Files.readAllBytes(output.resolve("decompile-failures.md")),
                 StandardCharsets.UTF_8);
         assertTrue(report.contains("Failed to decompile"));
+        assertTrue(report.contains("Selected engine:"));
+        assertTrue(report.contains("Fallback reason:"));
         assertTrue(report.contains("raw class retained"));
         assertTrue(Files.exists(output.resolve("target/original-classes/demo/Broken.class")));
     }
