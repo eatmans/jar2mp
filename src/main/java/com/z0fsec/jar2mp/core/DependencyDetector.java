@@ -179,7 +179,6 @@ public class DependencyDetector {
                     if (major > maxMajor) maxMajor = major;
                 } catch (IOException ignored) {
                 }
-                break; // Just check one class for speed
             }
         }
 

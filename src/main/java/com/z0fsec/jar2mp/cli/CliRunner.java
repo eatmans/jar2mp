@@ -51,7 +51,7 @@ public class CliRunner {
                 packageDb.loadCustom(new File(config.getCustomMappingFile()));
             }
 
-            JarAnalyzer analyzer = new JarAnalyzer(packageDb);
+            JarAnalyzer analyzer = new JarAnalyzer(packageDb, config);
             PomGenerator pomGen = new PomGenerator();
             ProjectBuilder builder = new ProjectBuilder(config);
 
@@ -78,6 +78,7 @@ public class CliRunner {
                             System.out.println("  [" + overallPercent + "%] " + message);
                         }
                     });
+                    applyDependencyOptions(result, options);
 
                     if (!options.isQuiet()) {
                         printSummary(result);
@@ -290,6 +291,74 @@ public class CliRunner {
             }
         } catch (IOException e) {
             System.err.println("导出依赖失败: " + e.getMessage());
+        }
+    }
+
+    private void applyDependencyOptions(JarAnalysisResult result, CliOptions options) throws IOException {
+        if (options.getImportDepsFile() != null) {
+            mergeImportedDependencies(result.getDetectedDependencies(), importDependencies(options.getImportDepsFile()));
+        }
+    }
+
+    private void mergeImportedDependencies(List<MavenDependency> detectedDeps, List<MavenDependency> importedDeps) {
+        Map<String, Integer> dependencyIndexes = new LinkedHashMap<>();
+        for (int i = 0; i < detectedDeps.size(); i++) {
+            MavenDependency dep = detectedDeps.get(i);
+            dependencyIndexes.put(dependencyKey(dep), i);
+        }
+
+        for (MavenDependency importedDep : importedDeps) {
+            String key = dependencyKey(importedDep);
+            Integer existingIndex = dependencyIndexes.get(key);
+            if (existingIndex != null) {
+                detectedDeps.set(existingIndex, importedDep);
+            } else {
+                dependencyIndexes.put(key, detectedDeps.size());
+                detectedDeps.add(importedDep);
+            }
+        }
+    }
+
+    private String dependencyKey(MavenDependency dep) {
+        return dep.getGroupId() + ":" + dep.getArtifactId();
+    }
+
+    private List<MavenDependency> importDependencies(String filePath) throws IOException {
+        List<MavenDependency> deps = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                String[] parts = line.split(":");
+                if (parts.length < 3) {
+                    continue;
+                }
+                MavenDependency dep = new MavenDependency(
+                        parts[0],
+                        parts[1],
+                        parts[2],
+                        parseConfidence(parts.length >= 5 ? parts[4] : null)
+                );
+                if (parts.length >= 4 && !parts[3].isEmpty()) {
+                    dep.setScope(parts[3]);
+                }
+                deps.add(dep);
+            }
+        }
+        return deps;
+    }
+
+    private MavenDependency.Confidence parseConfidence(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return MavenDependency.Confidence.MANUAL;
+        }
+        try {
+            return MavenDependency.Confidence.valueOf(value.trim());
+        } catch (IllegalArgumentException e) {
+            return MavenDependency.Confidence.MANUAL;
         }
     }
 }

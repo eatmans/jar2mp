@@ -5,7 +5,7 @@ public class ProjectConfig {
     private String groupId;
     private String artifactId;
     private String version;
-    private int javaVersion = 8;
+    private int javaVersion;
     private boolean decompile = true;
     private boolean detectDependencies = true;
     private boolean copyResources = true;
@@ -14,7 +14,7 @@ public class ProjectConfig {
     private boolean aggressiveScan = false;
     private boolean forceOverwrite = false;
     private String customMappingFile;
-    private String packaging = "jar";
+    private String packaging;
 
     public String getOutputDir() { return outputDir; }
     public void setOutputDir(String outputDir) { this.outputDir = outputDir; }

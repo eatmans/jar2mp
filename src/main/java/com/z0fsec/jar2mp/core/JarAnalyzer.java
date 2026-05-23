@@ -16,9 +16,15 @@ public class JarAnalyzer {
     private final ManifestParser manifestParser = new ManifestParser();
     private final MavenMetadataExtractor metadataExtractor = new MavenMetadataExtractor();
     private final DependencyDetector dependencyDetector;
+    private final ProjectConfig config;
 
     public JarAnalyzer(PackagePrefixDatabase packageDb) {
+        this(packageDb, null);
+    }
+
+    public JarAnalyzer(PackagePrefixDatabase packageDb, ProjectConfig config) {
         this.dependencyDetector = new DependencyDetector(packageDb);
+        this.config = config;
     }
 
     public interface ProgressCallback {
@@ -77,10 +83,13 @@ public class JarAnalyzer {
             result.setEmbeddedPomInfo(pomInfo);
 
             // Phase 4: Detect dependencies
-            if (callback != null) callback.onProgress("Detecting dependencies...", 70);
-
-            List<MavenDependency> deps = dependencyDetector.detect(jf, manifestInfo, pomInfo);
-            result.getDetectedDependencies().addAll(deps);
+            if (shouldDetectDependencies()) {
+                if (callback != null) callback.onProgress("Detecting dependencies...", 70);
+                List<MavenDependency> deps = dependencyDetector.detect(jf, manifestInfo, pomInfo);
+                result.getDetectedDependencies().addAll(deps);
+            } else if (callback != null) {
+                callback.onProgress("Skipping dependency detection...", 70);
+            }
 
             // Phase 5: Determine project coordinates
             if (callback != null) callback.onProgress("Determining project coordinates...", 85);
@@ -189,5 +198,9 @@ public class JarAnalyzer {
             return entryName.substring("WEB-INF/classes/".length());
         }
         return entryName;
+    }
+
+    private boolean shouldDetectDependencies() {
+        return config == null || config.isDetectDependencies();
     }
 }

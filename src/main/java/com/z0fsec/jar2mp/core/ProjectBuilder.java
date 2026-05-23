@@ -11,6 +11,7 @@ import java.util.jar.JarFile;
 
 public class ProjectBuilder {
 
+    private final ProjectConfig config;
     private final DecompilerBridge decompiler;
 
     public interface ProgressCallback {
@@ -18,6 +19,7 @@ public class ProjectBuilder {
     }
 
     public ProjectBuilder(ProjectConfig config) {
+        this.config = config;
         this.decompiler = new DecompilerBridge(config);
     }
 
@@ -67,13 +69,13 @@ public class ProjectBuilder {
                 int lastSlash = fileName.lastIndexOf('/');
                 if (lastSlash >= 0) fileName = fileName.substring(lastSlash + 1);
 
-                if ("module-info.class".equals(fileName)) {
+                if (shouldDecompile() && "module-info.class".equals(fileName)) {
                     if (callback != null) callback.onProgress("Skipping module-info.class", percent);
                     continue;
                 }
 
-                // Skip inner classes - they are included in the outer class decompilation
-                if (DecompilerBridge.isInnerClass(classPath)) {
+                // Skip inner classes only during decompilation; raw class copying should preserve them.
+                if (shouldDecompile() && DecompilerBridge.isInnerClass(classPath)) {
                     continue;
                 }
 
@@ -89,20 +91,26 @@ public class ProjectBuilder {
                 if (entry == null) continue;
 
                 try (InputStream is = jf.getInputStream(entry)) {
-                    byte[] bytes = readAllBytes(is);
-                    String className = classPath.replace('/', '.').replace(".class", "");
+                    if (!shouldDecompile()) {
+                        File outputFile = new File(srcMainJava, classPath);
+                        IoUtils.ensureDirectory(outputFile.getParentFile());
+                        Files.copy(is, outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    } else {
+                        byte[] bytes = readAllBytes(is);
+                        String className = classPath.replace('/', '.').replace(".class", "");
 
-                    if (callback != null && processed % 20 == 0) {
-                        callback.onProgress("Decompiling: " + className, percent);
+                        if (callback != null && processed % 20 == 0) {
+                            callback.onProgress("Decompiling: " + className, percent);
+                        }
+
+                        String javaSource = decompiler.decompile(bytes, className);
+
+                        // Convert path: com/example/Foo.class -> com/example/Foo.java
+                        String javaPath = classPath.replace(".class", ".java");
+                        File outputFile = new File(srcMainJava, javaPath);
+                        IoUtils.ensureDirectory(outputFile.getParentFile());
+                        IoUtils.writeStringToFile(outputFile, javaSource);
                     }
-
-                    String javaSource = decompiler.decompile(bytes, className);
-
-                    // Convert path: com/example/Foo.class -> com/example/Foo.java
-                    String javaPath = classPath.replace(".class", ".java");
-                    File outputFile = new File(srcMainJava, javaPath);
-                    IoUtils.ensureDirectory(outputFile.getParentFile());
-                    IoUtils.writeStringToFile(outputFile, javaSource);
 
                 } catch (Exception e) {
                     if (callback != null) {
@@ -113,6 +121,10 @@ public class ProjectBuilder {
 
             // Phase 2: Copy resource files
             if (callback != null) callback.onProgress("Copying resources...", 90);
+            if (config != null && !config.isCopyResources()) {
+                if (callback != null) callback.onProgress("Skipping resources.", 100);
+                return;
+            }
 
             processed = 0;
             for (String resourcePath : analysis.getResourceFiles()) {
@@ -170,5 +182,9 @@ public class ProjectBuilder {
             bos.write(buf, 0, len);
         }
         return bos.toByteArray();
+    }
+
+    private boolean shouldDecompile() {
+        return config == null || config.isDecompile();
     }
 }

@@ -87,13 +87,23 @@ public class DependencyEditorPanel extends BasePanel {
     public void syncToResult() {
         if (currentResult == null) return;
         List<MavenDependency> deps = currentResult.getDetectedDependencies();
-        for (int i = 0; i < depModel.getRowCount() && i < deps.size(); i++) {
-            MavenDependency dep = deps.get(i);
+        for (int i = 0; i < depModel.getRowCount(); i++) {
+            MavenDependency dep;
+            if (i < deps.size()) {
+                dep = deps.get(i);
+            } else {
+                dep = new MavenDependency();
+                dep.setConfidence(MavenDependency.Confidence.MANUAL);
+                deps.add(dep);
+            }
             dep.setIncluded((Boolean) depModel.getValueAt(i, 0));
             dep.setGroupId((String) depModel.getValueAt(i, 1));
             dep.setArtifactId((String) depModel.getValueAt(i, 2));
             dep.setVersion((String) depModel.getValueAt(i, 3));
             dep.setScope((String) depModel.getValueAt(i, 4));
+        }
+        while (deps.size() > depModel.getRowCount()) {
+            deps.remove(deps.size() - 1);
         }
     }
 
