@@ -34,6 +34,7 @@ public class DecompileParityReporter {
                 fingerprint = BytecodeFingerprint.fromClassFile(readAllBytes(jarFile, entry));
             } catch (Exception e) {
                 report.append("## ").append(classNameFromPath(classPath)).append("\n\n")
+                        .append("- Risk level: HIGH\n")
                         .append("- Unable to parse class file: ").append(e.getMessage()).append("\n\n");
                 continue;
             }
@@ -58,9 +59,15 @@ public class DecompileParityReporter {
         }
         report.append("\n");
         report.append("- Methods: ").append(fingerprint.getMethodsByKey().size()).append("\n\n");
+        appendList(report, "Fields", fingerprint.getFields());
+        appendSet(report, "Annotations", fingerprint.getAnnotations());
+        appendSet(report, "Generic signatures", fingerprint.getGenericSignatures());
+        appendSet(report, "Bootstrap methods", fingerprint.getBootstrapMethods());
+        report.append("\n");
 
         for (BytecodeFingerprint.MethodFingerprint method : fingerprint.getMethodsByKey().values()) {
             report.append("### ").append(method.getKey()).append("\n\n");
+            report.append("- Risk level: ").append(riskLevel(method, source)).append("\n");
             if (!method.hasCode()) {
                 report.append("- No Code attribute; abstract/native/synthetic-only method.\n\n");
                 continue;
@@ -71,6 +78,9 @@ public class DecompileParityReporter {
                     .append(" branch opcode(s), ")
                     .append(method.getInstructions().size())
                     .append(" bytecode instruction(s).\n");
+            report.append("- Exception handlers: ")
+                    .append(method.getExceptionHandlerCount())
+                    .append("\n");
 
             if (method.getLocalVariableNames().isEmpty()) {
                 report.append("- Variable names: unavailable; original class has no LocalVariableTable debug metadata.\n");
@@ -85,22 +95,31 @@ public class DecompileParityReporter {
             }
 
             appendSet(report, "Method calls", method.getMethodCalls());
+            appendSet(report, "Fields", method.getFieldReferences());
             appendSet(report, "String constants", method.getStringConstants());
+            appendSet(report, "Invokedynamic", method.getInvokedynamicCalls());
+            appendSet(report, "Annotations", method.getAnnotations());
+            appendSet(report, "Generic signatures", method.getGenericSignatures());
+            appendSet(report, "Thrown exceptions", method.getThrownExceptions());
             appendReflectionFindings(report, method);
             report.append("\n");
         }
     }
 
+    private String riskLevel(BytecodeFingerprint.MethodFingerprint method, String source) {
+        if (source.isEmpty() || !method.hasCode() || hasReflection(method)) {
+            return "HIGH";
+        }
+        if (!method.getInvokedynamicCalls().isEmpty() || method.getLocalVariableNames().isEmpty()) {
+            return "MEDIUM";
+        }
+        return "LOW";
+    }
+
     private void appendReflectionFindings(StringBuilder report, BytecodeFingerprint.MethodFingerprint method) {
         List<String> reflectiveCalls = new ArrayList<>();
         for (String call : method.getMethodCalls()) {
-            if (call.startsWith("java/lang/Class.forName") ||
-                    call.startsWith("java/lang/reflect/") ||
-                    call.contains(".getMethod(") ||
-                    call.contains(".getDeclaredMethod(") ||
-                    call.contains(".getField(") ||
-                    call.contains(".getDeclaredField(") ||
-                    call.contains(".invoke(")) {
+            if (isReflectiveCall(call)) {
                 reflectiveCalls.add(call);
             }
         }
@@ -108,6 +127,35 @@ public class DecompileParityReporter {
         if (!reflectiveCalls.isEmpty()) {
             report.append("- Reflection: detected call(s): ").append(join(reflectiveCalls)).append(".\n");
         }
+    }
+
+    private boolean hasReflection(BytecodeFingerprint.MethodFingerprint method) {
+        for (String call : method.getMethodCalls()) {
+            if (isReflectiveCall(call)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isReflectiveCall(String call) {
+        return call.startsWith("java/lang/Class.forName") ||
+                call.startsWith("java/lang/reflect/") ||
+                call.contains(".getMethod(") ||
+                call.contains(".getDeclaredMethod(") ||
+                call.contains(".getField(") ||
+                call.contains(".getDeclaredField(") ||
+                call.contains(".invoke(");
+    }
+
+    private void appendList(StringBuilder report, String label, List<String> values) {
+        report.append("- ").append(label).append(": ");
+        if (values.isEmpty()) {
+            report.append("none");
+        } else {
+            report.append(join(values));
+        }
+        report.append("\n");
     }
 
     private void appendSet(StringBuilder report, String label, Set<String> values) {

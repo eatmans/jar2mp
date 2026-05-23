@@ -14,10 +14,20 @@ public class BytecodeFingerprint {
             0xc6, 0xc7, 0xc8, 0xc9));
 
     private final String className;
+    private final List<String> fields;
+    private final Set<String> annotations;
+    private final Set<String> genericSignatures;
+    private final Set<String> bootstrapMethods;
     private final Map<String, MethodFingerprint> methodsByKey;
 
-    private BytecodeFingerprint(String className, Map<String, MethodFingerprint> methodsByKey) {
+    private BytecodeFingerprint(String className, List<String> fields, Set<String> annotations,
+                                Set<String> genericSignatures, Set<String> bootstrapMethods,
+                                Map<String, MethodFingerprint> methodsByKey) {
         this.className = className;
+        this.fields = fields;
+        this.annotations = annotations;
+        this.genericSignatures = genericSignatures;
+        this.bootstrapMethods = bootstrapMethods;
         this.methodsByKey = methodsByKey;
     }
 
@@ -28,6 +38,22 @@ public class BytecodeFingerprint {
 
     public String getClassName() {
         return className;
+    }
+
+    public List<String> getFields() {
+        return fields;
+    }
+
+    public Set<String> getAnnotations() {
+        return annotations;
+    }
+
+    public Set<String> getGenericSignatures() {
+        return genericSignatures;
+    }
+
+    public Set<String> getBootstrapMethods() {
+        return bootstrapMethods;
     }
 
     public Map<String, MethodFingerprint> getMethodsByKey() {
@@ -41,13 +67,22 @@ public class BytecodeFingerprint {
         private final Set<String> methodCalls;
         private final Set<String> stringConstants;
         private final Set<String> localVariableNames;
+        private final Set<String> fieldReferences;
+        private final Set<String> annotations;
+        private final Set<String> thrownExceptions;
+        private final Set<String> invokedynamicCalls;
+        private final Set<String> genericSignatures;
+        private final int exceptionHandlerCount;
         private final int branchOpcodeCount;
         private final int lineNumberCount;
         private final boolean hasCode;
 
         private MethodFingerprint(String name, String descriptor, List<String> instructions,
                                   Set<String> methodCalls, Set<String> stringConstants,
-                                  Set<String> localVariableNames, int branchOpcodeCount,
+                                  Set<String> localVariableNames, Set<String> fieldReferences,
+                                  Set<String> annotations, Set<String> thrownExceptions,
+                                  Set<String> invokedynamicCalls, Set<String> genericSignatures,
+                                  int exceptionHandlerCount, int branchOpcodeCount,
                                   int lineNumberCount, boolean hasCode) {
             this.name = name;
             this.descriptor = descriptor;
@@ -55,6 +90,12 @@ public class BytecodeFingerprint {
             this.methodCalls = methodCalls;
             this.stringConstants = stringConstants;
             this.localVariableNames = localVariableNames;
+            this.fieldReferences = fieldReferences;
+            this.annotations = annotations;
+            this.thrownExceptions = thrownExceptions;
+            this.invokedynamicCalls = invokedynamicCalls;
+            this.genericSignatures = genericSignatures;
+            this.exceptionHandlerCount = exceptionHandlerCount;
             this.branchOpcodeCount = branchOpcodeCount;
             this.lineNumberCount = lineNumberCount;
             this.hasCode = hasCode;
@@ -86,6 +127,30 @@ public class BytecodeFingerprint {
 
         public Set<String> getLocalVariableNames() {
             return localVariableNames;
+        }
+
+        public Set<String> getFieldReferences() {
+            return fieldReferences;
+        }
+
+        public Set<String> getAnnotations() {
+            return annotations;
+        }
+
+        public Set<String> getThrownExceptions() {
+            return thrownExceptions;
+        }
+
+        public Set<String> getInvokedynamicCalls() {
+            return invokedynamicCalls;
+        }
+
+        public Set<String> getGenericSignatures() {
+            return genericSignatures;
+        }
+
+        public int getExceptionHandlerCount() {
+            return exceptionHandlerCount;
         }
 
         public int getBranchOpcodeCount() {
@@ -122,9 +187,11 @@ public class BytecodeFingerprint {
             offset += 2; // super_class
 
             skipInterfaces();
-            skipMembers();
+            List<String> fields = readFields();
             Map<String, MethodFingerprint> methods = readMethods();
-            return new BytecodeFingerprint(resolveClassName(thisClassIndex), methods);
+            ClassAttributes attributes = readClassAttributes();
+            return new BytecodeFingerprint(resolveClassName(thisClassIndex), fields, attributes.annotations,
+                    attributes.genericSignatures, attributes.bootstrapMethods, methods);
         }
 
         private void readConstantPool() {
@@ -179,11 +246,37 @@ public class BytecodeFingerprint {
             offset += count * 2;
         }
 
-        private void skipMembers() {
+        private List<String> readFields() {
+            List<String> fields = new ArrayList<>();
             int fieldsCount = readU2();
             for (int i = 0; i < fieldsCount; i++) {
-                skipMember();
+                offset += 2; // access_flags
+                String name = utf8(readU2());
+                String descriptor = utf8(readU2());
+                FieldAttributes attributes = readFieldAttributes();
+                fields.add(name + descriptor);
+                fields.addAll(attributes.genericSignatures);
+                fields.addAll(attributes.annotations);
             }
+            return fields;
+        }
+
+        private FieldAttributes readFieldAttributes() {
+            FieldAttributes attributes = new FieldAttributes();
+            int attributesCount = readU2();
+            for (int i = 0; i < attributesCount; i++) {
+                String attributeName = utf8(readU2());
+                int attributeLength = readU4();
+                int attributeEnd = offset + attributeLength;
+                if ("Signature".equals(attributeName)) {
+                    attributes.genericSignatures.add(utf8(readU2()));
+                } else if ("RuntimeVisibleAnnotations".equals(attributeName)
+                        || "RuntimeInvisibleAnnotations".equals(attributeName)) {
+                    readAnnotations(attributes.annotations);
+                }
+                offset = attributeEnd;
+            }
+            return attributes;
         }
 
         private Map<String, MethodFingerprint> readMethods() {
@@ -204,6 +297,12 @@ public class BytecodeFingerprint {
             Set<String> methodCalls = new LinkedHashSet<>();
             Set<String> stringConstants = new LinkedHashSet<>();
             Set<String> localVariableNames = new LinkedHashSet<>();
+            Set<String> fieldReferences = new LinkedHashSet<>();
+            Set<String> annotations = new LinkedHashSet<>();
+            Set<String> thrownExceptions = new LinkedHashSet<>();
+            Set<String> invokedynamicCalls = new LinkedHashSet<>();
+            Set<String> genericSignatures = new LinkedHashSet<>();
+            int exceptionHandlerCount = 0;
             int branchOpcodeCount = 0;
             int lineNumberCount = 0;
             boolean hasCode = false;
@@ -221,15 +320,29 @@ public class BytecodeFingerprint {
                     methodCalls.addAll(code.methodCalls);
                     stringConstants.addAll(code.stringConstants);
                     localVariableNames.addAll(code.localVariableNames);
+                    fieldReferences.addAll(code.fieldReferences);
+                    invokedynamicCalls.addAll(code.invokedynamicCalls);
+                    exceptionHandlerCount = code.exceptionHandlerCount;
                     branchOpcodeCount = code.branchOpcodeCount;
                     lineNumberCount = code.lineNumberCount;
+                } else if ("Exceptions".equals(attributeName)) {
+                    int exceptionCount = readU2();
+                    for (int j = 0; j < exceptionCount; j++) {
+                        thrownExceptions.add(resolveClassName(readU2()));
+                    }
+                } else if ("Signature".equals(attributeName)) {
+                    genericSignatures.add(utf8(readU2()));
+                } else if ("RuntimeVisibleAnnotations".equals(attributeName)
+                        || "RuntimeInvisibleAnnotations".equals(attributeName)) {
+                    readAnnotations(annotations);
                 }
 
                 offset = attributeEnd;
             }
 
             return new MethodFingerprint(name, descriptor, instructions, methodCalls, stringConstants,
-                    localVariableNames, branchOpcodeCount, lineNumberCount, hasCode);
+                    localVariableNames, fieldReferences, annotations, thrownExceptions, invokedynamicCalls,
+                    genericSignatures, exceptionHandlerCount, branchOpcodeCount, lineNumberCount, hasCode);
         }
 
         private CodeFingerprint readCodeAttribute() {
@@ -242,6 +355,7 @@ public class BytecodeFingerprint {
             CodeFingerprint fingerprint = scanCode(code);
 
             int exceptionTableLength = readU2();
+            fingerprint.exceptionHandlerCount = exceptionTableLength;
             offset += exceptionTableLength * 8;
 
             int attributesCount = readU2();
@@ -299,12 +413,21 @@ public class BytecodeFingerprint {
                         fingerprint.methodCalls.add(resolveMethodReference(BytecodeFingerprint.readU2(code, position + 1)));
                         position += 3;
                         break;
+                    case 0xb2:
+                    case 0xb3:
+                    case 0xb4:
+                    case 0xb5:
+                        fingerprint.fieldReferences.add(resolveFieldReference(BytecodeFingerprint.readU2(code, position + 1)));
+                        position += 3;
+                        break;
                     case 0xb9:
                         fingerprint.methodCalls.add(resolveMethodReference(BytecodeFingerprint.readU2(code, position + 1)));
                         position += 5;
                         break;
                     case 0xba:
-                        fingerprint.methodCalls.add(resolveInvokeDynamic(BytecodeFingerprint.readU2(code, position + 1)));
+                        String invokedynamicCall = resolveInvokeDynamic(BytecodeFingerprint.readU2(code, position + 1));
+                        fingerprint.methodCalls.add(invokedynamicCall);
+                        fingerprint.invokedynamicCalls.add(invokedynamicCall);
                         position += 5;
                         break;
                     case 0xaa:
@@ -352,6 +475,81 @@ public class BytecodeFingerprint {
             }
         }
 
+        private ClassAttributes readClassAttributes() {
+            ClassAttributes attributes = new ClassAttributes();
+            int attributesCount = readU2();
+            for (int i = 0; i < attributesCount; i++) {
+                String attributeName = utf8(readU2());
+                int attributeLength = readU4();
+                int attributeEnd = offset + attributeLength;
+                if ("Signature".equals(attributeName)) {
+                    attributes.genericSignatures.add(utf8(readU2()));
+                } else if ("RuntimeVisibleAnnotations".equals(attributeName)
+                        || "RuntimeInvisibleAnnotations".equals(attributeName)) {
+                    readAnnotations(attributes.annotations);
+                } else if ("BootstrapMethods".equals(attributeName)) {
+                    int bootstrapCount = readU2();
+                    for (int j = 0; j < bootstrapCount; j++) {
+                        attributes.bootstrapMethods.add(resolveMethodHandle(readU2()));
+                        int argumentCount = readU2();
+                        offset += argumentCount * 2;
+                    }
+                }
+                offset = attributeEnd;
+            }
+            return attributes;
+        }
+
+        private void readAnnotations(Set<String> output) {
+            int annotationCount = readU2();
+            for (int i = 0; i < annotationCount; i++) {
+                readAnnotation(output);
+            }
+        }
+
+        private void readAnnotation(Set<String> output) {
+            output.add(utf8(readU2()));
+            int pairCount = readU2();
+            for (int i = 0; i < pairCount; i++) {
+                offset += 2; // element_name_index
+                skipElementValue();
+            }
+        }
+
+        private void skipElementValue() {
+            int tag = readU1();
+            switch (tag) {
+                case 'B':
+                case 'C':
+                case 'D':
+                case 'F':
+                case 'I':
+                case 'J':
+                case 'S':
+                case 'Z':
+                case 's':
+                    offset += 2;
+                    break;
+                case 'e':
+                    offset += 4;
+                    break;
+                case 'c':
+                    offset += 2;
+                    break;
+                case '@':
+                    readAnnotation(new LinkedHashSet<String>());
+                    break;
+                case '[':
+                    int count = readU2();
+                    for (int i = 0; i < count; i++) {
+                        skipElementValue();
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+
         private String resolveMethodReference(int index) {
             CpInfo methodRef = cp(index);
             if (methodRef == null || (methodRef.tag != 10 && methodRef.tag != 11)) {
@@ -361,6 +559,19 @@ public class BytecodeFingerprint {
             CpInfo nameAndType = cp(methodRef.index2);
             if (nameAndType == null) {
                 return owner + ".#" + methodRef.index2;
+            }
+            return owner + "." + utf8(nameAndType.index1) + utf8(nameAndType.index2);
+        }
+
+        private String resolveFieldReference(int index) {
+            CpInfo fieldRef = cp(index);
+            if (fieldRef == null || fieldRef.tag != 9) {
+                return "#" + index;
+            }
+            String owner = resolveClassName(fieldRef.index1);
+            CpInfo nameAndType = cp(fieldRef.index2);
+            if (nameAndType == null) {
+                return owner + ".#" + fieldRef.index2;
             }
             return owner + "." + utf8(nameAndType.index1) + utf8(nameAndType.index2);
         }
@@ -383,6 +594,14 @@ public class BytecodeFingerprint {
                 return "#" + index;
             }
             return utf8(classInfo.index1);
+        }
+
+        private String resolveMethodHandle(int index) {
+            CpInfo methodHandle = cp(index);
+            if (methodHandle == null || methodHandle.tag != 15) {
+                return "#" + index;
+            }
+            return resolveMethodReference(methodHandle.index1);
         }
 
         private String utf8(int index) {
@@ -429,8 +648,22 @@ public class BytecodeFingerprint {
         private final Set<String> methodCalls = new LinkedHashSet<>();
         private final Set<String> stringConstants = new LinkedHashSet<>();
         private final Set<String> localVariableNames = new LinkedHashSet<>();
+        private final Set<String> fieldReferences = new LinkedHashSet<>();
+        private final Set<String> invokedynamicCalls = new LinkedHashSet<>();
+        private int exceptionHandlerCount;
         private int branchOpcodeCount;
         private int lineNumberCount;
+    }
+
+    private static class FieldAttributes {
+        private final Set<String> annotations = new LinkedHashSet<>();
+        private final Set<String> genericSignatures = new LinkedHashSet<>();
+    }
+
+    private static class ClassAttributes {
+        private final Set<String> annotations = new LinkedHashSet<>();
+        private final Set<String> genericSignatures = new LinkedHashSet<>();
+        private final Set<String> bootstrapMethods = new LinkedHashSet<>();
     }
 
     private static class CpInfo {
