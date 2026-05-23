@@ -2,6 +2,7 @@ package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ResourceFinding;
+import com.z0fsec.jar2mp.model.StartupFinding;
 import com.z0fsec.jar2mp.util.IoUtils;
 
 import java.io.File;
@@ -30,6 +31,56 @@ public class RestorationReportWriter {
         }
 
         IoUtils.writeStringToFile(new File(outputDir, "resource-inventory.md"), report.toString());
+    }
+
+    public void writeRunbook(File outputDir, JarAnalysisResult analysis) throws IOException {
+        StringBuilder report = new StringBuilder();
+        report.append("# Runbook\n\n");
+
+        report.append("## Detected application type\n\n");
+        if (analysis.getStartupFindings().isEmpty()) {
+            report.append("Unknown\n\n");
+        } else {
+            report.append(analysis.getStartupFindings().get(0).getApplicationType()).append("\n\n");
+        }
+
+        report.append("## Startup candidates\n\n");
+        for (StartupFinding finding : analysis.getStartupFindings()) {
+            if (finding.getMainClass() != null) {
+                report.append("- Main class: ").append(finding.getMainClass()).append("\n");
+            }
+            for (String command : finding.getCommands()) {
+                report.append("- `").append(command).append("`\n");
+            }
+        }
+        if (analysis.getStartupFindings().isEmpty()) {
+            report.append("- No startup candidates detected.\n");
+        }
+
+        report.append("\n## Verification commands\n\n");
+        report.append("- `mvn -q -DskipTests compile`\n");
+        report.append("- `mvn -q -DskipTests package`\n");
+
+        report.append("\n## Known gaps\n\n");
+        boolean hasGaps = false;
+        for (StartupFinding finding : analysis.getStartupFindings()) {
+            for (String gap : finding.getKnownGaps()) {
+                report.append("- ").append(gap).append("\n");
+                hasGaps = true;
+            }
+        }
+        if (!hasGaps) {
+            report.append("- None detected from archive metadata.\n");
+        }
+
+        report.append("\n## Evidence\n\n");
+        for (StartupFinding finding : analysis.getStartupFindings()) {
+            for (String evidence : finding.getEvidence()) {
+                report.append("- ").append(evidence).append("\n");
+            }
+        }
+
+        IoUtils.writeStringToFile(new File(outputDir, "RUNBOOK.md"), report.toString());
     }
 
     private String escapeCell(String value) {

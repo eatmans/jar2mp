@@ -175,6 +175,7 @@ public class ProjectBuilder {
             if (callback != null) callback.onProgress("Generating decompile parity report...", 95);
             parityReporter.writeReport(jf, analysis, outputDir);
             restorationReportWriter.writeResourceInventory(outputDir, analysis);
+            restorationReportWriter.writeRunbook(outputDir, analysis);
         }
 
         if (callback != null) callback.onProgress("Maven project generated successfully!", 100);
