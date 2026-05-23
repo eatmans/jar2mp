@@ -28,6 +28,7 @@ class ProjectBuilderTest {
             addEntry(out, "WEB-INF/classes/application.yml", "server:\n  port: 8080\n");
             addEntry(out, "index.html", "<html>home</html>");
             addEntry(out, "assets/app.js", "console.log('ok');");
+            addEntry(out, "META-INF/resources/webjars/demo/app.js", "alert('demo');");
             addEntry(out, "WEB-INF/web.xml", "<web-app/>");
             addEntry(out, "META-INF/context.xml", "<Context/>");
             addEntry(out, "WEB-INF/lib/embedded.jar", "library-bytes");
@@ -44,6 +45,8 @@ class ProjectBuilderTest {
                 Files.readString(outputDir.resolve("src/main/webapp/index.html")));
         assertEquals("console.log('ok');",
                 Files.readString(outputDir.resolve("src/main/webapp/assets/app.js")));
+        assertEquals("alert('demo');",
+                Files.readString(outputDir.resolve("src/main/webapp/META-INF/resources/webjars/demo/app.js")));
         assertEquals("<web-app/>",
                 Files.readString(outputDir.resolve("src/main/webapp/WEB-INF/web.xml")));
         assertEquals("<Context/>",

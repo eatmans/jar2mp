@@ -53,6 +53,9 @@ public class ResourceClassifier {
         if ("web-inf/web.xml".equals(lower)) {
             return ResourceFinding.Category.SERVLET_DESCRIPTOR;
         }
+        if (lower.startsWith("meta-inf/resources/")) {
+            return ResourceFinding.Category.FRONTEND_ASSET;
+        }
         if (lower.startsWith("meta-inf/services/")) {
             return ResourceFinding.Category.SPI;
         }
@@ -155,6 +158,9 @@ public class ResourceClassifier {
             case TEMPLATE:
                 return "Template resource; verify view resolver paths.";
             case FRONTEND_ASSET:
+                if (originalPath.toLowerCase(Locale.ROOT).startsWith("meta-inf/resources/")) {
+                    return "Static web resource under META-INF/resources; preserve exact path.";
+                }
                 return "Static/frontend asset.";
             case SERVLET_DESCRIPTOR:
                 return "Servlet descriptor; WAR projects restore it under webapp.";

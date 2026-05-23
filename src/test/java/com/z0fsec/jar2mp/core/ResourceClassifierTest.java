@@ -30,6 +30,7 @@ class ResourceClassifierTest {
         jarResult.getResourceFiles().add("mapper/UserMapper.xml");
         jarResult.getResourceFiles().add("templates/index.html");
         jarResult.getResourceFiles().add("static/app.js");
+        jarResult.getMetaInfFiles().add("META-INF/resources/webjars/demo/app.js");
         jarResult.getResourceFiles().add("WEB-INF/web.xml");
         jarResult.getMetaInfFiles().add("META-INF/services/com.example.Plugin");
         jarResult.getResourceFiles().add("lib/native/libdemo.so");
@@ -47,6 +48,9 @@ class ResourceClassifierTest {
                 "src/main/resources/templates/index.html");
         assertResource(findings, "static/app.js", ResourceFinding.Category.FRONTEND_ASSET,
                 "src/main/resources/static/app.js");
+        assertResource(findings, "META-INF/resources/webjars/demo/app.js",
+                ResourceFinding.Category.FRONTEND_ASSET,
+                "src/main/resources/META-INF/resources/webjars/demo/app.js");
         assertResource(findings, "WEB-INF/web.xml", ResourceFinding.Category.SERVLET_DESCRIPTOR,
                 "src/main/resources/WEB-INF/web.xml");
         assertResource(findings, "META-INF/services/com.example.Plugin", ResourceFinding.Category.SPI,
@@ -63,6 +67,7 @@ class ResourceClassifierTest {
         warResult.setWar(true);
         warResult.getResourceFiles().add("WEB-INF/classes/application.yml");
         warResult.getResourceFiles().add("index.html");
+        warResult.getMetaInfFiles().add("META-INF/resources/webjars/demo/app.js");
         warResult.getResourceFiles().add("WEB-INF/web.xml");
         warResult.getMetaInfFiles().add("META-INF/services/com.example.Plugin");
 
@@ -72,6 +77,9 @@ class ResourceClassifierTest {
                 "src/main/resources/application.yml");
         assertResource(findings, "index.html", ResourceFinding.Category.TEMPLATE,
                 "src/main/webapp/index.html");
+        assertResource(findings, "META-INF/resources/webjars/demo/app.js",
+                ResourceFinding.Category.FRONTEND_ASSET,
+                "src/main/webapp/META-INF/resources/webjars/demo/app.js");
         assertResource(findings, "WEB-INF/web.xml", ResourceFinding.Category.SERVLET_DESCRIPTOR,
                 "src/main/webapp/WEB-INF/web.xml");
         assertResource(findings, "META-INF/services/com.example.Plugin", ResourceFinding.Category.SPI,
@@ -102,6 +110,7 @@ class ResourceClassifierTest {
             addEntry(out, "com/example/App.class", minimalClassBytes(52));
             addEntry(out, "application.yml", "app: demo\n");
             addEntry(out, "static/app.js", "console.log('demo');");
+            addEntry(out, "META-INF/resources/webjars/demo/app.js", "alert('demo');");
         }
 
         JarAnalysisResult analysis = new JarAnalyzer(new PackagePrefixDatabase()).analyze(jar.toFile(), null);
@@ -114,6 +123,7 @@ class ResourceClassifierTest {
         assertTrue(report.contains("| Category | Original path | Target path | Notes |"));
         assertTrue(report.contains("| CONFIG | application.yml | src/main/resources/application.yml |"));
         assertTrue(report.contains("| FRONTEND_ASSET | static/app.js | src/main/resources/static/app.js |"));
+        assertTrue(report.contains("| FRONTEND_ASSET | META-INF/resources/webjars/demo/app.js |"));
     }
 
     private void assertResource(List<ResourceFinding> findings, String originalPath,
