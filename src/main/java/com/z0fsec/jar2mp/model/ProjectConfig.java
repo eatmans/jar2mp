@@ -13,6 +13,8 @@ public class ProjectConfig {
     private boolean includeSynthetic = false;
     private boolean aggressiveScan = false;
     private boolean forceOverwrite = false;
+    private boolean verifyBuild = false;
+    private String verifyGoal = "compile";
     private String customMappingFile;
     private String packaging;
 
@@ -40,6 +42,10 @@ public class ProjectConfig {
     public void setAggressiveScan(boolean aggressiveScan) { this.aggressiveScan = aggressiveScan; }
     public boolean isForceOverwrite() { return forceOverwrite; }
     public void setForceOverwrite(boolean forceOverwrite) { this.forceOverwrite = forceOverwrite; }
+    public boolean isVerifyBuild() { return verifyBuild; }
+    public void setVerifyBuild(boolean verifyBuild) { this.verifyBuild = verifyBuild; }
+    public String getVerifyGoal() { return verifyGoal; }
+    public void setVerifyGoal(String verifyGoal) { this.verifyGoal = verifyGoal; }
     public String getCustomMappingFile() { return customMappingFile; }
     public void setCustomMappingFile(String customMappingFile) { this.customMappingFile = customMappingFile; }
     public String getPackaging() { return packaging; }

@@ -189,6 +189,29 @@ class CliRunnerTest {
         assertTrue(Files.exists(output.resolve("sample").resolve("decompile-parity-report.md")));
     }
 
+    @Test
+    void verifyBuildWritesVerificationReportWhenEnabled() throws Exception {
+        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--no-decompile",
+                "--no-dependencies",
+                "--verify-build",
+                "--verify-goal", "validate",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        String report = Files.readString(output.resolve("sample").resolve("verification-report.md"));
+        assertTrue(report.contains("# Verification report"));
+        assertTrue(report.contains("mvn"));
+        assertTrue(report.contains("validate"));
+        assertTrue(report.contains("Exit code: 0"));
+    }
+
     private Path createJar(String fileName, String classEntry, byte[] classBytes) throws Exception {
         return createJar(fileName, classEntry, classBytes, null, null);
     }

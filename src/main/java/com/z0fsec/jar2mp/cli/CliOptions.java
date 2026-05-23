@@ -53,6 +53,8 @@ public class CliOptions {
         System.out.println("      --include-synthetic         包含合成/桥接方法");
         System.out.println("      --export-deps <file>        导出依赖到文件");
         System.out.println("      --import-deps <file>        从文件导入依赖");
+        System.out.println("      --verify-build              生成项目后运行 Maven 构建验证");
+        System.out.println("      --verify-goal <goal>        构建验证 Maven goal（默认 compile）");
         System.out.println("  -f, --force                     覆盖已存在的输出目录");
         System.out.println("  -q, --quiet                     静默模式");
         System.out.println("      --verbose                   详细输出");
@@ -60,8 +62,8 @@ public class CliOptions {
         System.out.println("      --version                   显示版本号");
         System.out.println();
         System.out.println("Output:");
-        System.out.println("  每个项目会生成 decompile-parity-report.md，用于核对原始字节码与反编译源码的");
-        System.out.println("  方法签名、控制流、调用点、反射线索、字符串常量和可恢复局部变量名。");
+        System.out.println("  每个项目会生成 decompile-parity-report.md 和 resource-inventory.md。");
+        System.out.println("  启用 --verify-build 后额外生成 verification-report.md。");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  java -jar jar2mp.jar target/app.jar");

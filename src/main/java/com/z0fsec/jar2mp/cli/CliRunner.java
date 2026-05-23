@@ -54,6 +54,7 @@ public class CliRunner {
             JarAnalyzer analyzer = new JarAnalyzer(packageDb, config);
             PomGenerator pomGen = new PomGenerator();
             ProjectBuilder builder = new ProjectBuilder(config);
+            ProjectVerifier verifier = new ProjectVerifier();
 
             int totalFiles = files.size();
             int successCount = 0;
@@ -109,6 +110,15 @@ public class CliRunner {
 
                     if (!options.isQuiet()) {
                         System.out.println("  Maven 项目已生成: " + outputDir.getAbsolutePath());
+                    }
+
+                    if (config.isVerifyBuild()) {
+                        VerificationResult verification = verifier.verify(outputDir, config.getVerifyGoal());
+                        verifier.writeReport(outputDir, verification);
+                        if (!options.isQuiet()) {
+                            System.out.println("  构建验证: " + verification.getFailureType()
+                                    + " (exit " + verification.getExitCode() + ")");
+                        }
                     }
                     successCount++;
 
@@ -238,6 +248,13 @@ public class CliRunner {
                 case "--import-deps":
                     if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
                     options.setImportDepsFile(args[i]);
+                    break;
+                case "--verify-build":
+                    options.getConfig().setVerifyBuild(true);
+                    break;
+                case "--verify-goal":
+                    if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
+                    options.getConfig().setVerifyGoal(args[i]);
                     break;
                 case "-f":
                 case "--force":
