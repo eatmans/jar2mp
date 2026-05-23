@@ -16,6 +16,7 @@ public class JarAnalysisResult {
     private final List<FrameworkFinding> frameworkFindings = new ArrayList<>();
     private final List<ResourceFinding> resourceFindings = new ArrayList<>();
     private final List<StartupFinding> startupFindings = new ArrayList<>();
+    private final List<DecompileFinding> decompileFindings = new ArrayList<>();
     /** Maps stripped class path -> original entry path in JAR (for BOOT-INF/classes/, WEB-INF/classes/) */
     private final Map<String, String> classPathMapping = new LinkedHashMap<>();
     private String detectedGroupId;
@@ -40,6 +41,7 @@ public class JarAnalysisResult {
     public List<FrameworkFinding> getFrameworkFindings() { return frameworkFindings; }
     public List<ResourceFinding> getResourceFindings() { return resourceFindings; }
     public List<StartupFinding> getStartupFindings() { return startupFindings; }
+    public List<DecompileFinding> getDecompileFindings() { return decompileFindings; }
     public String getDetectedGroupId() { return detectedGroupId; }
     public void setDetectedGroupId(String detectedGroupId) { this.detectedGroupId = detectedGroupId; }
     public String getDetectedArtifactId() { return detectedArtifactId; }

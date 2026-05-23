@@ -15,11 +15,39 @@ public class DecompilerBridge {
         this.config = config;
     }
 
+    public static class DecompileResult {
+        private final boolean success;
+        private final String source;
+        private final String failureMessage;
+
+        private DecompileResult(boolean success, String source, String failureMessage) {
+            this.success = success;
+            this.source = source;
+            this.failureMessage = failureMessage;
+        }
+
+        public static DecompileResult success(String source) {
+            return new DecompileResult(true, source, null);
+        }
+
+        public static DecompileResult failure(String source, String failureMessage) {
+            return new DecompileResult(false, source, failureMessage);
+        }
+
+        public boolean isSuccess() { return success; }
+        public String getSource() { return source; }
+        public String getFailureMessage() { return failureMessage; }
+    }
+
     /**
      * Decompile a single class file given its raw bytes.
      * Returns the decompiled Java source code, or an error comment.
      */
     public String decompile(byte[] classBytes, String className) {
+        return decompileDetailed(classBytes, className).getSource();
+    }
+
+    public DecompileResult decompileDetailed(byte[] classBytes, String className) {
         try {
             StringBuilder result = new StringBuilder();
 
@@ -73,12 +101,19 @@ public class DecompilerBridge {
 
             String source = result.toString();
             if (source.trim().isEmpty()) {
-                return "// Failed to decompile: " + className + "\n// The class file may be obfuscated or corrupted.\n";
+                String failure = "The class file may be obfuscated or corrupted.";
+                return DecompileResult.failure(
+                        "// Failed to decompile: " + className + "\n// " + failure + "\n",
+                        failure);
             }
-            return source;
+            if (source.startsWith("// Failed to decompile:")) {
+                return DecompileResult.failure(source, source.trim());
+            }
+            return DecompileResult.success(source);
 
         } catch (Exception e) {
-            return "// Failed to decompile: " + className + "\n// Error: " + e.getMessage() + "\n";
+            String source = "// Failed to decompile: " + className + "\n// Error: " + e.getMessage() + "\n";
+            return DecompileResult.failure(source, e.getMessage());
         }
     }
 

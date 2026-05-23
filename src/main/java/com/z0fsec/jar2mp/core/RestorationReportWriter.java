@@ -1,6 +1,7 @@
 package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.model.ResourceFinding;
 import com.z0fsec.jar2mp.model.StartupFinding;
 import com.z0fsec.jar2mp.util.IoUtils;
@@ -81,6 +82,24 @@ public class RestorationReportWriter {
         }
 
         IoUtils.writeStringToFile(new File(outputDir, "RUNBOOK.md"), report.toString());
+    }
+
+    public void writeDecompileFailures(File outputDir, JarAnalysisResult analysis) throws IOException {
+        StringBuilder report = new StringBuilder();
+        report.append("# Decompile failures\n\n");
+        if (analysis.getDecompileFindings().isEmpty()) {
+            report.append("No decompilation failures detected.\n");
+        } else {
+            for (DecompileFinding finding : analysis.getDecompileFindings()) {
+                report.append("- Failed to decompile `").append(finding.getClassPath()).append("`");
+                report.append("; raw class retained at `").append(finding.getRetainedClassPath()).append("`");
+                if (finding.getMessage() != null && !finding.getMessage().trim().isEmpty()) {
+                    report.append("; ").append(finding.getMessage().trim());
+                }
+                report.append("\n");
+            }
+        }
+        IoUtils.writeStringToFile(new File(outputDir, "decompile-failures.md"), report.toString());
     }
 
     private String escapeCell(String value) {

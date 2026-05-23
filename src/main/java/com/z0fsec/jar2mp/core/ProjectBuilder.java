@@ -43,6 +43,7 @@ public class ProjectBuilder {
         File srcMainJava = new File(outputDir, "src/main/java");
         File srcMainResources = new File(outputDir, "src/main/resources");
         File srcMainWebapp = new File(outputDir, "src/main/webapp");
+        File targetOriginalClasses = new File(outputDir, "target/original-classes");
         File srcTestJava = new File(outputDir, "src/test/java");
         File srcTestResources = new File(outputDir, "src/test/resources");
 
@@ -66,6 +67,7 @@ public class ProjectBuilder {
             int processed = 0;
 
             Set<String> decompiledOuterClasses = new HashSet<>();
+            List<DecompileFinding> decompileFindings = analysis.getDecompileFindings();
 
             // Phase 1: Decompile class files
             if (callback != null) callback.onProgress("Decompiling class files...", 10);
@@ -121,11 +123,23 @@ public class ProjectBuilder {
                             callback.onProgress("Decompiling: " + className, percent);
                         }
 
-                        String javaSource = decompiler.decompile(bytes, className);
-
-                        // Convert path: com/example/Foo.class -> com/example/Foo.java
-                        IoUtils.ensureDirectory(outputFile.getParentFile());
-                        IoUtils.writeStringToFile(outputFile, javaSource);
+                        DecompilerBridge.DecompileResult decompileResult =
+                                decompiler.decompileDetailed(bytes, className);
+                        if (decompileResult.isSuccess()) {
+                            String javaSource = decompileResult.getSource();
+                            IoUtils.ensureDirectory(outputFile.getParentFile());
+                            IoUtils.writeStringToFile(outputFile, javaSource);
+                        } else {
+                            File retainedClassFile = resolveOutputFile(targetOriginalClasses, classPath);
+                            if (retainedClassFile != null) {
+                                IoUtils.ensureDirectory(retainedClassFile.getParentFile());
+                                Files.write(retainedClassFile.toPath(), bytes);
+                                decompileFindings.add(new DecompileFinding(
+                                        classPath,
+                                        relativize(outputDir, retainedClassFile),
+                                        decompileResult.getFailureMessage()));
+                            }
+                        }
                     }
 
                 } catch (Exception e) {
@@ -176,6 +190,7 @@ public class ProjectBuilder {
             parityReporter.writeReport(jf, analysis, outputDir);
             restorationReportWriter.writeResourceInventory(outputDir, analysis);
             restorationReportWriter.writeRunbook(outputDir, analysis);
+            restorationReportWriter.writeDecompileFailures(outputDir, analysis);
         }
 
         if (callback != null) callback.onProgress("Maven project generated successfully!", 100);
@@ -259,6 +274,15 @@ public class ProjectBuilder {
     private File resolveOutputFile(File baseDir, String relativePath) {
         Path outputPath = resolveOutputPath(baseDir, relativePath);
         return outputPath == null ? null : outputPath.toFile();
+    }
+
+    private String relativize(File outputDir, File file) {
+        Path base = outputDir.toPath().toAbsolutePath().normalize();
+        Path target = file.toPath().toAbsolutePath().normalize();
+        if (!target.startsWith(base)) {
+            return file.getPath();
+        }
+        return base.relativize(target).toString().replace('\\', '/');
     }
 
     private Path resolveOutputPath(File baseDir, String relativePath) {
