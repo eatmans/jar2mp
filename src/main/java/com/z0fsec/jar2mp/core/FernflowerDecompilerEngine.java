@@ -10,8 +10,6 @@ import org.jetbrains.java.decompiler.main.extern.IResultSaver;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -31,11 +29,9 @@ public class FernflowerDecompilerEngine implements DecompilerEngine {
     @Override
     public Result decompile(byte[] classBytes, String className) {
         File tempClassFile = null;
-        Path outputDir = null;
         try {
             tempClassFile = File.createTempFile("jar2mp_", ".class");
             Files.write(tempClassFile.toPath(), classBytes);
-            outputDir = Files.createTempDirectory("jar2mp_fernflower_");
 
             Map<String, Object> options = new HashMap<>(IFernflowerPreferences.DEFAULTS);
             options.put(IFernflowerPreferences.UNIT_TEST_MODE, "1");
@@ -44,7 +40,7 @@ public class FernflowerDecompilerEngine implements DecompilerEngine {
                 options.put(IFernflowerPreferences.REMOVE_BRIDGE, "0");
             }
 
-            CapturingResultSaver saver = new CapturingResultSaver();
+            CapturingResultSaver saver = new CapturingResultSaver(className);
             Fernflower fernflower = new Fernflower(new SingleFileBytecodeProvider(), saver, options, new NoOpLogger());
             fernflower.getStructContext().addSpace(tempClassFile, true);
             fernflower.decompileContext();
@@ -68,24 +64,24 @@ public class FernflowerDecompilerEngine implements DecompilerEngine {
             if (tempClassFile != null) {
                 tempClassFile.delete();
             }
-            if (outputDir != null) {
-                deleteRecursive(outputDir.toFile());
-            }
         }
     }
 
     private static class SingleFileBytecodeProvider implements IBytecodeProvider {
         @Override
         public byte[] getBytecode(String externalPath, String internalPath) throws IOException {
-            if (internalPath != null) {
-                return null;
-            }
             return Files.readAllBytes(new File(externalPath).toPath());
         }
     }
 
-    private static class CapturingResultSaver implements IResultSaver {
-        private String source;
+    static class CapturingResultSaver implements IResultSaver {
+        private final String requestedClassName;
+        private String exactSource;
+        private String fallbackSource;
+
+        CapturingResultSaver(String requestedClassName) {
+            this.requestedClassName = normalizeClassName(requestedClassName);
+        }
 
         @Override
         public void saveFolder(String path) {
@@ -97,6 +93,7 @@ public class FernflowerDecompilerEngine implements DecompilerEngine {
 
         @Override
         public void saveClassFile(String path, String qualifiedName, String entryName, String content, int[] mapping) {
+            capture(qualifiedName, entryName, content);
         }
 
         @Override
@@ -113,17 +110,53 @@ public class FernflowerDecompilerEngine implements DecompilerEngine {
 
         @Override
         public void saveClassEntry(String path, String archiveName, String qualifiedName, String entryName, String content) {
-            if (content != null && !content.trim().isEmpty()) {
-                source = content;
-            }
+            capture(qualifiedName, entryName, content);
         }
 
         @Override
         public void closeArchive(String path, String archiveName) {
         }
 
-        private String getSource() {
-            return source == null ? "" : source;
+        String getSource() {
+            if (exactSource != null) {
+                return exactSource;
+            }
+            return fallbackSource == null ? "" : fallbackSource;
+        }
+
+        private void capture(String qualifiedName, String entryName, String content) {
+            if (content == null || content.trim().isEmpty()) {
+                return;
+            }
+
+            if (matchesRequestedClass(qualifiedName, entryName)) {
+                if (exactSource == null) {
+                    exactSource = content;
+                }
+                return;
+            }
+
+            if (fallbackSource == null) {
+                fallbackSource = content;
+            }
+        }
+
+        private boolean matchesRequestedClass(String qualifiedName, String entryName) {
+            return requestedClassName.equals(normalizeClassName(qualifiedName))
+                    || requestedClassName.equals(normalizeClassName(entryName));
+        }
+
+        private String normalizeClassName(String value) {
+            if (value == null) {
+                return "";
+            }
+            String normalized = value.trim().replace('/', '.');
+            if (normalized.endsWith(".java")) {
+                normalized = normalized.substring(0, normalized.length() - 5);
+            } else if (normalized.endsWith(".class")) {
+                normalized = normalized.substring(0, normalized.length() - 6);
+            }
+            return normalized;
         }
     }
 
@@ -142,20 +175,4 @@ public class FernflowerDecompilerEngine implements DecompilerEngine {
         }
     }
 
-    private static void deleteRecursive(File file) {
-        if (!file.exists()) {
-            return;
-        }
-        try {
-            Files.walk(file.toPath())
-                    .sorted(Collections.reverseOrder())
-                    .forEach(path -> {
-                        try {
-                            Files.deleteIfExists(path);
-                        } catch (IOException ignored) {
-                        }
-                    });
-        } catch (IOException ignored) {
-        }
-    }
 }
