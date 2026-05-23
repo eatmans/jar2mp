@@ -15,6 +15,7 @@ public class JarAnalyzer {
 
     private final ManifestParser manifestParser = new ManifestParser();
     private final MavenMetadataExtractor metadataExtractor = new MavenMetadataExtractor();
+    private final FrameworkDetector frameworkDetector = new FrameworkDetector();
     private final DependencyDetector dependencyDetector;
     private final ProjectConfig config;
 
@@ -90,6 +91,8 @@ public class JarAnalyzer {
             } else if (callback != null) {
                 callback.onProgress("Skipping dependency detection...", 70);
             }
+
+            result.getFrameworkFindings().addAll(frameworkDetector.detect(result));
 
             // Phase 5: Determine project coordinates
             if (callback != null) callback.onProgress("Determining project coordinates...", 85);
