@@ -11,6 +11,11 @@ import java.util.jar.JarFile;
 
 public class ProjectBuilder {
 
+    private static final String BOOT_CLASSES_PREFIX = "BOOT-INF/classes/";
+    private static final String BOOT_LIB_PREFIX = "BOOT-INF/lib/";
+    private static final String WEB_CLASSES_PREFIX = "WEB-INF/classes/";
+    private static final String WEB_LIB_PREFIX = "WEB-INF/lib/";
+
     private final ProjectConfig config;
     private final DecompilerBridge decompiler;
 
@@ -33,6 +38,7 @@ public class ProjectBuilder {
         // Create Maven directory structure
         File srcMainJava = new File(outputDir, "src/main/java");
         File srcMainResources = new File(outputDir, "src/main/resources");
+        File srcMainWebapp = new File(outputDir, "src/main/webapp");
         File srcTestJava = new File(outputDir, "src/test/java");
         File srcTestResources = new File(outputDir, "src/test/resources");
 
@@ -43,7 +49,7 @@ public class ProjectBuilder {
 
         // For WAR: create webapp directory
         if (analysis.isWar()) {
-            IoUtils.ensureDirectory(new File(outputDir, "src/main/webapp"));
+            IoUtils.ensureDirectory(srcMainWebapp);
         }
 
         // Write pom.xml
@@ -90,9 +96,17 @@ public class ProjectBuilder {
                 JarEntry entry = jf.getJarEntry(rawEntryPath);
                 if (entry == null) continue;
 
+                String outputPath = shouldDecompile() ? classPath.replace(".class", ".java") : classPath;
+                File outputFile = resolveOutputFile(srcMainJava, outputPath);
+                if (outputFile == null) {
+                    if (callback != null) {
+                        callback.onProgress("Warning: Skipping unsafe class path " + classPath, percent);
+                    }
+                    continue;
+                }
+
                 try (InputStream is = jf.getInputStream(entry)) {
                     if (!shouldDecompile()) {
-                        File outputFile = new File(srcMainJava, classPath);
                         IoUtils.ensureDirectory(outputFile.getParentFile());
                         Files.copy(is, outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                     } else {
@@ -106,8 +120,6 @@ public class ProjectBuilder {
                         String javaSource = decompiler.decompile(bytes, className);
 
                         // Convert path: com/example/Foo.class -> com/example/Foo.java
-                        String javaPath = classPath.replace(".class", ".java");
-                        File outputFile = new File(srcMainJava, javaPath);
                         IoUtils.ensureDirectory(outputFile.getParentFile());
                         IoUtils.writeStringToFile(outputFile, javaSource);
                     }
@@ -127,46 +139,30 @@ public class ProjectBuilder {
             }
 
             processed = 0;
+            Set<Path> copiedResourceOutputs = new HashSet<>();
+
             for (String resourcePath : analysis.getResourceFiles()) {
                 processed++;
-
-                // Skip WEB-INF/classes (already handled as class files)
-                // Skip BOOT-INF/lib (dependency JARs, not needed)
-                if (resourcePath.startsWith("WEB-INF/classes/") ||
-                        resourcePath.startsWith("BOOT-INF/lib/")) {
+                if (!isClasspathResource(resourcePath)) {
                     continue;
                 }
-
-                JarEntry entry = jf.getJarEntry(resourcePath);
-                if (entry == null || entry.isDirectory()) continue;
-
-                // Strip BOOT-INF/classes/ and WEB-INF/classes/ prefixes for resources
-                String outputResourcePath = resourcePath;
-                if (resourcePath.startsWith("BOOT-INF/classes/")) {
-                    outputResourcePath = resourcePath.substring("BOOT-INF/classes/".length());
-                } else if (resourcePath.startsWith("WEB-INF/classes/")) {
-                    outputResourcePath = resourcePath.substring("WEB-INF/classes/".length());
-                }
-
-                File outputFile = new File(srcMainResources, outputResourcePath);
-                IoUtils.ensureDirectory(outputFile.getParentFile());
-                try (InputStream is = jf.getInputStream(entry)) {
-                    Files.copy(is, outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                } catch (Exception ignored) {
-                }
+                copyJarEntry(jf, resourcePath, srcMainResources,
+                        stripClasspathResourcePrefix(resourcePath), copiedResourceOutputs, true);
             }
 
-            // Copy META-INF/services if present
+            for (String resourcePath : analysis.getResourceFiles()) {
+                processed++;
+                if (isClasspathResource(resourcePath) || isNestedLibrary(resourcePath)) {
+                    continue;
+                }
+                File targetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
+                copyJarEntry(jf, resourcePath, targetDir, resourcePath, copiedResourceOutputs, false);
+            }
+
+            File metaInfTargetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
             for (String metaPath : analysis.getMetaInfFiles()) {
-                if (metaPath.startsWith("META-INF/services/") && !metaPath.endsWith("/")) {
-                    JarEntry entry = jf.getJarEntry(metaPath);
-                    if (entry == null) continue;
-                    File outputFile = new File(srcMainResources, metaPath);
-                    IoUtils.ensureDirectory(outputFile.getParentFile());
-                    try (InputStream is = jf.getInputStream(entry)) {
-                        Files.copy(is, outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                    } catch (Exception ignored) {
-                    }
+                if (shouldCopyMetaInfResource(metaPath)) {
+                    copyJarEntry(jf, metaPath, metaInfTargetDir, metaPath, copiedResourceOutputs, false);
                 }
             }
         }
@@ -186,5 +182,88 @@ public class ProjectBuilder {
 
     private boolean shouldDecompile() {
         return config == null || config.isDecompile();
+    }
+
+    private boolean isClasspathResource(String resourcePath) {
+        return resourcePath.startsWith(BOOT_CLASSES_PREFIX) || resourcePath.startsWith(WEB_CLASSES_PREFIX);
+    }
+
+    private String stripClasspathResourcePrefix(String resourcePath) {
+        if (resourcePath.startsWith(BOOT_CLASSES_PREFIX)) {
+            return resourcePath.substring(BOOT_CLASSES_PREFIX.length());
+        }
+        if (resourcePath.startsWith(WEB_CLASSES_PREFIX)) {
+            return resourcePath.substring(WEB_CLASSES_PREFIX.length());
+        }
+        return resourcePath;
+    }
+
+    private boolean isNestedLibrary(String resourcePath) {
+        return resourcePath.startsWith(BOOT_LIB_PREFIX) || resourcePath.startsWith(WEB_LIB_PREFIX);
+    }
+
+    private boolean shouldCopyMetaInfResource(String metaPath) {
+        if (metaPath == null || metaPath.endsWith("/")) {
+            return false;
+        }
+
+        String upperPath = metaPath.toUpperCase(Locale.ROOT);
+        if ("META-INF/MANIFEST.MF".equals(upperPath) || upperPath.startsWith("META-INF/MAVEN/")) {
+            return false;
+        }
+
+        int lastSlash = upperPath.lastIndexOf('/');
+        String fileName = lastSlash >= 0 ? upperPath.substring(lastSlash + 1) : upperPath;
+        return !(fileName.endsWith(".SF") ||
+                fileName.endsWith(".RSA") ||
+                fileName.endsWith(".DSA") ||
+                fileName.endsWith(".EC"));
+    }
+
+    private void copyJarEntry(JarFile jarFile, String entryPath, File baseDir, String outputRelativePath,
+                              Set<Path> copiedOutputs, boolean overwriteExisting) throws IOException {
+        JarEntry entry = jarFile.getJarEntry(entryPath);
+        if (entry == null || entry.isDirectory()) {
+            return;
+        }
+
+        Path outputPath = resolveOutputPath(baseDir, outputRelativePath);
+        if (outputPath == null) {
+            return;
+        }
+
+        if (!overwriteExisting && (copiedOutputs.contains(outputPath) || Files.exists(outputPath))) {
+            return;
+        }
+
+        IoUtils.ensureDirectory(outputPath.getParent().toFile());
+        try (InputStream is = jarFile.getInputStream(entry)) {
+            Files.copy(is, outputPath, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception ignored) {
+            return;
+        }
+        copiedOutputs.add(outputPath);
+    }
+
+    private File resolveOutputFile(File baseDir, String relativePath) {
+        Path outputPath = resolveOutputPath(baseDir, relativePath);
+        return outputPath == null ? null : outputPath.toFile();
+    }
+
+    private Path resolveOutputPath(File baseDir, String relativePath) {
+        if (relativePath == null || relativePath.isEmpty()) {
+            return null;
+        }
+
+        try {
+            Path basePath = baseDir.toPath().toAbsolutePath().normalize();
+            Path outputPath = basePath.resolve(relativePath.replace('\\', '/')).normalize();
+            if (outputPath.equals(basePath) || !outputPath.startsWith(basePath)) {
+                return null;
+            }
+            return outputPath;
+        } catch (InvalidPathException e) {
+            return null;
+        }
     }
 }
