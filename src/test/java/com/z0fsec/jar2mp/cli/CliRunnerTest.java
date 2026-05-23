@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -210,6 +212,34 @@ class CliRunnerTest {
         assertTrue(report.contains("mvn"));
         assertTrue(report.contains("validate"));
         assertTrue(report.contains("Exit code: 0"));
+    }
+
+    @Test
+    void verboseBuildPrintsGeneratedReportPaths() throws Exception {
+        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"));
+        Path output = tempDir.resolve("out");
+        PrintStream originalOut = System.out;
+        ByteArrayOutputStream capturedOut = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(capturedOut, true, StandardCharsets.UTF_8.name()));
+        try {
+            int exitCode = new CliRunner().run(new String[]{
+                    "--verbose",
+                    "--no-decompile",
+                    "--no-dependencies",
+                    "-o", output.toString(),
+                    jar.toString()
+            });
+            assertEquals(0, exitCode);
+        } finally {
+            System.setOut(originalOut);
+        }
+
+        String outputText = new String(capturedOut.toByteArray(), StandardCharsets.UTF_8);
+        assertTrue(outputText.contains("decompile-parity-report.md"));
+        assertTrue(outputText.contains("resource-inventory.md"));
+        assertTrue(outputText.contains("restoration-report.md"));
+        assertTrue(outputText.contains("RUNBOOK.md"));
     }
 
     private Path createJar(String fileName, String classEntry, byte[] classBytes) throws Exception {

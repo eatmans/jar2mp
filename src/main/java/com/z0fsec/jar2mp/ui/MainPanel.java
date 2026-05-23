@@ -583,6 +583,7 @@ public class MainPanel extends BasePanel {
 
                     SwingUtilities.invokeLater(() -> {
                         appendSuccess("[" + d + "/" + total + "] 已生成: " + outDir.getAbsolutePath());
+                        appendReportPaths(outDir);
                     });
 
                 } catch (Exception e) {
@@ -606,5 +607,14 @@ public class MainPanel extends BasePanel {
     public void onPanelReady() {
         appendSuccess("jar2mp v1.0 - JAR 转 Maven 项目工具");
         appendInfo("添加一个或多个 JAR/WAR 文件，然后点击「分析全部」开始");
+    }
+
+    private void appendReportPaths(File outDir) {
+        appendInfo("Reports:");
+        appendInfo("  " + new File(outDir, "restoration-report.md").getAbsolutePath());
+        appendInfo("  " + new File(outDir, "resource-inventory.md").getAbsolutePath());
+        appendInfo("  " + new File(outDir, "decompile-parity-report.md").getAbsolutePath());
+        appendInfo("  " + new File(outDir, "RUNBOOK.md").getAbsolutePath());
+        appendInfo("  " + new File(outDir, "decompile-failures.md").getAbsolutePath());
     }
 }

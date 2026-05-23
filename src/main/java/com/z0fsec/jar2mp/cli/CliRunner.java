@@ -110,11 +110,15 @@ public class CliRunner {
 
                     if (!options.isQuiet()) {
                         System.out.println("  Maven 项目已生成: " + outputDir.getAbsolutePath());
+                        printReportPaths(outputDir, config, false);
                     }
 
                     if (config.isVerifyBuild()) {
                         VerificationResult verification = verifier.verify(outputDir, config.getVerifyGoal());
                         verifier.writeReport(outputDir, verification);
+                        if (!options.isQuiet()) {
+                            printVerificationReportPath(outputDir);
+                        }
                         if (!options.isQuiet()) {
                             System.out.println("  构建验证: " + verification.getFailureType()
                                     + " (exit " + verification.getExitCode() + ")");
@@ -338,6 +342,22 @@ public class CliRunner {
 
     private String dependencyKey(MavenDependency dep) {
         return dep.getGroupId() + ":" + dep.getArtifactId();
+    }
+
+    private void printReportPaths(File outputDir, ProjectConfig config, boolean includeVerification) {
+        System.out.println("  Reports:");
+        System.out.println("    " + new File(outputDir, "restoration-report.md").getAbsolutePath());
+        System.out.println("    " + new File(outputDir, "resource-inventory.md").getAbsolutePath());
+        System.out.println("    " + new File(outputDir, "decompile-parity-report.md").getAbsolutePath());
+        System.out.println("    " + new File(outputDir, "RUNBOOK.md").getAbsolutePath());
+        System.out.println("    " + new File(outputDir, "decompile-failures.md").getAbsolutePath());
+        if (includeVerification && config.isVerifyBuild()) {
+            System.out.println("    " + new File(outputDir, "verification-report.md").getAbsolutePath());
+        }
+    }
+
+    private void printVerificationReportPath(File outputDir) {
+        System.out.println("  " + new File(outputDir, "verification-report.md").getAbsolutePath());
     }
 
     private List<MavenDependency> importDependencies(String filePath) throws IOException {

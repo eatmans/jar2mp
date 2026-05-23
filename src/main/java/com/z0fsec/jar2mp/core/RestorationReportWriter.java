@@ -84,6 +84,25 @@ public class RestorationReportWriter {
         IoUtils.writeStringToFile(new File(outputDir, "RUNBOOK.md"), report.toString());
     }
 
+    public void writeRestorationReport(File outputDir, JarAnalysisResult analysis) throws IOException {
+        StringBuilder report = new StringBuilder();
+        report.append("# Restoration report\n\n");
+        report.append("- Classes: ").append(analysis.getClassFiles().size()).append("\n");
+        report.append("- Resources: ").append(analysis.getResourceFiles().size()).append("\n");
+        report.append("- META-INF entries: ").append(analysis.getMetaInfFiles().size()).append("\n");
+        report.append("- Framework findings: ").append(analysis.getFrameworkFindings().size()).append("\n");
+        report.append("- Startup candidates: ").append(analysis.getStartupFindings().size()).append("\n");
+        report.append("- Resource findings: ").append(analysis.getResourceFindings().size()).append("\n");
+        report.append("- Decompile failures: ").append(analysis.getDecompileFindings().size()).append("\n\n");
+        report.append("Generated reports:\n");
+        report.append("- `restoration-report.md`\n");
+        report.append("- `resource-inventory.md`\n");
+        report.append("- `decompile-parity-report.md`\n");
+        report.append("- `RUNBOOK.md`\n");
+        report.append("- `decompile-failures.md`\n");
+        IoUtils.writeStringToFile(new File(outputDir, "restoration-report.md"), report.toString());
+    }
+
     public void writeDecompileFailures(File outputDir, JarAnalysisResult analysis) throws IOException {
         StringBuilder report = new StringBuilder();
         report.append("# Decompile failures\n\n");
