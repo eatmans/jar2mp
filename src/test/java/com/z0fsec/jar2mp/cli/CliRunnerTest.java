@@ -186,6 +186,7 @@ class CliRunnerTest {
 
         assertEquals(0, exitCode);
         assertFalse(Files.exists(output.resolve("sample").resolve("src/main/resources/application.properties")));
+        assertTrue(Files.exists(output.resolve("sample").resolve("decompile-parity-report.md")));
     }
 
     private Path createJar(String fileName, String classEntry, byte[] classBytes) throws Exception {

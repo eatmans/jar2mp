@@ -18,6 +18,7 @@ public class ProjectBuilder {
 
     private final ProjectConfig config;
     private final DecompilerBridge decompiler;
+    private final DecompileParityReporter parityReporter;
 
     public interface ProgressCallback {
         void onProgress(String message, int percent);
@@ -26,6 +27,7 @@ public class ProjectBuilder {
     public ProjectBuilder(ProjectConfig config) {
         this.config = config;
         this.decompiler = new DecompilerBridge(config);
+        this.parityReporter = new DecompileParityReporter();
     }
 
     public void build(File jarFile, JarAnalysisResult analysis, String pomXml,
@@ -133,38 +135,43 @@ public class ProjectBuilder {
 
             // Phase 2: Copy resource files
             if (callback != null) callback.onProgress("Copying resources...", 90);
-            if (config != null && !config.isCopyResources()) {
-                if (callback != null) callback.onProgress("Skipping resources.", 100);
-                return;
+            boolean copyResources = config == null || config.isCopyResources();
+            if (!copyResources) {
+                if (callback != null) callback.onProgress("Skipping resources.", 90);
             }
 
             processed = 0;
             Set<Path> copiedResourceOutputs = new HashSet<>();
 
-            for (String resourcePath : analysis.getResourceFiles()) {
-                processed++;
-                if (!isClasspathResource(resourcePath)) {
-                    continue;
+            if (copyResources) {
+                for (String resourcePath : analysis.getResourceFiles()) {
+                    processed++;
+                    if (!isClasspathResource(resourcePath)) {
+                        continue;
+                    }
+                    copyJarEntry(jf, resourcePath, srcMainResources,
+                            stripClasspathResourcePrefix(resourcePath), copiedResourceOutputs, true);
                 }
-                copyJarEntry(jf, resourcePath, srcMainResources,
-                        stripClasspathResourcePrefix(resourcePath), copiedResourceOutputs, true);
+
+                for (String resourcePath : analysis.getResourceFiles()) {
+                    processed++;
+                    if (isClasspathResource(resourcePath) || isNestedLibrary(resourcePath)) {
+                        continue;
+                    }
+                    File targetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
+                    copyJarEntry(jf, resourcePath, targetDir, resourcePath, copiedResourceOutputs, false);
+                }
+
+                File metaInfTargetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
+                for (String metaPath : analysis.getMetaInfFiles()) {
+                    if (shouldCopyMetaInfResource(metaPath)) {
+                        copyJarEntry(jf, metaPath, metaInfTargetDir, metaPath, copiedResourceOutputs, false);
+                    }
+                }
             }
 
-            for (String resourcePath : analysis.getResourceFiles()) {
-                processed++;
-                if (isClasspathResource(resourcePath) || isNestedLibrary(resourcePath)) {
-                    continue;
-                }
-                File targetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
-                copyJarEntry(jf, resourcePath, targetDir, resourcePath, copiedResourceOutputs, false);
-            }
-
-            File metaInfTargetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
-            for (String metaPath : analysis.getMetaInfFiles()) {
-                if (shouldCopyMetaInfResource(metaPath)) {
-                    copyJarEntry(jf, metaPath, metaInfTargetDir, metaPath, copiedResourceOutputs, false);
-                }
-            }
+            if (callback != null) callback.onProgress("Generating decompile parity report...", 95);
+            parityReporter.writeReport(jf, analysis, outputDir);
         }
 
         if (callback != null) callback.onProgress("Maven project generated successfully!", 100);

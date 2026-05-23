@@ -59,6 +59,10 @@ public class CliOptions {
         System.out.println("  -h, --help                      显示帮助");
         System.out.println("      --version                   显示版本号");
         System.out.println();
+        System.out.println("Output:");
+        System.out.println("  每个项目会生成 decompile-parity-report.md，用于核对原始字节码与反编译源码的");
+        System.out.println("  方法签名、控制流、调用点、反射线索、字符串常量和可恢复局部变量名。");
+        System.out.println();
         System.out.println("Examples:");
         System.out.println("  java -jar jar2mp.jar target/app.jar");
         System.out.println("  java -jar jar2mp.jar a.jar b.jar c.jar --verbose");
