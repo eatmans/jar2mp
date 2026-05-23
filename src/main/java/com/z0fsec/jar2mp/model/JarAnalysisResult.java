@@ -14,6 +14,7 @@ public class JarAnalysisResult {
     private final List<String> metaInfFiles = new ArrayList<>();
     private final List<MavenDependency> detectedDependencies = new ArrayList<>();
     private final List<FrameworkFinding> frameworkFindings = new ArrayList<>();
+    private final List<ResourceFinding> resourceFindings = new ArrayList<>();
     /** Maps stripped class path -> original entry path in JAR (for BOOT-INF/classes/, WEB-INF/classes/) */
     private final Map<String, String> classPathMapping = new LinkedHashMap<>();
     private String detectedGroupId;
@@ -36,6 +37,7 @@ public class JarAnalysisResult {
     public Map<String, String> getClassPathMapping() { return classPathMapping; }
     public List<MavenDependency> getDetectedDependencies() { return detectedDependencies; }
     public List<FrameworkFinding> getFrameworkFindings() { return frameworkFindings; }
+    public List<ResourceFinding> getResourceFindings() { return resourceFindings; }
     public String getDetectedGroupId() { return detectedGroupId; }
     public void setDetectedGroupId(String detectedGroupId) { this.detectedGroupId = detectedGroupId; }
     public String getDetectedArtifactId() { return detectedArtifactId; }

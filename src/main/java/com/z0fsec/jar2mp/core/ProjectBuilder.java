@@ -19,6 +19,7 @@ public class ProjectBuilder {
     private final ProjectConfig config;
     private final DecompilerBridge decompiler;
     private final DecompileParityReporter parityReporter;
+    private final RestorationReportWriter restorationReportWriter;
 
     public interface ProgressCallback {
         void onProgress(String message, int percent);
@@ -28,6 +29,7 @@ public class ProjectBuilder {
         this.config = config;
         this.decompiler = new DecompilerBridge(config);
         this.parityReporter = new DecompileParityReporter();
+        this.restorationReportWriter = new RestorationReportWriter();
     }
 
     public void build(File jarFile, JarAnalysisResult analysis, String pomXml,
@@ -172,6 +174,7 @@ public class ProjectBuilder {
 
             if (callback != null) callback.onProgress("Generating decompile parity report...", 95);
             parityReporter.writeReport(jf, analysis, outputDir);
+            restorationReportWriter.writeResourceInventory(outputDir, analysis);
         }
 
         if (callback != null) callback.onProgress("Maven project generated successfully!", 100);
