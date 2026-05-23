@@ -16,6 +16,7 @@ public class MavenDependency extends MavenCoordinates {
 
     private Confidence confidence;
     private String scope;
+    private String type;
     private boolean included = true;
 
     public MavenDependency() {
@@ -32,6 +33,8 @@ public class MavenDependency extends MavenCoordinates {
     public void setConfidence(Confidence confidence) { this.confidence = confidence; }
     public String getScope() { return scope; }
     public void setScope(String scope) { this.scope = scope; }
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
     public boolean isIncluded() { return included; }
     public void setIncluded(boolean included) { this.included = included; }
 
