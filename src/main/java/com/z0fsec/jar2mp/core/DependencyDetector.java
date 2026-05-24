@@ -28,6 +28,9 @@ public class DependencyDetector {
      */
     public List<MavenDependency> detect(JarFile jarFile, ManifestInfo manifestInfo, PomInfo pomInfo) {
         Map<String, MavenDependency> deps = new LinkedHashMap<>();
+        boolean hasEmbeddedDependencies = pomInfo != null
+                && pomInfo.getDependencies() != null
+                && !pomInfo.getDependencies().isEmpty();
 
         // Strategy 1: Embedded POM dependencies (highest confidence)
         if (pomInfo != null && pomInfo.getDependencies() != null) {
@@ -50,19 +53,21 @@ public class DependencyDetector {
         }
 
         // Strategy 3: Class file scanning against package database
-        Set<String> packages = classFileScanner.scanPackages(jarFile);
-        for (String pkg : packages) {
-            MavenCoordinates coord = packageDb.lookup(pkg);
-            if (coord != null) {
-                String key = coord.getGroupId() + ":" + coord.getArtifactId();
-                if (!deps.containsKey(key)) {
-                    MavenDependency dep = new MavenDependency(
-                            coord.getGroupId(),
-                            coord.getArtifactId(),
-                            coord.getVersion(),
-                            MavenDependency.Confidence.LOW
-                    );
-                    deps.put(key, dep);
+        if (!hasEmbeddedDependencies) {
+            Set<String> packages = classFileScanner.scanPackages(jarFile);
+            for (String pkg : packages) {
+                MavenCoordinates coord = packageDb.lookup(pkg);
+                if (coord != null) {
+                    String key = coord.getGroupId() + ":" + coord.getArtifactId();
+                    if (!deps.containsKey(key)) {
+                        MavenDependency dep = new MavenDependency(
+                                coord.getGroupId(),
+                                coord.getArtifactId(),
+                                coord.getVersion(),
+                                MavenDependency.Confidence.LOW
+                        );
+                        deps.put(key, dep);
+                    }
                 }
             }
         }

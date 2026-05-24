@@ -10,6 +10,35 @@
 
 ---
 
+## Status Sync - 2026-05-24
+
+**Overall status:** complete for the planned restoration gap closure scope.
+
+The checklist below was synchronized against the current branch (`codex/decompile-parity-checks`), commit history, source files, tests, and a fresh acceptance run. The historical "red test" steps cannot be reproduced from the final tree, but they are marked complete because the corresponding tests, implementation commits, and passing verification now exist.
+
+Evidence:
+
+- `mvn test`: PASS, 67 tests, 0 failures, 0 errors.
+- `mvn -q -DskipTests package`: PASS.
+- CLI synthetic smoke: PASS with `--verbose --trace-runtime --verify-build`; runtime tracing captured a reflection event, Maven verification returned `BUILD SUCCESS`, and all restoration reports were generated.
+- Spring Boot executable JAR acceptance: PASS on a generated Spring Boot 2.7.18 sample. Runtime tracing completed with exit code 0, the restored project compiled successfully, `decompile-failures.md` reported no failures, and the restoration score was `100/100`.
+- Additional trace-agent hardening: one-argument `Class.forName` now preserves application class loading through the thread context class loader and normalizes slash-form names only as a fallback. `TraceAgentManifestTest` now loads a custom application class so this regression is covered.
+- Additional scoring hardening: runtime score is now based on statically detected trace expectations, and inner classes no longer lower source fidelity when the restored outer class source covers them.
+- Relevant completion commits: `bb7adcb`, `cdfaa1a`, `96c9ba8`, `2cce9bc`, `2920040`, `f946ef4`, `2fa8ffa`, `586dbfe`.
+
+Planned incomplete items:
+
+- None in this plan.
+
+Known boundaries that remain by design:
+
+- Runtime trace reports are evidence from the exercised path, not a proof of complete runtime equivalence.
+- The trace agent captures the configured reflection/resource/file/socket call families, but unexercised code paths and external services remain outside smoke-run evidence.
+- File/socket trace evidence is only required when bytecode evidence indicates those APIs are relevant; unexercised branches and external-service behavior remain outside smoke-run proof.
+- Decompiler arbitration improves source fidelity, but generated source still needs parity/risk reports for high-risk classes.
+
+---
+
 ### Task 1: Decompiler arbitration and parity metadata
 
 **Files:**
@@ -25,7 +54,7 @@
 - Test: `src/test/java/com/z0fsec/jar2mp/core/DecompileParityReporterTest.java`
 - Test: `src/test/java/com/z0fsec/jar2mp/core/DecompilerFailureReportTest.java`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add a test double that lets `DecompilerBridge` see two engines with different outcomes, then assert that the bridge chooses the better source and records the selected engine.
 
@@ -53,13 +82,13 @@ void parityReportIncludesSelectedEngineAndRiskLevel() throws Exception {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm they fail**
+- [x] **Step 2: Run the focused tests and confirm they fail**
 
 Run: `mvn -q -Dtest=DecompilerBridgeTest,DecompileParityReporterTest,DecompilerFailureReportTest test`
 
 Expected: fail because `DecompilerBridge` still has a single-engine path and the report has no engine arbitration metadata yet.
 
-- [ ] **Step 3: Implement the minimal arbitration layer**
+- [x] **Step 3: Implement the minimal arbitration layer**
 
 Add `DecompilerEngine` with a small result object that carries `engineName`, `success`, `source`, `failureMessage`, and a simple quality score.
 
@@ -72,13 +101,13 @@ Implement `CfrDecompilerEngine` as the default engine and `FernflowerDecompilerE
 
 Update `DecompileFinding` to record the chosen engine and the reason a fallback happened. Update `DecompileParityReporter` so it prints engine choice, source coverage, and a clearer risk bucket.
 
-- [ ] **Step 4: Re-run the focused tests**
+- [x] **Step 4: Re-run the focused tests**
 
 Run: `mvn -q -Dtest=DecompilerBridgeTest,DecompileParityReporterTest,DecompilerFailureReportTest test`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pom.xml src/main/java/com/z0fsec/jar2mp/core/DecompilerEngine.java src/main/java/com/z0fsec/jar2mp/core/CfrDecompilerEngine.java src/main/java/com/z0fsec/jar2mp/core/FernflowerDecompilerEngine.java src/main/java/com/z0fsec/jar2mp/core/DecompilerBridge.java src/main/java/com/z0fsec/jar2mp/core/DecompileParityReporter.java src/main/java/com/z0fsec/jar2mp/model/DecompileFinding.java src/main/java/com/z0fsec/jar2mp/core/ProjectBuilder.java src/test/java/com/z0fsec/jar2mp/core/DecompilerBridgeTest.java src/test/java/com/z0fsec/jar2mp/core/DecompileParityReporterTest.java src/test/java/com/z0fsec/jar2mp/core/DecompilerFailureReportTest.java
@@ -101,7 +130,7 @@ git commit -m "feat: add decompiler arbitration"
 - Test: `src/test/java/com/z0fsec/jar2mp/core/RuntimeTraceCollectorTest.java`
 - Test: `src/test/java/com/z0fsec/jar2mp/core/TraceAgentManifestTest.java`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add a parser test for JSONL runtime events.
 
@@ -135,13 +164,13 @@ void traceAgentJarHasPremainClass() throws Exception {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm they fail**
+- [x] **Step 2: Run the focused tests and confirm they fail**
 
 Run: `mvn -q -Dtest=RuntimeTraceCollectorTest,TraceAgentManifestTest test`
 
 Expected: fail because there is no trace agent artifact or runtime event model yet.
 
-- [ ] **Step 3: Implement the trace event pipeline**
+- [x] **Step 3: Implement the trace event pipeline**
 
 Add a JSONL event format with stable fields:
 
@@ -161,13 +190,13 @@ Implement the agent with Byte Buddy so it can intercept the small set of calls t
 
 Write events to the file path provided by `-Djar2mp.traceFile=...`. Keep the sink append-only and line oriented so the collector can parse it without guessing.
 
-- [ ] **Step 4: Re-run the focused tests**
+- [x] **Step 4: Re-run the focused tests**
 
 Run: `mvn -q -Dtest=RuntimeTraceCollectorTest,TraceAgentManifestTest test`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add pom.xml src/main/java/com/z0fsec/jar2mp/traceagent/TraceAgent.java src/main/java/com/z0fsec/jar2mp/traceagent/TraceTransformer.java src/main/java/com/z0fsec/jar2mp/traceagent/TraceEventSink.java src/main/java/com/z0fsec/jar2mp/core/RuntimeTraceEvent.java src/main/java/com/z0fsec/jar2mp/core/RuntimeTraceResult.java src/main/java/com/z0fsec/jar2mp/core/RuntimeTraceCollector.java src/main/java/com/z0fsec/jar2mp/core/RuntimeTraceWriter.java src/main/java/com/z0fsec/jar2mp/model/ProjectConfig.java src/main/java/com/z0fsec/jar2mp/cli/CliOptions.java src/test/java/com/z0fsec/jar2mp/core/RuntimeTraceCollectorTest.java src/test/java/com/z0fsec/jar2mp/core/TraceAgentManifestTest.java
@@ -186,7 +215,7 @@ git commit -m "feat: add runtime trace agent"
 - Test: `src/test/java/com/z0fsec/jar2mp/core/RuntimeTraceReportWriterTest.java`
 - Test: `src/test/java/com/z0fsec/jar2mp/cli/CliRunnerTest.java`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add a command-builder test that proves the runner injects the agent and app args.
 
@@ -219,13 +248,13 @@ void writesRuntimeTraceReport() throws Exception {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm they fail**
+- [x] **Step 2: Run the focused tests and confirm they fail**
 
 Run: `mvn -q -Dtest=RuntimeSmokeRunnerTest,RuntimeTraceReportWriterTest,CliRunnerTest test`
 
 Expected: fail because the CLI has no trace flags and there is no smoke runner yet.
 
-- [ ] **Step 3: Implement the smoke runner**
+- [x] **Step 3: Implement the smoke runner**
 
 Make `RuntimeSmokeRunner` launch the original jar with the agent jar and a trace file path. The runner should:
 
@@ -237,13 +266,13 @@ Make `RuntimeSmokeRunner` launch the original jar with the agent jar and a trace
 
 Wire `CliRunner` so runtime tracing runs after analysis and before build verification. Keep `ProjectVerifier` focused on Maven compile/package, and let the new runner own runtime evidence.
 
-- [ ] **Step 4: Re-run the focused tests**
+- [x] **Step 4: Re-run the focused tests**
 
 Run: `mvn -q -Dtest=RuntimeSmokeRunnerTest,RuntimeTraceReportWriterTest,CliRunnerTest test`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/RuntimeSmokeRunner.java src/main/java/com/z0fsec/jar2mp/core/RuntimeTraceReportWriter.java src/main/java/com/z0fsec/jar2mp/cli/CliRunner.java src/main/java/com/z0fsec/jar2mp/model/ProjectConfig.java src/main/java/com/z0fsec/jar2mp/cli/CliOptions.java src/test/java/com/z0fsec/jar2mp/core/RuntimeSmokeRunnerTest.java src/test/java/com/z0fsec/jar2mp/core/RuntimeTraceReportWriterTest.java src/test/java/com/z0fsec/jar2mp/cli/CliRunnerTest.java
@@ -263,7 +292,7 @@ git commit -m "feat: add runtime trace runner"
 - Test: `src/test/java/com/z0fsec/jar2mp/core/RestorationScorerTest.java`
 - Test: `src/test/java/com/z0fsec/jar2mp/core/ProjectBuilderTest.java`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add a scoring test that proves the overall score is a weighted blend of static, resource, runtime, and verification signals.
 
@@ -290,13 +319,13 @@ void writesScoreAndGapSummaryReports() throws Exception {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm they fail**
+- [x] **Step 2: Run the focused tests and confirm they fail**
 
 Run: `mvn -q -Dtest=RestorationScorerTest,ProjectBuilderTest test`
 
 Expected: fail because there is no scoring model or gap summary yet.
 
-- [ ] **Step 3: Implement the scoring model**
+- [x] **Step 3: Implement the scoring model**
 
 Use a fixed weighted formula so the output is stable and explainable:
 
@@ -307,13 +336,13 @@ Use a fixed weighted formula so the output is stable and explainable:
 
 Record the per-bucket score plus the top missing items that pulled the project below 100. Write the result into `JarAnalysisResult` so CLI, GUI, and report writers all see the same score.
 
-- [ ] **Step 4: Re-run the focused tests**
+- [x] **Step 4: Re-run the focused tests**
 
 Run: `mvn -q -Dtest=RestorationScorerTest,ProjectBuilderTest test`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/model/RestorationScore.java src/main/java/com/z0fsec/jar2mp/core/RestorationScorer.java src/main/java/com/z0fsec/jar2mp/core/RestorationScoreWriter.java src/main/java/com/z0fsec/jar2mp/core/GapSummaryWriter.java src/main/java/com/z0fsec/jar2mp/core/RestorationReportWriter.java src/main/java/com/z0fsec/jar2mp/core/ProjectBuilder.java src/main/java/com/z0fsec/jar2mp/model/JarAnalysisResult.java src/test/java/com/z0fsec/jar2mp/core/RestorationScorerTest.java src/test/java/com/z0fsec/jar2mp/core/ProjectBuilderTest.java
@@ -330,7 +359,7 @@ git commit -m "feat: add restoration scoring"
 - Modify: `src/test/java/com/z0fsec/jar2mp/cli/CliRunnerTest.java`
 - Modify: `src/test/java/com/z0fsec/jar2mp/core/ProjectBuilderTest.java`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add CLI assertions for the new help text and report paths.
 
@@ -361,13 +390,13 @@ void cliProducesAllRestorationReports() throws Exception {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm they fail**
+- [x] **Step 2: Run the focused tests and confirm they fail**
 
 Run: `mvn -q -Dtest=CliRunnerTest,ProjectBuilderTest test`
 
 Expected: fail because the new CLI flags, UI report paths, and docs are not wired yet.
 
-- [ ] **Step 3: Wire the new flags and report output**
+- [x] **Step 3: Wire the new flags and report output**
 
 Update CLI parsing and help text for:
 
@@ -384,7 +413,7 @@ Update the README with:
 - the new report files
 - the separation between structural restoration and runtime fidelity
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run:
 
@@ -395,7 +424,7 @@ mvn -q clean package
 
 Expected: PASS for both commands.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/cli/CliOptions.java src/main/java/com/z0fsec/jar2mp/cli/CliRunner.java src/main/java/com/z0fsec/jar2mp/ui/MainPanel.java README.md src/test/java/com/z0fsec/jar2mp/cli/CliRunnerTest.java src/test/java/com/z0fsec/jar2mp/core/ProjectBuilderTest.java

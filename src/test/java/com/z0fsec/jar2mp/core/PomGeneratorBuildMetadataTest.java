@@ -87,6 +87,28 @@ class PomGeneratorBuildMetadataTest {
         assertEquals(1, countOccurrences(pomXml, "<artifactId>maven-compiler-plugin</artifactId>"));
     }
 
+    @Test
+    void omitsVersionForParentManagedDependenciesWithUnknownVersions() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.setParentGroupId("org.springframework.boot");
+        pomInfo.setParentArtifactId("spring-boot-starter-parent");
+        pomInfo.setParentVersion("2.7.18");
+        analysis.setEmbeddedPomInfo(pomInfo);
+        analysis.getDetectedDependencies().add(new MavenDependency("org.springframework.boot",
+                "spring-boot-starter", "unknown", MavenDependency.Confidence.HIGH));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<artifactId>spring-boot-starter</artifactId>"));
+        assertEquals(0, countOccurrences(pomXml, "<version>unknown</version>"));
+    }
+
     private int countOccurrences(String value, String substring) {
         int count = 0;
         int index = 0;

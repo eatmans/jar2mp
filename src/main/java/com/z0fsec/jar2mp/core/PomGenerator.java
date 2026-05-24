@@ -139,7 +139,9 @@ public class PomGenerator {
         sb.append(indent).append("<dependency>\n");
         appendElement(sb, "groupId", dep.getGroupId(), indent + "    ");
         appendElement(sb, "artifactId", dep.getArtifactId(), indent + "    ");
-        appendElement(sb, "version", dep.getVersion(), indent + "    ");
+        if (hasKnownValue(dep.getVersion())) {
+            appendElement(sb, "version", dep.getVersion(), indent + "    ");
+        }
         if (dep.getType() != null && !"jar".equals(dep.getType())) {
             appendElement(sb, "type", dep.getType(), indent + "    ");
         }
@@ -203,6 +205,12 @@ public class PomGenerator {
         sb.append("                    <encoding>UTF-8</encoding>\n");
         sb.append("                </configuration>\n");
         sb.append("            </plugin>\n");
+    }
+
+    private boolean hasKnownValue(String value) {
+        return value != null
+                && !value.trim().isEmpty()
+                && !"unknown".equalsIgnoreCase(value.trim());
     }
 
     private void appendElement(StringBuilder sb, String tag, String value, String indent) {

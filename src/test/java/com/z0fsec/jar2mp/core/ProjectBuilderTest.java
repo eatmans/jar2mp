@@ -91,6 +91,7 @@ class ProjectBuilderTest {
     void restoresSpringBootClassResourcesAndSkipsNestedLibraries() throws Exception {
         Path jar = tempDir.resolve("boot.jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "org/springframework/boot/loader/JarLauncher.class", minimalClassBytes(52));
             addEntry(out, "BOOT-INF/classes/com/example/App.class", minimalClassBytes(52));
             addEntry(out, "BOOT-INF/classes/static/app.css", "body { color: #333; }");
             addEntry(out, "BOOT-INF/classes/templates/home.html", "<p>home</p>");
@@ -101,6 +102,9 @@ class ProjectBuilderTest {
 
         JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
         JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        assertFalse(analysis.getClassFiles().contains("org/springframework/boot/loader/JarLauncher.class"));
+        assertTrue(analysis.getClassFiles().contains("com/example/App.class"));
+
         Path outputDir = tempDir.resolve("out");
         new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
 
@@ -111,6 +115,7 @@ class ProjectBuilderTest {
         assertEquals("spring:\n  application:\n    name: restored\n",
                 Files.readString(outputDir.resolve("src/main/resources/application.yml")));
         assertFalse(Files.exists(outputDir.resolve("src/main/resources/BOOT-INF/lib/dependency.jar")));
+        assertFalse(Files.exists(outputDir.resolve("src/main/java/org/springframework/boot/loader/JarLauncher.java")));
     }
 
     @Test

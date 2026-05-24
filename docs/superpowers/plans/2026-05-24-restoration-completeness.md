@@ -10,6 +10,34 @@
 
 ---
 
+## Status Sync - 2026-05-24
+
+**Overall status:** complete for the planned implementation and acceptance scope.
+
+The checklist below was synchronized against the current branch (`codex/decompile-parity-checks`), commit history, source files, tests, and a fresh acceptance run. The historical "red test" steps cannot be reproduced from the final tree, but they are marked complete because the corresponding tests, implementation commits, and passing verification now exist.
+
+Evidence:
+
+- `mvn test`: PASS, 67 tests, 0 failures, 0 errors.
+- `mvn -q -DskipTests package`: PASS.
+- CLI synthetic smoke: PASS with `--verbose --trace-runtime --verify-build`; generated `pom.xml`, restored source, `decompile-parity-report.md`, `resource-inventory.md`, `restoration-report.md`, `verification-report.md`, `RUNBOOK.md`, `runtime-trace-report.md`, `restoration-score.md`, and `gap-summary.md`.
+- Spring Boot executable JAR acceptance: PASS on a generated Spring Boot 2.7.18 sample. The restored project analyzed only the 4 application classes under `BOOT-INF/classes`, skipped root `org/springframework/boot/loader/**`, generated a parent-managed `spring-boot-starter` dependency without `<version>unknown</version>`, compiled successfully, completed runtime tracing with exit code 0, and scored `100/100` (`source=100`, `resource=100`, `runtime=100`, `verification=100`).
+- Additional scoring hardening: runtime score now derives expected trace categories from static bytecode evidence, and source score no longer penalizes inner classes that are represented by the restored outer-class source.
+- Relevant completion commits: `d2bebf9`, `4f1f28f`, `beea56c`, `c2ceeb3`, `d98d4e4`, `9d95081`, `7ef1d84`, `8c1c121`, `17823ea`, `211f924`.
+
+Planned incomplete items:
+
+- None in this plan.
+
+Known boundaries that remain by design:
+
+- Source-level 100% semantic restoration is not guaranteed for reflection-heavy, generated, obfuscated, or environment-dependent behavior.
+- Runtime evidence is opt-in and only covers behavior exercised by the smoke run.
+- Runtime score no longer requires unrelated trace families such as file/socket unless bytecode evidence shows those APIs are expected; it still cannot prove unexercised branches are equivalent.
+- GUI report-path surfacing is implemented in code, but this plan's acceptance criteria are primarily covered by automated tests and CLI smoke evidence.
+
+---
+
 ## File Structure
 
 Create or modify these files during execution:
@@ -85,7 +113,7 @@ Test files:
 - Modify: `src/main/java/com/z0fsec/jar2mp/core/MavenMetadataExtractor.java`
 - Create: `src/test/java/com/z0fsec/jar2mp/core/MavenMetadataExtractorBuildMetadataTest.java`
 
-- [ ] **Step 1: Write failing test for embedded POM build metadata**
+- [x] **Step 1: Write failing test for embedded POM build metadata**
 
 Create `MavenMetadataExtractorBuildMetadataTest` with a JAR containing:
 
@@ -154,7 +182,7 @@ assertEquals(1, info.getBuildPlugins().size());
 assertEquals(1, info.getProfilesXml().size());
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Run:
 
@@ -164,7 +192,7 @@ mvn test -Dtest=MavenMetadataExtractorBuildMetadataTest
 
 Expected: compilation failure or assertion failure because the new metadata fields do not exist.
 
-- [ ] **Step 3: Add metadata model fields**
+- [x] **Step 3: Add metadata model fields**
 
 Add fields to `PomInfo`:
 
@@ -202,7 +230,7 @@ private String releasesXml;
 private String snapshotsXml;
 ```
 
-- [ ] **Step 4: Implement parsing in `MavenMetadataExtractor`**
+- [x] **Step 4: Implement parsing in `MavenMetadataExtractor`**
 
 Add helpers:
 
@@ -218,7 +246,7 @@ private String nodeToXml(Node node)
 
 Use DOM traversal only under direct child sections to avoid collecting nested profile/plugin data twice.
 
-- [ ] **Step 5: Run test**
+- [x] **Step 5: Run test**
 
 Run:
 
@@ -228,7 +256,7 @@ mvn test -Dtest=MavenMetadataExtractorBuildMetadataTest
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/model/PomInfo.java \
@@ -245,7 +273,7 @@ git commit -m "feat: extract embedded Maven build metadata"
 - Modify: `src/main/java/com/z0fsec/jar2mp/core/PomGenerator.java`
 - Create: `src/test/java/com/z0fsec/jar2mp/core/PomGeneratorBuildMetadataTest.java`
 
-- [ ] **Step 1: Write failing generator test**
+- [x] **Step 1: Write failing generator test**
 
 Test should construct `JarAnalysisResult` with a populated `PomInfo` and assert generated `pom.xml` contains:
 
@@ -260,7 +288,7 @@ Test should construct `JarAnalysisResult` with a populated `PomInfo` and assert 
 
 Also assert generated fallback compiler plugin is not duplicated when embedded POM already contains `maven-compiler-plugin`.
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 ```bash
 mvn test -Dtest=PomGeneratorBuildMetadataTest
@@ -268,7 +296,7 @@ mvn test -Dtest=PomGeneratorBuildMetadataTest
 
 Expected: fail because `PomGenerator` ignores new metadata.
 
-- [ ] **Step 3: Implement metadata emission**
+- [x] **Step 3: Implement metadata emission**
 
 In `PomGenerator.generate`:
 
@@ -280,7 +308,7 @@ In `PomGenerator.generate`:
 6. Add fallback `maven-compiler-plugin` only if no embedded compiler plugin exists.
 7. Emit raw profile XML snippets after build.
 
-- [ ] **Step 4: Run targeted tests**
+- [x] **Step 4: Run targeted tests**
 
 ```bash
 mvn test -Dtest=PomGeneratorBuildMetadataTest,PomGeneratorTest
@@ -288,7 +316,7 @@ mvn test -Dtest=PomGeneratorBuildMetadataTest,PomGeneratorTest
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/PomGenerator.java \
@@ -309,7 +337,7 @@ git commit -m "feat: preserve Maven build metadata in generated pom"
 - Modify: `src/main/java/com/z0fsec/jar2mp/core/JarAnalyzer.java`
 - Create: `src/test/java/com/z0fsec/jar2mp/core/FrameworkDetectorTest.java`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Cover these cases:
 
@@ -329,7 +357,7 @@ assertTrue(finding.getEvidence().contains("BOOT-INF/classes/"));
 assertTrue(finding.getRecommendedActions().contains("Generate Spring Boot run command"));
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 ```bash
 mvn test -Dtest=FrameworkDetectorTest
@@ -337,7 +365,7 @@ mvn test -Dtest=FrameworkDetectorTest
 
 Expected: fail because detector does not exist.
 
-- [ ] **Step 3: Implement detector**
+- [x] **Step 3: Implement detector**
 
 `FrameworkDetector.detect(JarAnalysisResult result)` should inspect:
 
@@ -355,7 +383,7 @@ Use deterministic confidence values:
 - 70: resource/config evidence
 - 50: weak class-name evidence
 
-- [ ] **Step 4: Wire into `JarAnalyzer`**
+- [x] **Step 4: Wire into `JarAnalyzer`**
 
 After dependency detection and before coordinate finalization:
 
@@ -363,7 +391,7 @@ After dependency detection and before coordinate finalization:
 result.getFrameworkFindings().addAll(frameworkDetector.detect(result));
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 mvn test -Dtest=FrameworkDetectorTest,JarAnalyzerTest
@@ -371,7 +399,7 @@ mvn test -Dtest=FrameworkDetectorTest,JarAnalyzerTest
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/FrameworkDetector.java \
@@ -392,7 +420,7 @@ git commit -m "feat: detect restoration framework signals"
 - Modify: `src/main/java/com/z0fsec/jar2mp/core/ProjectBuilder.java`
 - Create: `src/test/java/com/z0fsec/jar2mp/core/ResourceClassifierTest.java`
 
-- [ ] **Step 1: Write failing classifier test**
+- [x] **Step 1: Write failing classifier test**
 
 Use resource paths:
 
@@ -421,7 +449,7 @@ NATIVE_LIBRARY
 CERTIFICATE
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 ```bash
 mvn test -Dtest=ResourceClassifierTest
@@ -429,7 +457,7 @@ mvn test -Dtest=ResourceClassifierTest
 
 Expected: fail because classifier does not exist.
 
-- [ ] **Step 3: Implement classifier**
+- [x] **Step 3: Implement classifier**
 
 `ResourceClassifier.classify(JarAnalysisResult result)` should map each known resource to:
 
@@ -444,7 +472,7 @@ Use the same output target rules as `ProjectBuilder`:
 - `BOOT-INF/classes/**` -> `src/main/resources`
 - JAR root resources -> `src/main/resources`
 
-- [ ] **Step 4: Write report from `ProjectBuilder`**
+- [x] **Step 4: Write report from `ProjectBuilder`**
 
 `RestorationReportWriter.writeResourceInventory(File outputDir, JarAnalysisResult analysis)` writes:
 
@@ -454,7 +482,7 @@ Use the same output target rules as `ProjectBuilder`:
 | Category | Original path | Target path | Notes |
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 mvn test -Dtest=ResourceClassifierTest,ProjectBuilderTest
@@ -462,7 +490,7 @@ mvn test -Dtest=ResourceClassifierTest,ProjectBuilderTest
 
 Expected: pass and generated test project contains `resource-inventory.md`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/ResourceClassifier.java \
@@ -488,7 +516,7 @@ git commit -m "feat: report classified restored resources"
 - Modify: `src/main/java/com/z0fsec/jar2mp/cli/CliRunner.java`
 - Create: `src/test/java/com/z0fsec/jar2mp/core/ProjectVerifierTest.java`
 
-- [ ] **Step 1: Write failing verifier tests**
+- [x] **Step 1: Write failing verifier tests**
 
 Use a temporary Maven project with a minimal `pom.xml` and `src/main/java/demo/App.java`.
 
@@ -509,7 +537,7 @@ assertEquals("COMPILATION_ERROR", result.getFailureType());
 assertTrue(result.getSummary().contains("Compilation failure"));
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 ```bash
 mvn test -Dtest=ProjectVerifierTest
@@ -517,7 +545,7 @@ mvn test -Dtest=ProjectVerifierTest
 
 Expected: fail because verifier does not exist.
 
-- [ ] **Step 3: Implement verifier**
+- [x] **Step 3: Implement verifier**
 
 Implement:
 
@@ -539,7 +567,7 @@ Rules:
   - `MAVEN_NOT_FOUND`
   - `UNKNOWN`
 
-- [ ] **Step 4: Add CLI option**
+- [x] **Step 4: Add CLI option**
 
 Add:
 
@@ -550,7 +578,7 @@ Add:
 
 Do not run verification by default because it may require network access.
 
-- [ ] **Step 5: Write `verification-report.md`**
+- [x] **Step 5: Write `verification-report.md`**
 
 When verification is enabled, write:
 
@@ -563,7 +591,7 @@ When verification is enabled, write:
 - Summary:
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 ```bash
 mvn test -Dtest=ProjectVerifierTest,CliRunnerTest
@@ -571,7 +599,7 @@ mvn test -Dtest=ProjectVerifierTest,CliRunnerTest
 
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/ProjectVerifier.java \
@@ -592,7 +620,7 @@ git commit -m "feat: add optional generated project verification"
 - Modify: `src/main/java/com/z0fsec/jar2mp/core/ProjectBuilder.java`
 - Create: `src/test/java/com/z0fsec/jar2mp/core/StartupDetectorTest.java`
 
-- [ ] **Step 1: Write failing startup detector tests**
+- [x] **Step 1: Write failing startup detector tests**
 
 Cover:
 
@@ -611,7 +639,7 @@ mvn package
 
 WAR runbook should say external servlet container is needed unless embedded server dependencies are detected.
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 ```bash
 mvn test -Dtest=StartupDetectorTest
@@ -619,7 +647,7 @@ mvn test -Dtest=StartupDetectorTest
 
 Expected: fail because detector does not exist.
 
-- [ ] **Step 3: Implement startup detection**
+- [x] **Step 3: Implement startup detection**
 
 Evidence priority:
 
@@ -629,7 +657,7 @@ Evidence priority:
 4. WAR framework finding
 5. Bytecode method named `main` with descriptor `([Ljava/lang/String;)V`
 
-- [ ] **Step 4: Generate `RUNBOOK.md`**
+- [x] **Step 4: Generate `RUNBOOK.md`**
 
 Write:
 
@@ -642,7 +670,7 @@ Write:
 ## Known gaps
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 mvn test -Dtest=StartupDetectorTest,ProjectBuilderTest
@@ -650,7 +678,7 @@ mvn test -Dtest=StartupDetectorTest,ProjectBuilderTest
 
 Expected: pass and generated test output includes `RUNBOOK.md`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/StartupDetector.java \
@@ -672,7 +700,7 @@ git commit -m "feat: generate startup runbook"
 - Modify: `src/main/java/com/z0fsec/jar2mp/core/DecompileParityReporter.java`
 - Modify: `src/test/java/com/z0fsec/jar2mp/core/DecompileParityReporterTest.java`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add compiled fixture class with:
 
@@ -694,7 +722,7 @@ Generic signatures
 Thrown exceptions
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 ```bash
 mvn test -Dtest=DecompileParityReporterTest
@@ -702,7 +730,7 @@ mvn test -Dtest=DecompileParityReporterTest
 
 Expected: fail because current report lacks these sections.
 
-- [ ] **Step 3: Parse class-level and method-level attributes**
+- [x] **Step 3: Parse class-level and method-level attributes**
 
 Add support for:
 
@@ -714,7 +742,7 @@ Add support for:
 - field table
 - bootstrap method references enough to report invokedynamic presence
 
-- [ ] **Step 4: Add risk levels**
+- [x] **Step 4: Add risk levels**
 
 Report each method as:
 
@@ -724,7 +752,7 @@ MEDIUM: lambdas/invokedynamic or missing local variable table
 HIGH: reflection, native methods, parse errors, missing source
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 mvn test -Dtest=DecompileParityReporterTest
@@ -732,7 +760,7 @@ mvn test -Dtest=DecompileParityReporterTest
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/BytecodeFingerprint.java \
@@ -750,7 +778,7 @@ git commit -m "feat: expand decompile parity fingerprinting"
 - Create: `src/main/java/com/z0fsec/jar2mp/model/DecompileFinding.java`
 - Create: `src/test/java/com/z0fsec/jar2mp/core/DecompilerFailureReportTest.java`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Use a malformed `.class` entry and assert:
 
@@ -760,7 +788,7 @@ assertTrue(report.contains("raw class retained"));
 assertTrue(Files.exists(output.resolve("target/original-classes/...")));
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 ```bash
 mvn test -Dtest=DecompilerFailureReportTest
@@ -768,7 +796,7 @@ mvn test -Dtest=DecompilerFailureReportTest
 
 Expected: fail because there is no structured decompile finding.
 
-- [ ] **Step 3: Implement structured decompile result**
+- [x] **Step 3: Implement structured decompile result**
 
 Change `DecompilerBridge` to expose:
 
@@ -778,7 +806,7 @@ public DecompileResult decompileDetailed(byte[] classBytes, String className)
 
 Keep existing `decompile` method for compatibility.
 
-- [ ] **Step 4: Retain raw original class bytes**
+- [x] **Step 4: Retain raw original class bytes**
 
 When source generation fails, copy original class bytes to:
 
@@ -788,7 +816,7 @@ target/original-classes/<classPath>
 
 Do not put these under `src/main/java`.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 mvn test -Dtest=DecompilerFailureReportTest,ProjectBuilderTest
@@ -796,7 +824,7 @@ mvn test -Dtest=DecompilerFailureReportTest,ProjectBuilderTest
 
 Expected: pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/DecompilerBridge.java \
@@ -819,7 +847,7 @@ git commit -m "feat: report decompile failures with raw class fallback"
 - Modify: `src/main/java/com/z0fsec/jar2mp/ui/MainPanel.java`
 - Modify: `src/test/java/com/z0fsec/jar2mp/cli/CliRunnerTest.java`
 
-- [ ] **Step 1: Write CLI test**
+- [x] **Step 1: Write CLI test**
 
 Assert CLI output in verbose mode mentions:
 
@@ -830,7 +858,7 @@ restoration-report.md
 RUNBOOK.md
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 ```bash
 mvn test -Dtest=CliRunnerTest
@@ -838,7 +866,7 @@ mvn test -Dtest=CliRunnerTest
 
 Expected: fail because CLI does not print all report paths.
 
-- [ ] **Step 3: Implement output surfacing**
+- [x] **Step 3: Implement output surfacing**
 
 After project build:
 
@@ -852,7 +880,7 @@ System.out.println("    " + new File(outputDir, "RUNBOOK.md").getAbsolutePath())
 
 GUI should append equivalent log lines after each project build.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 mvn test -Dtest=CliRunnerTest
@@ -860,7 +888,7 @@ mvn test -Dtest=CliRunnerTest
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/cli/CliOptions.java \
@@ -875,7 +903,7 @@ git commit -m "feat: surface restoration reports in cli and gui"
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Update README sections**
+- [x] **Step 1: Update README sections**
 
 Add:
 
@@ -894,7 +922,7 @@ RUNBOOK.md
 target/original-classes/
 ```
 
-- [ ] **Step 2: Run full tests**
+- [x] **Step 2: Run full tests**
 
 ```bash
 mvn test
@@ -908,7 +936,7 @@ Failures: 0
 Errors: 0
 ```
 
-- [ ] **Step 3: Run package build**
+- [x] **Step 3: Run package build**
 
 ```bash
 mvn clean package
@@ -921,7 +949,7 @@ BUILD SUCCESS
 target/jar2mp-1.0-jar-with-dependencies.jar
 ```
 
-- [ ] **Step 4: Smoke test CLI on synthetic JAR**
+- [x] **Step 4: Smoke test CLI on synthetic JAR**
 
 Create a temporary sample JAR using existing test fixtures or a small compiled class. Run:
 
@@ -942,7 +970,7 @@ verification-report.md
 RUNBOOK.md
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add README.md

@@ -15,11 +15,15 @@ public class ClassFileScanner {
      */
     public Set<String> scanPackages(JarFile jarFile) {
         Set<String> packages = new LinkedHashSet<>();
+        boolean executableSpringBootJar = hasEntryPrefix(jarFile, "BOOT-INF/classes/");
         Enumeration<JarEntry> entries = jarFile.entries();
 
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
             if (entry.getName().endsWith(".class") && !entry.getName().endsWith("module-info.class")) {
+                if (executableSpringBootJar && isSpringBootLoaderClass(entry.getName())) {
+                    continue;
+                }
                 try {
                     byte[] bytes = readEntryBytes(jarFile, entry);
                     Set<String> refs = extractClassReferences(bytes);
@@ -87,6 +91,20 @@ public class ClassFileScanner {
         }
 
         return refs;
+    }
+
+    private boolean hasEntryPrefix(JarFile jarFile, String prefix) {
+        Enumeration<JarEntry> entries = jarFile.entries();
+        while (entries.hasMoreElements()) {
+            if (entries.nextElement().getName().startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isSpringBootLoaderClass(String entryName) {
+        return entryName != null && entryName.startsWith("org/springframework/boot/loader/");
     }
 
     /**

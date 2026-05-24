@@ -5,13 +5,23 @@ import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ResourceFinding;
 import com.z0fsec.jar2mp.model.RestorationScore;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import javax.tools.ToolProvider;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RestorationScorerTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void combinesStaticRuntimeAndVerificationSignalsIntoAWeightedScore() {
@@ -44,11 +54,131 @@ class RestorationScorerTest {
 
         RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
 
-        assertEquals(73, score.getOverall());
+        assertEquals(88, score.getOverall());
         assertEquals(100, score.getBreakdown().get("source").intValue());
-        assertEquals(75, score.getBreakdown().get("resource").intValue());
-        assertEquals(50, score.getBreakdown().get("runtime").intValue());
+        assertEquals(100, score.getBreakdown().get("resource").intValue());
+        assertEquals(100, score.getBreakdown().get("runtime").intValue());
         assertEquals(40, score.getBreakdown().get("verification").intValue());
-        assertTrue(score.getGaps().stream().anyMatch(g -> "reflection".equals(g.getCategory())));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "nested_library".equals(g.getCategory())));
+    }
+
+    @Test
+    void metaInfRuntimeFilesDoNotLowerResourceFidelityForGeneratedMavenProjects() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getResourceFindings().add(new ResourceFinding("BOOT-INF/classes/application.yml",
+                ResourceFinding.Category.CONFIG,
+                "src/main/resources/application.yml",
+                "config"));
+        analysis.getResourceFindings().add(new ResourceFinding("META-INF/MANIFEST.MF",
+                ResourceFinding.Category.META_INF_RUNTIME,
+                "(skipped)",
+                "runtime metadata"));
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(100, score.getBreakdown().get("resource").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "meta_inf_runtime".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreUsesStaticBytecodeExpectationsInsteadOfAllTraceKinds() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "    TraceExpectations.class.getResourceAsStream(\"/application.yml\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        analysis.getResourceFindings().add(new ResourceFinding("application.yml",
+                ResourceFinding.Category.CONFIG,
+                "src/main/resources/application.yml",
+                "config"));
+
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run")),
+                new RuntimeTraceEvent("resource", "demo.TraceExpectations", "getResourceAsStream",
+                        "/application.yml", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(100, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "file".equals(g.getCategory())));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "socket".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreReportsMissingExpectedStaticKind() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "    TraceExpectations.class.getResourceAsStream(\"/application.yml\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(50, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g -> "resource".equals(g.getCategory())));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "file".equals(g.getCategory())));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "socket".equals(g.getCategory())));
+    }
+
+    @Test
+    void innerClassesDoNotLowerSourceFidelityWhenOuterClassSourceIsRestored() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/App.class");
+        analysis.getClassFiles().add("demo/App$Inner.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/App.class", null, null));
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(100, score.getBreakdown().get("source").intValue());
+    }
+
+    private Path compileJar(String className, String source) throws Exception {
+        Path sourceDir = tempDir.resolve("src");
+        Path classesDir = tempDir.resolve("classes");
+        Files.createDirectories(sourceDir);
+        Files.createDirectories(classesDir);
+        Path sourceFile = sourceDir.resolve(className.replace('.', '/') + ".java");
+        Files.createDirectories(sourceFile.getParent());
+        Files.write(sourceFile, source.getBytes(StandardCharsets.UTF_8));
+
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+
+        Path jar = tempDir.resolve(className.substring(className.lastIndexOf('.') + 1) + ".jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            String classEntry = className.replace('.', '/') + ".class";
+            out.putNextEntry(new JarEntry(classEntry));
+            out.write(Files.readAllBytes(classesDir.resolve(classEntry)));
+            out.closeEntry();
+        }
+        return jar;
     }
 }

@@ -33,13 +33,49 @@ public final class TraceHooks {
     }
 
     public static Class<?> forName(String name) throws ClassNotFoundException {
+        ClassNotFoundException failure = null;
+        for (String candidate : classNameCandidates(name)) {
+            try {
+                Class<?> loaded = Class.forName(candidate);
+                record(REFLECTION, "java.lang.Class", "forName", candidate);
+                return loaded;
+            } catch (ClassNotFoundException e) {
+                if (failure == null) {
+                    failure = e;
+                }
+            }
+            ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
+            if (contextLoader != null) {
+                try {
+                    Class<?> loaded = Class.forName(candidate, true, contextLoader);
+                    record(REFLECTION, "java.lang.Class", "forName", candidate);
+                    return loaded;
+                } catch (ClassNotFoundException e) {
+                    if (failure == null) {
+                        failure = e;
+                    }
+                }
+            }
+        }
         record(REFLECTION, "java.lang.Class", "forName", name);
-        return Class.forName(name);
+        throw failure == null ? new ClassNotFoundException(String.valueOf(name)) : failure;
     }
 
     public static Class<?> forName(String name, boolean initialize, ClassLoader loader) throws ClassNotFoundException {
+        ClassNotFoundException failure = null;
+        for (String candidate : classNameCandidates(name)) {
+            try {
+                Class<?> loaded = Class.forName(candidate, initialize, loader);
+                record(REFLECTION, "java.lang.Class", "forName", candidate);
+                return loaded;
+            } catch (ClassNotFoundException e) {
+                if (failure == null) {
+                    failure = e;
+                }
+            }
+        }
         record(REFLECTION, "java.lang.Class", "forName", name);
-        return Class.forName(name, initialize, loader);
+        throw failure == null ? new ClassNotFoundException(String.valueOf(name)) : failure;
     }
 
     public static Method getMethod(Class<?> type, String name, Class<?>[] parameterTypes) throws NoSuchMethodException {
@@ -213,6 +249,21 @@ public final class TraceHooks {
         return connection == null ? "" : connection.getURL() == null ? "" : connection.getURL().toString();
     }
 
+    private static String normalizeBinaryClassName(String name) {
+        if (name == null || name.startsWith("[") || name.indexOf('/') < 0) {
+            return name;
+        }
+        return name.replace('/', '.');
+    }
+
+    private static String[] classNameCandidates(String name) {
+        String binaryName = normalizeBinaryClassName(name);
+        if (binaryName == null || binaryName.equals(name)) {
+            return new String[]{name};
+        }
+        return new String[]{name, binaryName};
+    }
+
     private static String signature(String name, Class<?>[] parameterTypes) {
         return name + Arrays.toString(parameterTypes);
     }
@@ -223,4 +274,5 @@ public final class TraceHooks {
         }
         return signature(method.getName(), method.getParameterTypes());
     }
+
 }

@@ -6,12 +6,17 @@ import com.z0fsec.jar2mp.model.ResourceFinding;
 import com.z0fsec.jar2mp.model.RestorationScore;
 import com.z0fsec.jar2mp.model.VerificationResult;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 
 public class RestorationScorer {
 
@@ -23,7 +28,6 @@ public class RestorationScorer {
     private static final int RESOURCE_WEIGHT = 20;
     private static final int RUNTIME_WEIGHT = 20;
     private static final int VERIFICATION_WEIGHT = 20;
-    private static final String[] TRACE_KINDS = {"reflection", "resource", "file", "socket"};
     private static final String SKIPPED = "(skipped)";
 
     public RestorationScore score(JarAnalysisResult analysis, RuntimeTraceResult runtimeTraceResult,
@@ -38,7 +42,7 @@ public class RestorationScorer {
 
         int sourceScore = scoreSource(effectiveAnalysis, score);
         int resourceScore = scoreResources(effectiveAnalysis, score);
-        int runtimeScore = scoreRuntime(effectiveRuntime, score);
+        int runtimeScore = scoreRuntime(effectiveAnalysis, effectiveRuntime, score);
         int verificationScore = scoreVerification(effectiveVerification, score);
 
         score.putBucket(SOURCE, sourceScore);
@@ -52,7 +56,7 @@ public class RestorationScorer {
     }
 
     private int scoreSource(JarAnalysisResult analysis, RestorationScore score) {
-        int totalClasses = safeSize(analysis.getClassFiles());
+        int totalClasses = scoredSourceClassCount(analysis.getClassFiles());
         if (totalClasses == 0) {
             return 100;
         }
@@ -60,6 +64,9 @@ public class RestorationScorer {
         int restored = 0;
         for (DecompileFinding finding : safeFindings(analysis.getDecompileFindings())) {
             if (finding == null) {
+                continue;
+            }
+            if (!isScoredSourceClass(finding.getClassPath())) {
                 continue;
             }
             if (!finding.hasRetainedClassPath()) {
@@ -74,13 +81,20 @@ public class RestorationScorer {
 
     private int scoreResources(JarAnalysisResult analysis, RestorationScore score) {
         Collection<ResourceFinding> findings = safeFindings(analysis.getResourceFindings());
-        int total = findings.size();
+        List<ResourceFinding> scoredFindings = new ArrayList<>();
+        for (ResourceFinding finding : findings) {
+            if (!isIgnorableResourceFinding(finding)) {
+                scoredFindings.add(finding);
+            }
+        }
+
+        int total = scoredFindings.size();
         if (total == 0) {
             return 100;
         }
 
         int restored = 0;
-        for (ResourceFinding finding : findings) {
+        for (ResourceFinding finding : scoredFindings) {
             if (finding == null) {
                 continue;
             }
@@ -95,12 +109,44 @@ public class RestorationScorer {
         return percent(restored, total);
     }
 
-    private int scoreRuntime(RuntimeTraceResult runtimeTraceResult, RestorationScore score) {
+    private boolean isIgnorableResourceFinding(ResourceFinding finding) {
+        if (finding == null) {
+            return false;
+        }
+        ResourceFinding.Category category = finding.getCategory();
+        return category == ResourceFinding.Category.NESTED_LIBRARY
+                || category == ResourceFinding.Category.META_INF_RUNTIME;
+    }
+
+    private int scoreRuntime(JarAnalysisResult analysis, RuntimeTraceResult runtimeTraceResult,
+                             RestorationScore score) {
         if (runtimeTraceResult == null || runtimeTraceResult.getEvents().isEmpty()) {
             score.addGap("reflection", "No runtime trace data captured.", RUNTIME_WEIGHT);
             return 0;
         }
 
+        Set<String> kinds = runtimeKinds(runtimeTraceResult);
+        Set<String> expectedKinds = expectedRuntimeKinds(analysis);
+        if (expectedKinds.isEmpty()) {
+            expectedKinds.addAll(kinds);
+        }
+        if (expectedKinds.isEmpty()) {
+            return 100;
+        }
+
+        int present = 0;
+        for (String kind : expectedKinds) {
+            if (kinds.contains(kind)) {
+                present++;
+            } else {
+                score.addGap(kind, "No runtime evidence recorded for statically detected " + kind + " usage.",
+                        bucketImpact(RUNTIME_WEIGHT, expectedKinds.size(), 1));
+            }
+        }
+        return percent(present, expectedKinds.size());
+    }
+
+    private Set<String> runtimeKinds(RuntimeTraceResult runtimeTraceResult) {
         Set<String> kinds = new LinkedHashSet<>();
         for (RuntimeTraceEvent event : runtimeTraceResult.getEvents()) {
             if (event == null || event.getKind() == null) {
@@ -108,16 +154,108 @@ public class RestorationScorer {
             }
             kinds.add(event.getKind().toLowerCase(Locale.ROOT));
         }
+        return kinds;
+    }
 
-        int present = 0;
-        for (String kind : TRACE_KINDS) {
-            if (kinds.contains(kind)) {
-                present++;
-            } else {
-                score.addGap(kind, "No runtime evidence recorded for " + kind + ".", RUNTIME_WEIGHT / 2);
+    private Set<String> expectedRuntimeKinds(JarAnalysisResult analysis) {
+        Set<String> expectedKinds = new LinkedHashSet<>();
+        if (analysis == null || analysis.getSourceFile() == null || !analysis.getSourceFile().isFile()) {
+            return expectedKinds;
+        }
+
+        try (JarFile jarFile = new JarFile(analysis.getSourceFile())) {
+            for (String classPath : safeFindings(analysis.getClassFiles())) {
+                String rawEntryPath = analysis.getClassPathMapping().get(classPath);
+                if (rawEntryPath == null) {
+                    rawEntryPath = classPath;
+                }
+                JarEntry entry = jarFile.getJarEntry(rawEntryPath);
+                if (entry == null) {
+                    continue;
+                }
+                try {
+                    BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(readAllBytes(jarFile, entry));
+                    collectExpectedRuntimeKinds(fingerprint, expectedKinds);
+                } catch (Exception ignored) {
+                    // Scoring should remain best-effort when a class cannot be fingerprinted.
+                }
+            }
+        } catch (IOException ignored) {
+            return expectedKinds;
+        }
+        return expectedKinds;
+    }
+
+    private void collectExpectedRuntimeKinds(BytecodeFingerprint fingerprint, Set<String> expectedKinds) {
+        for (BytecodeFingerprint.MethodFingerprint method : fingerprint.getMethodsByKey().values()) {
+            for (String call : method.getMethodCalls()) {
+                addExpectedRuntimeKind(call, expectedKinds);
             }
         }
-        return percent(present, TRACE_KINDS.length);
+    }
+
+    private void addExpectedRuntimeKind(String call, Set<String> expectedKinds) {
+        if (call == null) {
+            return;
+        }
+        if (isReflectionCall(call)) {
+            expectedKinds.add("reflection");
+        }
+        if (isResourceCall(call)) {
+            expectedKinds.add("resource");
+        }
+        if (isFileCall(call)) {
+            expectedKinds.add("file");
+        }
+        if (isSocketCall(call)) {
+            expectedKinds.add("socket");
+        }
+    }
+
+    private boolean isReflectionCall(String call) {
+        return call.startsWith("java/lang/Class.forName")
+                || call.startsWith("java/lang/Class.getMethod")
+                || call.startsWith("java/lang/Class.getDeclaredMethod")
+                || call.startsWith("java/lang/Class.getField")
+                || call.startsWith("java/lang/Class.getDeclaredField")
+                || call.startsWith("java/lang/reflect/Method.invoke");
+    }
+
+    private boolean isResourceCall(String call) {
+        return call.startsWith("java/lang/Class.getResource")
+                || call.startsWith("java/lang/ClassLoader.getResource");
+    }
+
+    private boolean isFileCall(String call) {
+        return call.startsWith("java/io/FileInputStream.<init>")
+                || call.startsWith("java/io/FileOutputStream.<init>")
+                || call.startsWith("java/nio/file/Files.newInputStream")
+                || call.startsWith("java/nio/file/Files.newOutputStream")
+                || call.startsWith("java/nio/file/Files.newBufferedReader")
+                || call.startsWith("java/nio/file/Files.readAllLines")
+                || call.startsWith("java/nio/file/Files.lines");
+    }
+
+    private boolean isSocketCall(String call) {
+        return call.startsWith("java/net/Socket.<init>")
+                || call.startsWith("java/net/URLConnection.connect")
+                || call.startsWith("java/net/URLConnection.getInputStream")
+                || call.startsWith("java/net/URLConnection.getOutputStream")
+                || call.startsWith("java/net/HttpURLConnection.connect")
+                || call.startsWith("java/net/HttpURLConnection.getInputStream")
+                || call.startsWith("java/net/HttpURLConnection.getOutputStream");
+    }
+
+    private byte[] readAllBytes(JarFile jarFile, JarEntry entry) throws IOException {
+        try (InputStream inputStream = jarFile.getInputStream(entry)) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = inputStream.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
     }
 
     private int scoreVerification(VerificationResult verificationResult, RestorationScore score) {
@@ -162,6 +300,26 @@ public class RestorationScorer {
         }
         int impact = (int) Math.round(bucketWeight * (missingItems / (double) totalItems));
         return Math.max(1, impact);
+    }
+
+    private int scoredSourceClassCount(Collection<String> classFiles) {
+        int total = 0;
+        for (String classFile : safeFindings(classFiles)) {
+            if (isScoredSourceClass(classFile)) {
+                total++;
+            }
+        }
+        return total;
+    }
+
+    private boolean isScoredSourceClass(String classPath) {
+        String value = safeValue(classPath);
+        if (value.endsWith("module-info.class")) {
+            return false;
+        }
+        int lastSlash = value.lastIndexOf('/');
+        String fileName = lastSlash >= 0 ? value.substring(lastSlash + 1) : value;
+        return !fileName.contains("$");
     }
 
     private String normalizeCategory(ResourceFinding.Category category) {

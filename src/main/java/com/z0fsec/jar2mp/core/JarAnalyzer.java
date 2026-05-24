@@ -44,6 +44,8 @@ public class JarAnalyzer {
         try (JarFile jf = new JarFile(jarFile)) {
             int totalEntries = 0;
             long totalSize = 0;
+            boolean hasBootApplicationClasses = false;
+            java.util.List<String> rawClassEntries = new java.util.ArrayList<>();
             Enumeration<JarEntry> entries = jf.entries();
 
             // Phase 1: Categorize entries
@@ -57,15 +59,25 @@ public class JarAnalyzer {
                 String name = entry.getName();
 
                 if (name.endsWith(".class")) {
-                    String strippedName = stripClassPathPrefix(name);
-                    result.getClassFiles().add(strippedName);
-                    if (!strippedName.equals(name)) {
-                        result.getClassPathMapping().put(strippedName, name);
+                    rawClassEntries.add(name);
+                    if (name.startsWith("BOOT-INF/classes/")) {
+                        hasBootApplicationClasses = true;
                     }
                 } else if (name.startsWith("META-INF/")) {
                     result.getMetaInfFiles().add(name);
                 } else if (!entry.isDirectory()) {
                     result.getResourceFiles().add(name);
+                }
+            }
+
+            for (String rawClassEntry : rawClassEntries) {
+                if (hasBootApplicationClasses && isSpringBootLoaderClass(rawClassEntry)) {
+                    continue;
+                }
+                String strippedName = stripClassPathPrefix(rawClassEntry);
+                result.getClassFiles().add(strippedName);
+                if (!strippedName.equals(rawClassEntry)) {
+                    result.getClassPathMapping().put(strippedName, rawClassEntry);
                 }
             }
 
@@ -205,6 +217,10 @@ public class JarAnalyzer {
             return entryName.substring("WEB-INF/classes/".length());
         }
         return entryName;
+    }
+
+    private static boolean isSpringBootLoaderClass(String entryName) {
+        return entryName != null && entryName.startsWith("org/springframework/boot/loader/");
     }
 
     private boolean shouldDetectDependencies() {

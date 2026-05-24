@@ -91,8 +91,12 @@ class TraceAgentManifestTest {
         Files.write(sourceFile, ("package demo;\n" +
                 "public class AgentMain {\n" +
                 "  public static void main(String[] args) throws Exception {\n" +
-                "    Class.forName(\"java.lang.String\");\n" +
+                "    Class.forName(\"demo.AgentTarget\").getDeclaredConstructor().newInstance();\n" +
                 "  }\n" +
+                "}\n").getBytes(StandardCharsets.UTF_8));
+        Path targetFile = sourceDir.resolve("AgentTarget.java");
+        Files.write(targetFile, ("package demo;\n" +
+                "public class AgentTarget {\n" +
                 "}\n").getBytes(StandardCharsets.UTF_8));
 
         Path classesDir = tempDir.resolve("agent-classes");
@@ -104,7 +108,8 @@ class TraceAgentManifestTest {
                 "-source", "8",
                 "-target", "8",
                 "-d", classesDir.toString(),
-                sourceFile.toString());
+                sourceFile.toString(),
+                targetFile.toString());
         assertEquals(0, result);
 
         Manifest manifest = new Manifest();
@@ -115,6 +120,9 @@ class TraceAgentManifestTest {
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
             out.putNextEntry(new JarEntry("demo/AgentMain.class"));
             out.write(Files.readAllBytes(classesDir.resolve("demo/AgentMain.class")));
+            out.closeEntry();
+            out.putNextEntry(new JarEntry("demo/AgentTarget.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/AgentTarget.class")));
             out.closeEntry();
         }
         return jar;
