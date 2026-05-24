@@ -54,6 +54,9 @@ public class DecompileParityReporter {
                                    String source, Path sourcePath, DecompileFinding finding) {
         report.append("## ").append(fingerprint.getClassName()).append("\n\n");
         report.append("- Selected engine: ").append(selectedEngine(finding)).append("\n");
+        if (finding != null && finding.getEngineSummary() != null && !finding.getEngineSummary().trim().isEmpty()) {
+            report.append("- Engine scores: ").append(finding.getEngineSummary().trim()).append("\n");
+        }
         if (finding != null && finding.getFallbackReason() != null && !finding.getFallbackReason().trim().isEmpty()) {
             report.append("- Fallback reason: ").append(finding.getFallbackReason().trim()).append("\n");
         }

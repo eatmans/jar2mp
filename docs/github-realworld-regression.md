@@ -2,6 +2,8 @@
 
 `scripts/regression/run-github-realworld-regression.sh` downloads real Java projects from GitHub, builds their published artifact shape, runs jar2mp, and writes a verify-only restoration summary. Outputs live under `target/realworld-samples/` and are not committed.
 
+jar2mp uses multi-engine decompiler arbitration for these samples. CFR and JD-Core run in-process, JADX participates when the `jadx` command is available on `PATH` or `JADX_BIN`, and Fernflower remains as an additional fallback engine. JD-GUI itself is an interactive GUI; JD-Core is the automated engine from the same Java Decompiler family.
+
 Run:
 
 ```bash

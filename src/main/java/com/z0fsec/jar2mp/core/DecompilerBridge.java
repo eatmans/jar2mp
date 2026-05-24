@@ -9,6 +9,7 @@ import java.util.List;
 public class DecompilerBridge {
 
     private final List<DecompilerEngine> engines;
+    private final SourcePostProcessor sourcePostProcessor;
 
     public DecompilerBridge(ProjectConfig config) {
         this(config, defaultEngines(config));
@@ -20,11 +21,16 @@ public class DecompilerBridge {
         } else {
             this.engines = Collections.unmodifiableList(new ArrayList<>(engines));
         }
+        this.sourcePostProcessor = new SourcePostProcessor();
     }
 
     private static List<DecompilerEngine> defaultEngines(ProjectConfig config) {
         List<DecompilerEngine> defaultEngines = new ArrayList<>();
         defaultEngines.add(new CfrDecompilerEngine(config));
+        defaultEngines.add(new JdCoreDecompilerEngine());
+        if (JadxCliDecompilerEngine.isAvailable()) {
+            defaultEngines.add(new JadxCliDecompilerEngine());
+        }
         defaultEngines.add(new FernflowerDecompilerEngine(config));
         return Collections.unmodifiableList(defaultEngines);
     }
@@ -36,33 +42,39 @@ public class DecompilerBridge {
         private final String selectedEngine;
         private final String fallbackReason;
         private final int selectedEngineQuality;
+        private final String engineSummary;
 
         private DecompileResult(boolean success, String source, String failureMessage,
-                                String selectedEngine, String fallbackReason, int selectedEngineQuality) {
+                                String selectedEngine, String fallbackReason, int selectedEngineQuality,
+                                String engineSummary) {
             this.success = success;
             this.source = source;
             this.failureMessage = failureMessage;
             this.selectedEngine = selectedEngine;
             this.fallbackReason = fallbackReason;
             this.selectedEngineQuality = selectedEngineQuality;
+            this.engineSummary = engineSummary;
         }
 
         public static DecompileResult success(String source) {
-            return new DecompileResult(true, source, null, null, null, 0);
+            return new DecompileResult(true, source, null, null, null, 0, null);
         }
 
         public static DecompileResult success(String source, String selectedEngine,
-                                              String fallbackReason, int selectedEngineQuality) {
-            return new DecompileResult(true, source, null, selectedEngine, fallbackReason, selectedEngineQuality);
+                                              String fallbackReason, int selectedEngineQuality, String engineSummary) {
+            return new DecompileResult(true, source, null, selectedEngine, fallbackReason, selectedEngineQuality,
+                    engineSummary);
         }
 
         public static DecompileResult failure(String source, String failureMessage) {
-            return new DecompileResult(false, source, failureMessage, null, null, 0);
+            return new DecompileResult(false, source, failureMessage, null, null, 0, null);
         }
 
         public static DecompileResult failure(String source, String failureMessage,
-                                              String selectedEngine, String fallbackReason, int selectedEngineQuality) {
-            return new DecompileResult(false, source, failureMessage, selectedEngine, fallbackReason, selectedEngineQuality);
+                                              String selectedEngine, String fallbackReason, int selectedEngineQuality,
+                                              String engineSummary) {
+            return new DecompileResult(false, source, failureMessage, selectedEngine, fallbackReason,
+                    selectedEngineQuality, engineSummary);
         }
 
         public boolean isSuccess() {
@@ -88,6 +100,10 @@ public class DecompilerBridge {
         public int getSelectedEngineQuality() {
             return selectedEngineQuality;
         }
+
+        public String getEngineSummary() {
+            return engineSummary;
+        }
     }
 
     /**
@@ -102,7 +118,7 @@ public class DecompilerBridge {
         List<DecompilerEngine.Result> results = new ArrayList<>();
         for (DecompilerEngine engine : engines) {
             try {
-                results.add(engine.decompile(classBytes, className));
+                results.add(normalizeResult(engine.decompile(classBytes, className), className));
             } catch (Exception e) {
                 String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 results.add(DecompilerEngine.Result.failure(
@@ -117,7 +133,7 @@ public class DecompilerBridge {
         if (selected != null) {
             String fallbackReason = buildFallbackReason(results, selected);
             return DecompileResult.success(selected.getSource(), selected.getEngineName(), fallbackReason,
-                    selected.getQualityScore());
+                    selected.getQualityScore(), buildEngineSummary(results));
         }
 
         DecompilerEngine.Result bestFailure = selectBestResult(results);
@@ -126,7 +142,17 @@ public class DecompilerBridge {
         return DecompileResult.failure(source, failureMessage,
                 bestFailure == null ? null : bestFailure.getEngineName(),
                 failureMessage,
-                bestFailure == null ? 0 : bestFailure.getQualityScore());
+                bestFailure == null ? 0 : bestFailure.getQualityScore(),
+                buildEngineSummary(results));
+    }
+
+    private DecompilerEngine.Result normalizeResult(DecompilerEngine.Result result, String className) {
+        if (result == null || !result.isSuccess() || DecompilerEngine.isStubSource(result.getSource())) {
+            return result;
+        }
+        String processed = sourcePostProcessor.process(result.getSource(), className);
+        return DecompilerEngine.Result.success(result.getEngineName(), processed,
+                DecompilerEngine.scoreSource(processed));
     }
 
     private DecompilerEngine.Result selectUsableResult(List<DecompilerEngine.Result> results) {
@@ -200,6 +226,30 @@ public class DecompilerBridge {
                 builder.append("; ");
             }
             builder.append(result.getEngineName()).append(" -> ").append(describeOutcome(result));
+        }
+        return builder.toString();
+    }
+
+    private String buildEngineSummary(List<DecompilerEngine.Result> results) {
+        if (results.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < results.size(); i++) {
+            DecompilerEngine.Result result = results.get(i);
+            if (i > 0) {
+                builder.append(", ");
+            }
+            if (result == null) {
+                builder.append("unknown=missing");
+                continue;
+            }
+            builder.append(result.getEngineName()).append("=");
+            if (isUsable(result)) {
+                builder.append(result.getQualityScore());
+            } else {
+                builder.append("failed(").append(describeOutcome(result)).append(")");
+            }
         }
         return builder.toString();
     }

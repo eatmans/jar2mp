@@ -59,6 +59,7 @@ class DecompileParityReporterTest {
         DecompileFinding finding = new DecompileFinding("demo/ReflectiveFlow.class", null, null);
         finding.setSelectedEngine("fernflower");
         finding.setFallbackReason("cfr emitted stub-only output");
+        finding.setEngineSummary("cfr=failed(stub-only output), jd-core=70, jadx=70, fernflower=75");
         analysis.getDecompileFindings().add(finding);
 
         try (JarFile jarFile = new JarFile(jarPath.toFile())) {
@@ -70,6 +71,7 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("demo/ReflectiveFlow"));
         assertTrue(report.contains("run(Ljava/lang/String;)Ljava/lang/String;"));
         assertTrue(report.contains("Selected engine: fernflower"));
+        assertTrue(report.contains("Engine scores: cfr=failed"));
         assertTrue(report.contains("Fallback reason: cfr emitted stub-only output"));
         assertTrue(report.contains("Variable names: present in source"));
         assertTrue(report.contains("java/lang/Class.forName(Ljava/lang/String;)Ljava/lang/Class;"));

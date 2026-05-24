@@ -148,8 +148,9 @@ public class ProjectBuilder {
                                 decompileResult.getFailureMessage());
                         finding.setSelectedEngine(decompileResult.getSelectedEngine());
                         finding.setFallbackReason(decompileResult.getFallbackReason());
+                        finding.setEngineSummary(decompileResult.getEngineSummary());
                         if (decompileResult.isSuccess()) {
-                            String javaSource = sourcePostProcessor.process(decompileResult.getSource());
+                            String javaSource = sourcePostProcessor.process(decompileResult.getSource(), className);
                             IoUtils.ensureDirectory(outputFile.getParentFile());
                             IoUtils.writeStringToFile(outputFile, javaSource);
                             decompileFindings.add(finding);

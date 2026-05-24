@@ -6,6 +6,7 @@ public class DecompileFinding {
     private String message;
     private String selectedEngine;
     private String fallbackReason;
+    private String engineSummary;
 
     public DecompileFinding() {
     }
@@ -26,6 +27,8 @@ public class DecompileFinding {
     public void setSelectedEngine(String selectedEngine) { this.selectedEngine = selectedEngine; }
     public String getFallbackReason() { return fallbackReason; }
     public void setFallbackReason(String fallbackReason) { this.fallbackReason = fallbackReason; }
+    public String getEngineSummary() { return engineSummary; }
+    public void setEngineSummary(String engineSummary) { this.engineSummary = engineSummary; }
     public boolean hasRetainedClassPath() {
         return retainedClassPath != null && !retainedClassPath.trim().isEmpty();
     }
