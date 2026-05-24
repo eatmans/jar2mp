@@ -614,9 +614,15 @@ public class MainPanel extends BasePanel {
         appendInfo("  " + new File(outDir, "restoration-report.md").getAbsolutePath());
         appendInfo("  " + new File(outDir, "resource-inventory.md").getAbsolutePath());
         appendInfo("  " + new File(outDir, "decompile-parity-report.md").getAbsolutePath());
+        appendInfo("  " + new File(outDir, "restoration-score.md").getAbsolutePath());
+        appendInfo("  " + new File(outDir, "gap-summary.md").getAbsolutePath());
         File runtimeTraceReport = new File(outDir, "runtime-trace-report.md");
         if (runtimeTraceReport.exists()) {
             appendInfo("  " + runtimeTraceReport.getAbsolutePath());
+        }
+        File verificationReport = new File(outDir, "verification-report.md");
+        if (verificationReport.exists()) {
+            appendInfo("  " + verificationReport.getAbsolutePath());
         }
         appendInfo("  " + new File(outDir, "RUNBOOK.md").getAbsolutePath());
         appendInfo("  " + new File(outDir, "decompile-failures.md").getAbsolutePath());

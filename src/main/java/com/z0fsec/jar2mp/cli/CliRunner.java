@@ -60,6 +60,9 @@ public class CliRunner {
             ProjectVerifier verifier = new ProjectVerifier();
             RuntimeSmokeRunner smokeRunner = new RuntimeSmokeRunner();
             RuntimeTraceReportWriter traceReportWriter = new RuntimeTraceReportWriter();
+            RestorationScorer restorationScorer = new RestorationScorer();
+            RestorationScoreWriter restorationScoreWriter = new RestorationScoreWriter();
+            GapSummaryWriter gapSummaryWriter = new GapSummaryWriter();
 
             int totalFiles = files.size();
             int successCount = 0;
@@ -122,6 +125,9 @@ public class CliRunner {
                                 config.getTraceArgs(),
                                 config.getTraceTimeoutSeconds());
                         traceReportWriter.write(outputDir, smokeResult);
+                        result.setRuntimeTraceResult(smokeResult.getTraceResult());
+                        refreshRestorationScore(outputDir, result, restorationScorer, restorationScoreWriter,
+                                gapSummaryWriter);
                         if (!options.isQuiet()) {
                             printSmokeSummary(smokeResult);
                         }
@@ -129,12 +135,14 @@ public class CliRunner {
 
                     if (!options.isQuiet()) {
                         System.out.println("  Maven 项目已生成: " + outputDir.getAbsolutePath());
-                        printReportPaths(outputDir, config, false);
                     }
 
                     if (config.isVerifyBuild() && !config.isSmokeOnly()) {
                         VerificationResult verification = verifier.verify(outputDir, config.getVerifyGoal());
+                        result.setVerificationResult(verification);
                         verifier.writeReport(outputDir, verification);
+                        refreshRestorationScore(outputDir, result, restorationScorer, restorationScoreWriter,
+                                gapSummaryWriter);
                         if (!options.isQuiet()) {
                             printVerificationReportPath(outputDir);
                         }
@@ -142,6 +150,10 @@ public class CliRunner {
                             System.out.println("  构建验证: " + verification.getFailureType()
                                     + " (exit " + verification.getExitCode() + ")");
                         }
+                    }
+
+                    if (!options.isQuiet()) {
+                        printReportPaths(outputDir, config, false);
                     }
                     successCount++;
 
@@ -516,6 +528,8 @@ public class CliRunner {
         System.out.println("    " + new File(outputDir, "restoration-report.md").getAbsolutePath());
         System.out.println("    " + new File(outputDir, "resource-inventory.md").getAbsolutePath());
         System.out.println("    " + new File(outputDir, "decompile-parity-report.md").getAbsolutePath());
+        System.out.println("    " + new File(outputDir, "restoration-score.md").getAbsolutePath());
+        System.out.println("    " + new File(outputDir, "gap-summary.md").getAbsolutePath());
         System.out.println("    " + new File(outputDir, "RUNBOOK.md").getAbsolutePath());
         System.out.println("    " + new File(outputDir, "decompile-failures.md").getAbsolutePath());
         File traceReport = new File(outputDir, "runtime-trace-report.md");
@@ -529,6 +543,16 @@ public class CliRunner {
 
     private void printVerificationReportPath(File outputDir) {
         System.out.println("  " + new File(outputDir, "verification-report.md").getAbsolutePath());
+    }
+
+    private void refreshRestorationScore(File outputDir, JarAnalysisResult result,
+                                         RestorationScorer scorer,
+                                         RestorationScoreWriter scoreWriter,
+                                         GapSummaryWriter gapSummaryWriter) throws IOException {
+        RestorationScore score = scorer.score(result, result.getRuntimeTraceResult(), result.getVerificationResult());
+        result.setRestorationScore(score);
+        scoreWriter.write(outputDir, score);
+        gapSummaryWriter.write(outputDir, score);
     }
 
     private List<MavenDependency> importDependencies(String filePath) throws IOException {

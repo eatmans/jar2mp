@@ -142,6 +142,8 @@ Options:
 - `restoration-report.md` - 还原结果总览
 - `resource-inventory.md` - 资源分类与目标路径
 - `decompile-parity-report.md` - 字节码与源码对照
+- `restoration-score.md` - 综合还原评分
+- `gap-summary.md` - 主要缺口汇总
 - `runtime-trace-report.md` - 运行时追踪报告（启用运行时追踪时生成）
 - `RUNBOOK.md` - 启动候选与运行方式
 - `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证结果
@@ -152,7 +154,8 @@ Options:
 1. 先看 `restoration-report.md` 和 `resource-inventory.md`
 2. 再看 `RUNBOOK.md` 确认启动方式
 3. 用 `decompile-parity-report.md` 检查反编译风险
-4. 如需确认可编译性，启用 `--verify-build`
+4. 看 `restoration-score.md` 和 `gap-summary.md` 了解整体还原度
+5. 如需确认可编译性，启用 `--verify-build`
 
 能还原的主要内容：
 
@@ -176,6 +179,8 @@ Options:
 │   ├── restoration-report.md
 │   ├── resource-inventory.md
 │   ├── decompile-parity-report.md
+│   ├── restoration-score.md
+│   ├── gap-summary.md
 │   ├── runtime-trace-report.md   ← 启用运行时追踪时生成
 │   ├── RUNBOOK.md
 │   ├── verification-report.md

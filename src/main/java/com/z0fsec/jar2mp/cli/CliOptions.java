@@ -70,6 +70,7 @@ public class CliOptions {
         System.out.println();
         System.out.println("Output:");
         System.out.println("  每个项目会生成 decompile-parity-report.md 和 resource-inventory.md。");
+        System.out.println("  每个项目会生成 restoration-score.md 和 gap-summary.md。");
         System.out.println("  启用 --verify-build 后额外生成 verification-report.md。");
         System.out.println("  启用 --trace-runtime 后额外生成 runtime-trace-report.md。");
         System.out.println();

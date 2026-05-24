@@ -242,6 +242,8 @@ class CliRunnerTest {
         assertTrue(outputText.contains("decompile-parity-report.md"));
         assertTrue(outputText.contains("resource-inventory.md"));
         assertTrue(outputText.contains("restoration-report.md"));
+        assertTrue(outputText.contains("restoration-score.md"));
+        assertTrue(outputText.contains("gap-summary.md"));
         assertTrue(outputText.contains("RUNBOOK.md"));
     }
 
@@ -262,6 +264,8 @@ class CliRunnerTest {
         assertTrue(outputText.contains("--trace-args"));
         assertTrue(outputText.contains("--trace-timeout"));
         assertTrue(outputText.contains("--smoke-only"));
+        assertTrue(outputText.contains("restoration-score.md"));
+        assertTrue(outputText.contains("gap-summary.md"));
         assertTrue(outputText.contains("runtime-trace-report.md"));
     }
 
@@ -283,10 +287,33 @@ class CliRunnerTest {
         assertEquals(0, exitCode);
         Path reportPath = output.resolve("trace-sample").resolve("runtime-trace-report.md");
         assertTrue(Files.exists(reportPath));
+        assertTrue(Files.exists(output.resolve("trace-sample").resolve("restoration-score.md")));
+        assertTrue(Files.exists(output.resolve("trace-sample").resolve("gap-summary.md")));
         String report = Files.readString(reportPath);
         assertTrue(report.contains("# Runtime trace report"));
         assertTrue(report.contains("--smoke-test"));
         assertTrue(report.contains("demo.TraceMain"));
+    }
+
+    @Test
+    void traceRuntimeAndVerificationWritesFinalReports() throws Exception {
+        Path jar = createRunnableJar("trace-verify-sample-1.0.jar");
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--trace-runtime",
+                "--verify-build",
+                "--verify-goal", "compile",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path projectDir = output.resolve("trace-verify-sample");
+        assertTrue(Files.exists(projectDir.resolve("runtime-trace-report.md")));
+        assertTrue(Files.exists(projectDir.resolve("restoration-score.md")));
+        assertTrue(Files.exists(projectDir.resolve("gap-summary.md")));
+        assertTrue(Files.exists(projectDir.resolve("verification-report.md")));
     }
 
     private Path createJar(String fileName, String classEntry, byte[] classBytes) throws Exception {
