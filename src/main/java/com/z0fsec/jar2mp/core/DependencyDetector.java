@@ -45,7 +45,7 @@ public class DependencyDetector {
             String[] cpEntries = manifestInfo.getClassPath().split("\\s+");
             for (String cpEntry : cpEntries) {
                 MavenDependency dep = guessFromFilename(new File(cpEntry).getName());
-                if (dep != null) {
+                if (isResolvableManifestHint(dep)) {
                     dep.setConfidence(MavenDependency.Confidence.MEDIUM);
                     deps.putIfAbsent(dep.getKey(), dep);
                 }
@@ -76,6 +76,17 @@ public class DependencyDetector {
         // (handled separately in WarAnalyzer)
 
         return new ArrayList<>(deps.values());
+    }
+
+    private boolean isResolvableManifestHint(MavenDependency dep) {
+        if (dep == null) {
+            return false;
+        }
+        return isKnown(dep.getGroupId()) && isKnown(dep.getVersion());
+    }
+
+    private boolean isKnown(String value) {
+        return value != null && !value.trim().isEmpty() && !"unknown".equalsIgnoreCase(value.trim());
     }
 
     /**

@@ -1,0 +1,53 @@
+# Sample Regression Set
+
+`scripts/regression/run-sample-regression.sh` builds a local artifact matrix, runs jar2mp against each artifact, and writes per-sample restoration scores. The generated projects, restored outputs, and reports live under `target/regression-samples/`, so they stay out of git.
+
+Run:
+
+```bash
+./scripts/regression/run-sample-regression.sh
+```
+
+Optional environment:
+
+```bash
+MVN=/path/to/mvn JAVA_TRACE_TIMEOUT=45 ./scripts/regression/run-sample-regression.sh
+```
+
+## Samples
+
+| Sample | Artifact type | Trace mode | Threshold | Purpose |
+| --- | --- | --- | ---: | --- |
+| `plain-maven-jar` | executable Maven JAR | trace | 95 | Baseline JAR with reflection, resource loading, and file I/O. |
+| `spring-boot-jar` | Spring Boot executable JAR | trace | 95 | Nested `BOOT-INF/classes` and `BOOT-INF/lib` restoration. |
+| `servlet-war` | WAR | verify-only | 75 | Servlet layout, `WEB-INF/classes`, resources, and compile verification. |
+| `mybatis-jar` | thin Maven JAR | trace | 90 | Manifest `Class-Path`, MyBatis dependency, and XML mapper resources. |
+| `shiro-jar` | thin Maven JAR | trace | 90 | Apache Shiro dependency and auth-related package detection. |
+| `spring-security-jar` | thin Maven JAR | trace | 90 | Spring Security dependency and runtime context usage. |
+| `obfuscated-jar` | ProGuard-obfuscated JAR | trace | 85 | Renamed implementation classes and reduced source readability. |
+| `no-debug-jar` | executable Maven JAR | trace | 85 | Class files compiled with `debug=false` and no local variable table. |
+
+## Pass Criteria
+
+Each sample is marked `PASS` only when:
+
+- jar2mp exits successfully.
+- `restoration-score.md` exists and the overall score meets the sample threshold.
+- Source and resource buckets are both `100`.
+- `verification-report.md` reports `BUILD SUCCESS` and `Failure type: NONE`.
+- `decompile-failures.md` reports zero failed decompilations.
+- Trace samples also require `runtime-trace-report.md` exit code `0`, at least one runtime event, and runtime score `100`.
+
+The WAR sample is intentionally `verify-only`; it is not expected to produce a runtime trace because a WAR needs a servlet container.
+
+## Outputs
+
+The script writes:
+
+- `target/regression-samples/report/regression-summary.md`
+- `target/regression-samples/report/regression-summary.csv`
+- `target/regression-samples/report/*.cli.log`
+- generated source projects under `target/regression-samples/sources/`
+- restored jar2mp projects under `target/regression-samples/restored/`
+
+Do not commit the generated artifacts or reports. Commit the script and this documentation only.

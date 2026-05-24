@@ -157,6 +157,16 @@ Options:
 4. 看 `restoration-score.md` 和 `gap-summary.md` 了解整体还原度
 5. 如需确认可编译性，启用 `--verify-build`
 
+## 样本回归验证
+
+仓库提供本地样本回归脚本，用于生成普通 Maven JAR、Spring Boot JAR、WAR、MyBatis、Shiro、Spring Security、ProGuard 混淆 JAR、无 debug 信息 JAR，并逐类运行还原评分：
+
+```bash
+./scripts/regression/run-sample-regression.sh
+```
+
+汇总报告写入 `target/regression-samples/report/regression-summary.md` 和 `target/regression-samples/report/regression-summary.csv`。样本矩阵、阈值和 PASS/FAIL 规则见 `docs/regression-samples.md`。
+
 能还原的主要内容：
 
 - Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标和部分构建元数据
