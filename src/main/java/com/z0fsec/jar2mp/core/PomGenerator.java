@@ -17,7 +17,8 @@ public class PomGenerator {
         sb.append("    <modelVersion>4.0.0</modelVersion>\n\n");
 
         PomInfo embeddedPom = analysis.getEmbeddedPomInfo();
-        if (embeddedPom != null && embeddedPom.getParentArtifactId() != null) {
+        boolean parentIncluded = shouldIncludeParent(embeddedPom);
+        if (parentIncluded) {
             appendParent(sb, embeddedPom);
         }
 
@@ -74,8 +75,9 @@ public class PomGenerator {
         // Dependencies
         List<MavenDependency> deps = analysis.getDetectedDependencies();
         List<MavenDependency> included = new java.util.ArrayList<>();
+        boolean dependencyManagementIncluded = embeddedPom != null && !embeddedPom.getDependencyManagement().isEmpty();
         for (MavenDependency dep : deps) {
-            if (dep.isIncluded()) {
+            if (dep.isIncluded() && canRenderDependency(dep, parentIncluded || dependencyManagementIncluded, groupId, version)) {
                 included.add(dep);
             }
         }
@@ -102,7 +104,9 @@ public class PomGenerator {
                 if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
                     hasCompilerPlugin = true;
                 }
-                appendBuildPlugin(sb, plugin);
+                if (shouldAppendBuildPlugin(plugin)) {
+                    appendBuildPlugin(sb, plugin);
+                }
             }
         }
         if (!hasCompilerPlugin) {
@@ -133,6 +137,44 @@ public class PomGenerator {
             appendElement(sb, "relativePath", pomInfo.getParentRelativePath(), "        ");
         }
         sb.append("    </parent>\n\n");
+    }
+
+    private boolean shouldIncludeParent(PomInfo pomInfo) {
+        if (pomInfo == null || pomInfo.getParentArtifactId() == null) {
+            return false;
+        }
+        String version = pomInfo.getParentVersion();
+        if (!hasKnownValue(version)) {
+            return false;
+        }
+        String trimmed = version.trim();
+        return !trimmed.contains("${") && !trimmed.toUpperCase().contains("SNAPSHOT");
+    }
+
+    private boolean canRenderDependency(MavenDependency dep, boolean managedVersionAvailable,
+                                        String projectGroupId, String projectVersion) {
+        if (dep == null) {
+            return false;
+        }
+        String version = dep.getVersion();
+        if (hasKnownValue(version)) {
+            if (isProjectVersionReference(version) && isSameGroupSnapshot(dep, projectGroupId, projectVersion)) {
+                return false;
+            }
+            return true;
+        }
+        return managedVersionAvailable;
+    }
+
+    private boolean isProjectVersionReference(String version) {
+        return version != null && version.contains("${project.version}");
+    }
+
+    private boolean isSameGroupSnapshot(MavenDependency dep, String projectGroupId, String projectVersion) {
+        return dep.getGroupId() != null
+                && dep.getGroupId().equals(projectGroupId)
+                && projectVersion != null
+                && projectVersion.toUpperCase().contains("SNAPSHOT");
     }
 
     private void appendDependency(StringBuilder sb, MavenDependency dep, String indent) {
@@ -181,17 +223,60 @@ public class PomGenerator {
         if (plugin.getVersion() != null) {
             appendElement(sb, "version", plugin.getVersion(), "                ");
         }
+        boolean compilerPlugin = "maven-compiler-plugin".equals(plugin.getArtifactId());
         if (plugin.getConfigurationXml() != null) {
-            appendRawXml(sb, plugin.getConfigurationXml(), "                ");
+            String configurationXml = compilerPlugin
+                    ? sanitizeCompilerConfiguration(plugin.getConfigurationXml())
+                    : plugin.getConfigurationXml();
+            appendRawXml(sb, configurationXml, "                ");
         }
         if (!plugin.getExecutionsXml().isEmpty()) {
             sb.append("                <executions>\n");
             for (String executionXml : plugin.getExecutionsXml()) {
-                appendRawXml(sb, executionXml, "                    ");
+                appendRawXml(sb, compilerPlugin ? sanitizeCompilerConfiguration(executionXml) : executionXml,
+                        "                    ");
             }
             sb.append("                </executions>\n");
         }
         sb.append("            </plugin>\n");
+    }
+
+    private String sanitizeCompilerConfiguration(String xml) {
+        if (xml == null) {
+            return null;
+        }
+        return xml.replaceAll("(?s)\\s*<arg>\\s*-Werror\\s*</arg>", "")
+                .replaceAll("(?s)\\s*<compilerArgument>\\s*-Werror\\s*</compilerArgument>", "")
+                .replaceAll("(?s)<failOnWarning>\\s*true\\s*</failOnWarning>",
+                        "<failOnWarning>false</failOnWarning>");
+    }
+
+    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin) {
+        if (plugin == null || plugin.getArtifactId() == null) {
+            return false;
+        }
+        if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
+            return true;
+        }
+        for (String executionXml : plugin.getExecutionsXml()) {
+            if (runsBeforeCompile(executionXml)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean runsBeforeCompile(String executionXml) {
+        if (executionXml == null) {
+            return false;
+        }
+        String normalized = executionXml.replaceAll("\\s+", "");
+        return normalized.contains("<phase>validate</phase>")
+                || normalized.contains("<phase>initialize</phase>")
+                || normalized.contains("<phase>generate-sources</phase>")
+                || normalized.contains("<phase>process-sources</phase>")
+                || normalized.contains("<phase>generate-resources</phase>")
+                || normalized.contains("<phase>process-resources</phase>");
     }
 
     private void appendFallbackCompilerPlugin(StringBuilder sb, int javaVersion) {

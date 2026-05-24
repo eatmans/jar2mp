@@ -39,6 +39,24 @@ public interface DecompilerEngine {
         if (trimmed.contains("Couldn't be decompiled")) {
             score -= 30;
         }
+        if (trimmed.contains("Unavailable Anonymous Inner Class")) {
+            score -= 40;
+        }
+        if (trimmed.contains(".$SwitchMap$")) {
+            score -= 25;
+        }
+        if (trimmed.contains("Unable to fully structure code")) {
+            score -= 35;
+        }
+        if (trimmed.contains("WARNING - void declaration")) {
+            score -= 35;
+        }
+        if (trimmed.contains("Loose catch block")) {
+            score -= 30;
+        }
+        if (trimmed.contains("** ")) {
+            score -= 40;
+        }
         if (trimmed.contains("TODO")) {
             score -= 5;
         }

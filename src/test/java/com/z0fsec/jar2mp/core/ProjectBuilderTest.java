@@ -8,8 +8,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.stream.Stream;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -135,6 +137,27 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void usesContextDecompilerSourceThatPreservesNamedInnerClasses() throws Exception {
+        Path jar = compileJar("demo.Outer",
+                "package demo;\n"
+                        + "public class Outer {\n"
+                        + "  private Kind kind = Kind.A;\n"
+                        + "  public Kind getKind() { return kind; }\n"
+                        + "  public enum Kind { A, B }\n"
+                        + "}\n");
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("inner-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        String source = Files.readString(outputDir.resolve("src/main/java/demo/Outer.java"));
+        assertTrue(source.contains("enum Kind"));
+        assertTrue(source.contains("Kind getKind()"));
+        assertFalse(Files.exists(outputDir.resolve("src/main/java/demo/Outer$Kind.java")));
+    }
+
+    @Test
     void skipsResourcePathsThatWouldEscapeOutputDirectories() throws Exception {
         Path jar = tempDir.resolve("unsafe.jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
@@ -160,6 +183,53 @@ class ProjectBuilderTest {
         out.putNextEntry(new JarEntry(name));
         out.write(bytes);
         out.closeEntry();
+    }
+
+    private Path compileJar(String className, String source) throws Exception {
+        String packagePath = "";
+        String simpleName = className;
+        int lastDot = className.lastIndexOf('.');
+        if (lastDot >= 0) {
+            packagePath = className.substring(0, lastDot).replace('.', '/');
+            simpleName = className.substring(lastDot + 1);
+        }
+
+        Path sourceDir = tempDir.resolve("compile-src").resolve(packagePath);
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve(simpleName + ".java");
+        Files.write(sourceFile, source.getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("compile-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        if (result != 0) {
+            throw new IllegalStateException("javac failed with exit code " + result);
+        }
+
+        Path jar = tempDir.resolve(simpleName + ".jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar));
+             Stream<Path> paths = Files.walk(classesDir)) {
+            paths.filter(Files::isRegularFile)
+                    .forEach(path -> addCompiledEntry(out, classesDir, path));
+        }
+        return jar;
+    }
+
+    private void addCompiledEntry(JarOutputStream out, Path classesDir, Path classFile) {
+        try {
+            String name = classesDir.relativize(classFile).toString().replace('\\', '/');
+            addEntry(out, name, Files.readAllBytes(classFile));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private byte[] minimalClassBytes(int majorVersion) {

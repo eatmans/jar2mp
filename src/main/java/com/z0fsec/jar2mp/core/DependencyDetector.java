@@ -52,23 +52,34 @@ public class DependencyDetector {
             }
         }
 
-        // Strategy 3: Class file scanning against package database
-        if (!hasEmbeddedDependencies) {
-            Set<String> packages = classFileScanner.scanPackages(jarFile);
-            for (String pkg : packages) {
-                MavenCoordinates coord = packageDb.lookup(pkg);
-                if (coord != null) {
-                    String key = coord.getGroupId() + ":" + coord.getArtifactId();
-                    if (!deps.containsKey(key)) {
-                        MavenDependency dep = new MavenDependency(
-                                coord.getGroupId(),
-                                coord.getArtifactId(),
-                                coord.getVersion(),
-                                MavenDependency.Confidence.LOW
-                        );
-                        deps.put(key, dep);
-                    }
+        // Strategy 3: Class file scanning against package database. When an
+        // embedded POM exists, use scan data to fill missing/property versions
+        // and add only external packages that the selected POM did not name.
+        Set<String> packages = classFileScanner.scanPackages(jarFile);
+        for (String pkg : packages) {
+            MavenCoordinates coord = packageDb.lookup(pkg);
+            if (coord == null) {
+                continue;
+            }
+            String key = coord.getGroupId() + ":" + coord.getArtifactId();
+            MavenDependency existing = deps.get(key);
+            if (existing != null) {
+                if (!hasConcreteVersion(existing.getVersion()) && hasConcreteVersion(coord.getVersion())) {
+                    existing.setVersion(coord.getVersion());
                 }
+                continue;
+            }
+            if (hasEmbeddedDependencies && isOwnGroup(coord, pomInfo)) {
+                continue;
+            }
+            if (!hasEmbeddedDependencies || isExternalPackage(coord, pomInfo)) {
+                MavenDependency dep = new MavenDependency(
+                        coord.getGroupId(),
+                        coord.getArtifactId(),
+                        coord.getVersion(),
+                        MavenDependency.Confidence.LOW
+                );
+                deps.put(key, dep);
             }
         }
 
@@ -87,6 +98,22 @@ public class DependencyDetector {
 
     private boolean isKnown(String value) {
         return value != null && !value.trim().isEmpty() && !"unknown".equalsIgnoreCase(value.trim());
+    }
+
+    private boolean hasConcreteVersion(String value) {
+        return isKnown(value) && !value.contains("${");
+    }
+
+    private boolean isOwnGroup(MavenCoordinates coord, PomInfo pomInfo) {
+        return coord != null
+                && pomInfo != null
+                && pomInfo.getGroupId() != null
+                && coord.getGroupId() != null
+                && coord.getGroupId().equals(pomInfo.getGroupId());
+    }
+
+    private boolean isExternalPackage(MavenCoordinates coord, PomInfo pomInfo) {
+        return !isOwnGroup(coord, pomInfo);
     }
 
     /**

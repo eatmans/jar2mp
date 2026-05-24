@@ -24,6 +24,7 @@ public class ProjectBuilder {
     private final RestorationScoreWriter restorationScoreWriter;
     private final SourcePostProcessor sourcePostProcessor;
     private final GapSummaryWriter gapSummaryWriter;
+    private final CfrJarDecompiler cfrJarDecompiler;
 
     public interface ProgressCallback {
         void onProgress(String message, int percent);
@@ -38,6 +39,7 @@ public class ProjectBuilder {
         this.restorationScoreWriter = new RestorationScoreWriter();
         this.sourcePostProcessor = new SourcePostProcessor();
         this.gapSummaryWriter = new GapSummaryWriter();
+        this.cfrJarDecompiler = new CfrJarDecompiler();
     }
 
     public void build(File jarFile, JarAnalysisResult analysis, String pomXml,
@@ -76,6 +78,9 @@ public class ProjectBuilder {
 
             Set<String> decompiledOuterClasses = new HashSet<>();
             List<DecompileFinding> decompileFindings = analysis.getDecompileFindings();
+            Map<String, String> contextSources = shouldDecompile()
+                    ? cfrJarDecompiler.decompile(jarFile)
+                    : Collections.emptyMap();
 
             // Phase 1: Decompile class files
             if (callback != null) callback.onProgress("Decompiling class files...", 10);
@@ -125,6 +130,19 @@ public class ProjectBuilder {
                     IoUtils.ensureDirectory(outputFile.getParentFile());
                     IoUtils.writeStringToFile(outputFile, packageInfoSource(classPath));
                     decompileFindings.add(new DecompileFinding(classPath, null, null));
+                    continue;
+                }
+
+                String contextSource = findContextSource(contextSources, classPath, rawEntryPath);
+                if (contextSource != null && isContextSourceUsable(contextSource)) {
+                    String className = classPath.replace('/', '.').replace(".class", "");
+                    String javaSource = sourcePostProcessor.process(contextSource, className);
+                    IoUtils.ensureDirectory(outputFile.getParentFile());
+                    IoUtils.writeStringToFile(outputFile, javaSource);
+                    DecompileFinding finding = new DecompileFinding(classPath, null, null);
+                    finding.setSelectedEngine("cfr-context");
+                    finding.setEngineSummary("cfr-context=" + DecompilerEngine.scoreSource(javaSource));
+                    decompileFindings.add(finding);
                     continue;
                 }
 
@@ -288,6 +306,33 @@ public class ProjectBuilder {
                 fileName.endsWith(".RSA") ||
                 fileName.endsWith(".DSA") ||
                 fileName.endsWith(".EC"));
+    }
+
+    private String findContextSource(Map<String, String> contextSources, String classPath, String rawEntryPath) {
+        if (contextSources == null || contextSources.isEmpty() || classPath == null) {
+            return null;
+        }
+
+        String sourcePath = classPath.replace(".class", ".java");
+        String source = contextSources.get(sourcePath);
+        if (source != null) {
+            return source;
+        }
+
+        if (rawEntryPath == null) {
+            return null;
+        }
+        return contextSources.get(rawEntryPath.replace(".class", ".java"));
+    }
+
+    private boolean isContextSourceUsable(String source) {
+        if (source == null || DecompilerEngine.isStubSource(source)) {
+            return false;
+        }
+        return !source.contains("Unable to fully structure code")
+                && !source.contains("WARNING - void declaration")
+                && !source.contains("Loose catch block")
+                && !source.contains("** ");
     }
 
     private void copyJarEntry(JarFile jarFile, String entryPath, File baseDir, String outputRelativePath,

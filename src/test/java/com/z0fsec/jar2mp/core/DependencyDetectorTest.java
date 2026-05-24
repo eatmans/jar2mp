@@ -88,6 +88,32 @@ class DependencyDetectorTest {
         }
     }
 
+    @Test
+    void fillsUnknownEmbeddedDependencyVersionsFromPackageDatabase() throws Exception {
+        Path jarPath = tempDir.resolve("fat.jar");
+        try (JarOutputStream jar = new JarOutputStream(java.nio.file.Files.newOutputStream(jarPath))) {
+            addEntry(jar, "com/example/App.class",
+                    classFileWithUtf8Constant(52, "org/slf4j/Logger"));
+        }
+
+        PackagePrefixDatabase packageDb = new PackagePrefixDatabase();
+        packageDb.load(new java.io.ByteArrayInputStream(
+                "org.slf4j=org.slf4j:slf4j-api:2.0.11\n"
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.getDependencies().add(new MavenDependency("org.slf4j",
+                "slf4j-api", "unknown", MavenDependency.Confidence.HIGH));
+
+        DependencyDetector detector = new DependencyDetector(packageDb);
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            List<MavenDependency> dependencies = detector.detect(jarFile, null, pomInfo);
+
+            assertEquals(1, dependencies.size());
+            assertEquals("2.0.11", dependencies.get(0).getVersion());
+        }
+    }
+
     private static void addClassEntry(JarOutputStream jar, String name, int majorVersion) throws IOException {
         addEntry(jar, name, minimalClassFileBytes(majorVersion));
     }

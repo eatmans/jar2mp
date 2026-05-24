@@ -78,6 +78,30 @@ class DecompilerBridgeTest {
         assertTrue(DecompilerEngine.scoreSource(source) < 70);
     }
 
+    @Test
+    void penalizesKnownUncompilablePlaceholders() {
+        String source = "package demo;\n\npublic class Sample {\n"
+                + "  private static final Runnable R = new /* Unavailable Anonymous Inner Class!! */;\n"
+                + "  int value(Mode mode) { switch (1.$SwitchMap$demo$Mode[mode.ordinal()]) { default: return 0; } }\n"
+                + "}\n";
+
+        assertTrue(DecompilerEngine.scoreSource(source) < 70);
+    }
+
+    @Test
+    void penalizesUnstructuredCfrOutputMarkers() {
+        String source = "package demo;\n\npublic class Sample {\n"
+                + "  /*\n"
+                + "   * Unable to fully structure code\n"
+                + "   * WARNING - void declaration\n"
+                + "   * Loose catch block\n"
+                + "   */\n"
+                + "  void run() { if (true) ** break; }\n"
+                + "}\n";
+
+        assertTrue(DecompilerEngine.scoreSource(source) < 40);
+    }
+
     private List<DecompilerEngine> engines(DecompilerEngine... engines) {
         return Arrays.asList(engines);
     }

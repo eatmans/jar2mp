@@ -19,58 +19,142 @@ import org.w3c.dom.*;
 public class MavenMetadataExtractor {
 
     public PomInfo extract(JarFile jarFile) {
-        PomInfo pomInfo = null;
+        Map<String, PomInfo> candidates = new LinkedHashMap<>();
 
-        // 1. Look for pom.properties
+        // 1. Look for all pom.properties files. Fat/assembly jars may contain
+        // dependency metadata before the application module metadata.
         Enumeration<JarEntry> entries = jarFile.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
             String name = entry.getName();
             if (name.startsWith("META-INF/maven/") && name.endsWith("pom.properties")) {
-                pomInfo = parsePomProperties(jarFile, entry);
-                break;
+                mergeCandidate(candidates, parsePomProperties(jarFile, entry));
             }
         }
 
-        // 2. Look for embedded pom.xml
+        // 2. Merge all embedded pom.xml files with matching pom.properties.
         entries = jarFile.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
             String name = entry.getName();
             if (name.startsWith("META-INF/maven/") && name.endsWith("pom.xml") && !name.contains("/target/")) {
-                PomInfo pomXmlInfo = parsePomXml(jarFile, entry);
-                if (pomXmlInfo != null) {
-                    if (pomInfo == null) {
-                        pomInfo = pomXmlInfo;
-                    } else {
-                        // Merge: pom.xml may have dependency info that pom.properties doesn't
-                        if (pomInfo.getGroupId() == null) pomInfo.setGroupId(pomXmlInfo.getGroupId());
-                        if (pomInfo.getArtifactId() == null) pomInfo.setArtifactId(pomXmlInfo.getArtifactId());
-                        if (pomInfo.getVersion() == null) pomInfo.setVersion(pomXmlInfo.getVersion());
-                        if (pomInfo.getPackaging() == null) pomInfo.setPackaging(pomXmlInfo.getPackaging());
-                        if (pomInfo.getParentGroupId() == null) pomInfo.setParentGroupId(pomXmlInfo.getParentGroupId());
-                        if (pomInfo.getParentArtifactId() == null) pomInfo.setParentArtifactId(pomXmlInfo.getParentArtifactId());
-                        if (pomInfo.getParentVersion() == null) pomInfo.setParentVersion(pomXmlInfo.getParentVersion());
-                        if (pomInfo.getParentRelativePath() == null) pomInfo.setParentRelativePath(pomXmlInfo.getParentRelativePath());
-                        pomInfo.getProperties().putAll(pomXmlInfo.getProperties());
-                        pomInfo.getDependencyManagement().addAll(pomXmlInfo.getDependencyManagement());
-                        pomInfo.getRepositories().addAll(pomXmlInfo.getRepositories());
-                        pomInfo.getPluginRepositories().addAll(pomXmlInfo.getPluginRepositories());
-                        pomInfo.getBuildPlugins().addAll(pomXmlInfo.getBuildPlugins());
-                        pomInfo.getProfilesXml().addAll(pomXmlInfo.getProfilesXml());
-                        for (MavenDependency dep : pomXmlInfo.getDependencies()) {
-                            if (!containsDep(pomInfo.getDependencies(), dep)) {
-                                dep.setConfidence(MavenDependency.Confidence.HIGH);
-                                pomInfo.getDependencies().add(dep);
-                            }
-                        }
-                    }
-                }
-                break;
+                mergeCandidate(candidates, parsePomXml(jarFile, entry));
             }
         }
 
-        return pomInfo;
+        return selectPrimaryPom(candidates.values(), jarFile);
+    }
+
+    private void mergeCandidate(Map<String, PomInfo> candidates, PomInfo candidate) {
+        if (candidate == null || !candidate.hasCoordinates()) {
+            return;
+        }
+        String key = candidate.getGroupId() + ":" + candidate.getArtifactId();
+        PomInfo existing = candidates.get(key);
+        if (existing == null) {
+            candidates.put(key, candidate);
+            return;
+        }
+        mergePomInfo(existing, candidate);
+    }
+
+    private void mergePomInfo(PomInfo target, PomInfo source) {
+        if (target.getGroupId() == null) target.setGroupId(source.getGroupId());
+        if (target.getArtifactId() == null) target.setArtifactId(source.getArtifactId());
+        if (target.getVersion() == null) target.setVersion(source.getVersion());
+        if (target.getPackaging() == null) target.setPackaging(source.getPackaging());
+        if (target.getParentGroupId() == null) target.setParentGroupId(source.getParentGroupId());
+        if (target.getParentArtifactId() == null) target.setParentArtifactId(source.getParentArtifactId());
+        if (target.getParentVersion() == null) target.setParentVersion(source.getParentVersion());
+        if (target.getParentRelativePath() == null) target.setParentRelativePath(source.getParentRelativePath());
+        target.getProperties().putAll(source.getProperties());
+        for (MavenDependency dep : source.getDependencyManagement()) {
+            if (!containsDep(target.getDependencyManagement(), dep)) {
+                target.getDependencyManagement().add(dep);
+            }
+        }
+        target.getRepositories().addAll(source.getRepositories());
+        target.getPluginRepositories().addAll(source.getPluginRepositories());
+        target.getBuildPlugins().addAll(source.getBuildPlugins());
+        target.getProfilesXml().addAll(source.getProfilesXml());
+        for (MavenDependency dep : source.getDependencies()) {
+            if (!containsDep(target.getDependencies(), dep)) {
+                dep.setConfidence(MavenDependency.Confidence.HIGH);
+                target.getDependencies().add(dep);
+            }
+        }
+    }
+
+    private PomInfo selectPrimaryPom(Collection<PomInfo> candidates, JarFile jarFile) {
+        PomInfo best = null;
+        int bestScore = Integer.MIN_VALUE;
+        String fileArtifactId = inferArtifactId(jarFile.getName());
+        String fileVersion = inferVersion(jarFile.getName());
+        for (PomInfo candidate : candidates) {
+            int score = 0;
+            if (equalsIgnoreCase(candidate.getArtifactId(), fileArtifactId)) {
+                score += 100;
+            }
+            if (equalsIgnoreCase(candidate.getVersion(), fileVersion)) {
+                score += 20;
+            }
+            score += Math.min(30, countMatchingClassPrefix(jarFile, candidate));
+            if (best == null || score > bestScore) {
+                best = candidate;
+                bestScore = score;
+            }
+        }
+        return best;
+    }
+
+    private int countMatchingClassPrefix(JarFile jarFile, PomInfo candidate) {
+        if (candidate == null || candidate.getGroupId() == null) {
+            return 0;
+        }
+        String prefix = candidate.getGroupId().replace('.', '/') + "/";
+        int count = 0;
+        Enumeration<JarEntry> entries = jarFile.entries();
+        while (entries.hasMoreElements()) {
+            String name = entries.nextElement().getName();
+            if (name.endsWith(".class") && name.startsWith(prefix)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private String inferArtifactId(String jarName) {
+        String base = stripArchiveSuffix(jarName);
+        int split = findVersionSplit(base);
+        return split > 0 ? base.substring(0, split) : base;
+    }
+
+    private String inferVersion(String jarName) {
+        String base = stripArchiveSuffix(jarName);
+        int split = findVersionSplit(base);
+        return split > 0 ? base.substring(split + 1) : null;
+    }
+
+    private String stripArchiveSuffix(String jarName) {
+        String base = new File(jarName).getName();
+        int dot = base.lastIndexOf('.');
+        return dot > 0 ? base.substring(0, dot) : base;
+    }
+
+    private int findVersionSplit(String base) {
+        for (int i = base.length() - 1; i >= 0; i--) {
+            if (base.charAt(i) == '-') {
+                String version = base.substring(i + 1);
+                if (!version.isEmpty() && Character.isDigit(version.charAt(0))) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private boolean equalsIgnoreCase(String left, String right) {
+        return left != null && right != null && left.equalsIgnoreCase(right);
     }
 
     private PomInfo parsePomProperties(JarFile jarFile, JarEntry entry) {

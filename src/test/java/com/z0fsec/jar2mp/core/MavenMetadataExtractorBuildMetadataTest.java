@@ -74,6 +74,32 @@ class MavenMetadataExtractorBuildMetadataTest {
         assertTrue(info.getProfilesXml().get(0).contains("<id>prod</id>"));
     }
 
+    @Test
+    void selectsApplicationMetadataFromFatJar() throws Exception {
+        Path jar = tempDir.resolve("factory-method-1.26.0-SNAPSHOT.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addText(out, "META-INF/maven/org.slf4j/slf4j-api/pom.properties",
+                    "groupId=org.slf4j\nartifactId=slf4j-api\nversion=2.0.17\n");
+            addText(out, "META-INF/maven/org.slf4j/slf4j-api/pom.xml",
+                    simplePom("org.slf4j", "slf4j-api", "2.0.17"));
+            addText(out, "META-INF/maven/com.iluwatar/factory-method/pom.properties",
+                    "groupId=com.iluwatar\nartifactId=factory-method\nversion=1.26.0-SNAPSHOT\n");
+            addText(out, "META-INF/maven/com.iluwatar/factory-method/pom.xml",
+                    simplePom("com.iluwatar", "factory-method", "1.26.0-SNAPSHOT"));
+            addClass(out, "org/slf4j/Logger.class");
+            addClass(out, "com/iluwatar/factory/method/App.class");
+        }
+
+        PomInfo info;
+        try (JarFile jarFile = new JarFile(jar.toFile())) {
+            info = new MavenMetadataExtractor().extract(jarFile);
+        }
+
+        assertEquals("com.iluwatar", info.getGroupId());
+        assertEquals("factory-method", info.getArtifactId());
+        assertEquals("1.26.0-SNAPSHOT", info.getVersion());
+    }
+
     private String embeddedPom() {
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
                 "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n" +
@@ -139,5 +165,31 @@ class MavenMetadataExtractorBuildMetadataTest {
                 "    </profile>\n" +
                 "  </profiles>\n" +
                 "</project>\n";
+    }
+
+    private String simplePom(String groupId, String artifactId, String version) {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n" +
+                "  <modelVersion>4.0.0</modelVersion>\n" +
+                "  <groupId>" + groupId + "</groupId>\n" +
+                "  <artifactId>" + artifactId + "</artifactId>\n" +
+                "  <version>" + version + "</version>\n" +
+                "</project>\n";
+    }
+
+    private void addText(JarOutputStream out, String name, String text) throws Exception {
+        out.putNextEntry(new JarEntry(name));
+        out.write(text.getBytes(StandardCharsets.UTF_8));
+        out.closeEntry();
+    }
+
+    private void addClass(JarOutputStream out, String name) throws Exception {
+        out.putNextEntry(new JarEntry(name));
+        out.write(new byte[] {
+                (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE,
+                0x00, 0x00, 0x00, 0x34,
+                0x00, 0x01
+        });
+        out.closeEntry();
     }
 }
