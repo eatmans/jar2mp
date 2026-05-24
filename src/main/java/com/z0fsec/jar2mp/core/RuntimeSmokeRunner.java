@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
 
 public class RuntimeSmokeRunner {
 
-    private static final long TIMEOUT_SECONDS = 120L;
+    private static final long DEFAULT_TIMEOUT_SECONDS = 120L;
     private final RuntimeTraceCollector collector;
 
     public RuntimeSmokeRunner() {
@@ -57,7 +57,13 @@ public class RuntimeSmokeRunner {
 
     public SmokeRunResult runSmoke(File originalJar, JarAnalysisResult analysis, File agentJar,
                                    Path traceFile, List<String> appArgs) {
+        return runSmoke(originalJar, analysis, agentJar, traceFile, appArgs, DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    public SmokeRunResult runSmoke(File originalJar, JarAnalysisResult analysis, File agentJar,
+                                   Path traceFile, List<String> appArgs, long timeoutSeconds) {
         SmokeRunResult result = new SmokeRunResult();
+        long effectiveTimeout = timeoutSeconds > 0 ? timeoutSeconds : DEFAULT_TIMEOUT_SECONDS;
 
         try {
             SmokeCommand command = buildCommand(originalJar, analysis, agentJar, traceFile, appArgs);
@@ -107,10 +113,10 @@ public class RuntimeSmokeRunner {
                 stdout.start();
                 stderr.start();
 
-                boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                boolean finished = process.waitFor(effectiveTimeout, TimeUnit.SECONDS);
                 if (!finished) {
                     process.destroyForcibly();
-                    result.setFailureMessage("Smoke run timed out after " + TIMEOUT_SECONDS + " seconds.");
+                    result.setFailureMessage("Smoke run timed out after " + effectiveTimeout + " seconds.");
                 } else {
                     result.setExitCode(process.exitValue());
                     if (result.getExitCode() != 0) {

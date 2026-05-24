@@ -9,8 +9,11 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
+import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -242,8 +245,90 @@ class CliRunnerTest {
         assertTrue(outputText.contains("RUNBOOK.md"));
     }
 
+    @Test
+    void helpMentionsRuntimeTraceOptionsAndReport() throws Exception {
+        PrintStream originalOut = System.out;
+        ByteArrayOutputStream capturedOut = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(capturedOut, true, StandardCharsets.UTF_8.name()));
+        try {
+            int exitCode = new CliRunner().run(new String[]{"--help"});
+            assertEquals(0, exitCode);
+        } finally {
+            System.setOut(originalOut);
+        }
+
+        String outputText = new String(capturedOut.toByteArray(), StandardCharsets.UTF_8);
+        assertTrue(outputText.contains("--trace-runtime"));
+        assertTrue(outputText.contains("--trace-args"));
+        assertTrue(outputText.contains("--trace-timeout"));
+        assertTrue(outputText.contains("--smoke-only"));
+        assertTrue(outputText.contains("runtime-trace-report.md"));
+    }
+
+    @Test
+    void traceRuntimeWritesRuntimeTraceReport() throws Exception {
+        Path jar = createRunnableJar("trace-sample-1.0.jar");
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--trace-runtime",
+                "--trace-timeout", "10",
+                "--trace-args", "--smoke-test",
+                "--no-decompile",
+                "--no-dependencies",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path reportPath = output.resolve("trace-sample").resolve("runtime-trace-report.md");
+        assertTrue(Files.exists(reportPath));
+        String report = Files.readString(reportPath);
+        assertTrue(report.contains("# Runtime trace report"));
+        assertTrue(report.contains("--smoke-test"));
+        assertTrue(report.contains("demo.TraceMain"));
+    }
+
     private Path createJar(String fileName, String classEntry, byte[] classBytes) throws Exception {
         return createJar(fileName, classEntry, classBytes, null, null);
+    }
+
+    private Path createRunnableJar(String fileName) throws Exception {
+        Path sourceDir = tempDir.resolve("runtime-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("TraceMain.java");
+        Files.writeString(sourceFile,
+                "package demo;\n" +
+                        "public class TraceMain {\n" +
+                        "  public static void main(String[] args) throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n",
+                StandardCharsets.UTF_8);
+
+        Path classesDir = tempDir.resolve("runtime-classes");
+        Files.createDirectories(classesDir);
+        int compileResult = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, compileResult);
+
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "demo.TraceMain");
+
+        Path jar = tempDir.resolve(fileName);
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("demo/TraceMain.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/TraceMain.class")));
+            out.closeEntry();
+        }
+        return jar;
     }
 
     private Path createJar(String fileName, String classEntry, byte[] classBytes,

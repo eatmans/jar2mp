@@ -58,6 +58,10 @@ public class CliOptions {
         System.out.println("      --import-deps <file>        从文件导入依赖");
         System.out.println("      --verify-build              生成项目后运行 Maven 构建验证");
         System.out.println("      --verify-goal <goal>        构建验证 Maven goal（默认 compile）");
+        System.out.println("      --trace-runtime             使用 trace agent 运行原始 JAR 并生成 runtime-trace-report.md");
+        System.out.println("      --trace-args <args>         传给原始 JAR 的运行参数（可包含空格，需整体加引号）");
+        System.out.println("      --trace-timeout <seconds>   运行时追踪超时时间（默认 120 秒）");
+        System.out.println("      --smoke-only                启用运行时追踪并跳过 Maven 构建验证");
         System.out.println("  -f, --force                     覆盖已存在的输出目录");
         System.out.println("  -q, --quiet                     静默模式");
         System.out.println("      --verbose                   详细输出");
@@ -67,6 +71,7 @@ public class CliOptions {
         System.out.println("Output:");
         System.out.println("  每个项目会生成 decompile-parity-report.md 和 resource-inventory.md。");
         System.out.println("  启用 --verify-build 后额外生成 verification-report.md。");
+        System.out.println("  启用 --trace-runtime 后额外生成 runtime-trace-report.md。");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  java -jar jar2mp.jar target/app.jar");

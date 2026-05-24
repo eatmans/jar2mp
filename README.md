@@ -113,6 +113,10 @@ Options:
       --import-deps <file>        从文件导入依赖
       --verify-build              构建后运行 Maven 验证
       --verify-goal <goal>        验证使用的 Maven goal（默认 compile）
+      --trace-runtime             启用运行时追踪报告
+      --trace-args <args>         指定运行时追踪参数
+      --trace-timeout <seconds>   设置运行时追踪超时（默认 120 秒）
+      --smoke-only                启用运行时追踪并跳过 Maven 验证
   -f, --force                     覆盖已存在的输出目录
   -q, --quiet                     静默模式
       --verbose                   详细输出
@@ -138,6 +142,7 @@ Options:
 - `restoration-report.md` - 还原结果总览
 - `resource-inventory.md` - 资源分类与目标路径
 - `decompile-parity-report.md` - 字节码与源码对照
+- `runtime-trace-report.md` - 运行时追踪报告（启用运行时追踪时生成）
 - `RUNBOOK.md` - 启动候选与运行方式
 - `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证结果
 - `decompile-failures.md` - 反编译失败条目和原始 class 退回位置
@@ -171,6 +176,7 @@ Options:
 │   ├── restoration-report.md
 │   ├── resource-inventory.md
 │   ├── decompile-parity-report.md
+│   ├── runtime-trace-report.md   ← 启用运行时追踪时生成
 │   ├── RUNBOOK.md
 │   ├── verification-report.md
 │   └── decompile-failures.md

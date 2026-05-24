@@ -20,14 +20,24 @@ public class TraceAgent {
 
         TraceEventSink sink = TraceEventSink.open(resolveTraceFile(agentArgs));
         TraceEventSink.install(sink);
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                sink.close();
-            }
-        }, "jar2mp-trace-shutdown"));
+        Runtime.getRuntime().addShutdownHook(new Thread(new ShutdownHook(sink), "jar2mp-trace-shutdown"));
 
         new TraceTransformer(sink).install(instrumentation);
+    }
+
+    public static final class ShutdownHook implements Runnable {
+        private final TraceEventSink sink;
+
+        public ShutdownHook(TraceEventSink sink) {
+            this.sink = sink;
+        }
+
+        @Override
+        public void run() {
+            if (sink != null) {
+                sink.close();
+            }
+        }
     }
 
     private static String resolveTraceFile(String agentArgs) {

@@ -6,6 +6,9 @@ import com.z0fsec.jar2mp.model.*;
 import com.z0fsec.jar2mp.util.Jar2MpConstants;
 
 import java.io.*;
+import java.net.URI;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 
 public class CliRunner {
@@ -55,6 +58,8 @@ public class CliRunner {
             PomGenerator pomGen = new PomGenerator();
             ProjectBuilder builder = new ProjectBuilder(config);
             ProjectVerifier verifier = new ProjectVerifier();
+            RuntimeSmokeRunner smokeRunner = new RuntimeSmokeRunner();
+            RuntimeTraceReportWriter traceReportWriter = new RuntimeTraceReportWriter();
 
             int totalFiles = files.size();
             int successCount = 0;
@@ -108,12 +113,26 @@ public class CliRunner {
                         }
                     });
 
+                    if (config.isTraceRuntime() || config.isSmokeOnly()) {
+                        RuntimeSmokeRunner.SmokeRunResult smokeResult = smokeRunner.runSmoke(
+                                jarFile,
+                                result,
+                                resolveTraceAgentJar(),
+                                resolveTraceFile(config, outputDir),
+                                config.getTraceArgs(),
+                                config.getTraceTimeoutSeconds());
+                        traceReportWriter.write(outputDir, smokeResult);
+                        if (!options.isQuiet()) {
+                            printSmokeSummary(smokeResult);
+                        }
+                    }
+
                     if (!options.isQuiet()) {
                         System.out.println("  Maven 项目已生成: " + outputDir.getAbsolutePath());
                         printReportPaths(outputDir, config, false);
                     }
 
-                    if (config.isVerifyBuild()) {
+                    if (config.isVerifyBuild() && !config.isSmokeOnly()) {
                         VerificationResult verification = verifier.verify(outputDir, config.getVerifyGoal());
                         verifier.writeReport(outputDir, verification);
                         if (!options.isQuiet()) {
@@ -260,6 +279,25 @@ public class CliRunner {
                     if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
                     options.getConfig().setVerifyGoal(args[i]);
                     break;
+                case "--trace-runtime":
+                    options.getConfig().setTraceRuntime(true);
+                    break;
+                case "--trace-args":
+                    if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
+                    options.getConfig().setTraceRuntime(true);
+                    options.getConfig().getTraceArgs().addAll(parseTraceArgs(args[i]));
+                    break;
+                case "--trace-timeout":
+                    if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
+                    Long timeout = parsePositiveLong(args[i], arg);
+                    if (timeout == null) return null;
+                    options.getConfig().setTraceRuntime(true);
+                    options.getConfig().setTraceTimeoutSeconds(timeout.longValue());
+                    break;
+                case "--smoke-only":
+                    options.getConfig().setTraceRuntime(true);
+                    options.getConfig().setSmokeOnly(true);
+                    break;
                 case "-f":
                 case "--force":
                     options.getConfig().setForceOverwrite(true);
@@ -321,6 +359,135 @@ public class CliRunner {
         }
     }
 
+    private List<String> parseTraceArgs(String value) {
+        List<String> parsed = new ArrayList<>();
+        if (value == null || value.trim().isEmpty()) {
+            return parsed;
+        }
+
+        StringBuilder current = new StringBuilder();
+        boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
+        boolean escaping = false;
+
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (escaping) {
+                current.append(ch);
+                escaping = false;
+                continue;
+            }
+            if (ch == '\\') {
+                escaping = true;
+                continue;
+            }
+            if (ch == '\'' && !inDoubleQuote) {
+                inSingleQuote = !inSingleQuote;
+                continue;
+            }
+            if (ch == '"' && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote;
+                continue;
+            }
+            if (Character.isWhitespace(ch) && !inSingleQuote && !inDoubleQuote) {
+                addTraceArg(parsed, current);
+                continue;
+            }
+            current.append(ch);
+        }
+
+        if (escaping) {
+            current.append('\\');
+        }
+        addTraceArg(parsed, current);
+        return parsed;
+    }
+
+    private void addTraceArg(List<String> parsed, StringBuilder current) {
+        if (current.length() == 0) {
+            return;
+        }
+        parsed.add(current.toString());
+        current.setLength(0);
+    }
+
+    private Long parsePositiveLong(String value, String optionName) {
+        try {
+            long parsed = Long.parseLong(value);
+            if (parsed <= 0) {
+                System.err.println("Invalid value for " + optionName + ": " + value);
+                return null;
+            }
+            return Long.valueOf(parsed);
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid value for " + optionName + ": " + value);
+            return null;
+        }
+    }
+
+    private Path resolveTraceFile(ProjectConfig config, File outputDir) {
+        String configured = config.getTraceFile();
+        if (configured != null && !configured.trim().isEmpty()) {
+            Path path = Paths.get(configured.trim());
+            return path.isAbsolute() ? path : outputDir.toPath().resolve(path);
+        }
+        return outputDir.toPath().resolve("runtime-trace.jsonl");
+    }
+
+    private File resolveTraceAgentJar() {
+        String override = System.getProperty("jar2mp.traceAgentJar");
+        if (override != null && !override.trim().isEmpty()) {
+            return new File(override.trim());
+        }
+
+        String agentName = "jar2mp-" + Jar2MpConstants.VERSION + "-trace-agent.jar";
+        File targetAgent = new File("target", agentName);
+        if (targetAgent.isFile()) {
+            return targetAgent;
+        }
+
+        File codeLocation = resolveCodeLocation();
+        if (codeLocation != null) {
+            File baseDir = codeLocation.isFile() ? codeLocation.getParentFile() : codeLocation;
+            File sibling = new File(baseDir, agentName);
+            if (sibling.isFile()) {
+                return sibling;
+            }
+        }
+
+        File targetDir = new File("target");
+        File[] candidates = targetDir.listFiles((dir, name) -> name.endsWith(".jar") && name.contains("trace-agent"));
+        if (candidates != null && candidates.length > 0) {
+            Arrays.sort(candidates, Comparator.comparing(File::getName));
+            return candidates[0];
+        }
+        return targetAgent;
+    }
+
+    private File resolveCodeLocation() {
+        try {
+            if (getClass().getProtectionDomain() == null
+                    || getClass().getProtectionDomain().getCodeSource() == null
+                    || getClass().getProtectionDomain().getCodeSource().getLocation() == null) {
+                return null;
+            }
+            URI uri = getClass().getProtectionDomain().getCodeSource().getLocation().toURI();
+            return new File(uri);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void printSmokeSummary(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        RuntimeTraceResult traceResult = smokeResult.getTraceResult();
+        int eventCount = traceResult == null ? 0 : traceResult.getEvents().size();
+        String status = smokeResult.isSuccessful() ? "OK" : "FAILED";
+        System.out.println("  运行时追踪: " + status + " (" + eventCount + " events)");
+        if (smokeResult.getFailureMessage() != null && !smokeResult.getFailureMessage().trim().isEmpty()) {
+            System.out.println("    " + smokeResult.getFailureMessage());
+        }
+    }
+
     private void mergeImportedDependencies(List<MavenDependency> detectedDeps, List<MavenDependency> importedDeps) {
         Map<String, Integer> dependencyIndexes = new LinkedHashMap<>();
         for (int i = 0; i < detectedDeps.size(); i++) {
@@ -351,6 +518,10 @@ public class CliRunner {
         System.out.println("    " + new File(outputDir, "decompile-parity-report.md").getAbsolutePath());
         System.out.println("    " + new File(outputDir, "RUNBOOK.md").getAbsolutePath());
         System.out.println("    " + new File(outputDir, "decompile-failures.md").getAbsolutePath());
+        File traceReport = new File(outputDir, "runtime-trace-report.md");
+        if (traceReport.isFile() || config.isTraceRuntime() || config.isSmokeOnly()) {
+            System.out.println("    " + traceReport.getAbsolutePath());
+        }
         if (includeVerification && config.isVerifyBuild()) {
             System.out.println("    " + new File(outputDir, "verification-report.md").getAbsolutePath());
         }

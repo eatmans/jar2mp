@@ -1,5 +1,8 @@
 package com.z0fsec.jar2mp.model;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class ProjectConfig {
     private String outputDir;
     private String groupId;
@@ -18,6 +21,10 @@ public class ProjectConfig {
     private String customMappingFile;
     private String packaging;
     private String traceFile;
+    private boolean traceRuntime = false;
+    private final List<String> traceArgs = new ArrayList<>();
+    private long traceTimeoutSeconds = 120L;
+    private boolean smokeOnly = false;
 
     public String getOutputDir() { return outputDir; }
     public void setOutputDir(String outputDir) { this.outputDir = outputDir; }
@@ -53,4 +60,21 @@ public class ProjectConfig {
     public void setPackaging(String packaging) { this.packaging = packaging; }
     public String getTraceFile() { return traceFile; }
     public void setTraceFile(String traceFile) { this.traceFile = traceFile; }
+    public boolean isTraceRuntime() { return traceRuntime; }
+    public void setTraceRuntime(boolean traceRuntime) { this.traceRuntime = traceRuntime; }
+    public List<String> getTraceArgs() { return traceArgs; }
+    public void setTraceArgs(List<String> traceArgs) {
+        this.traceArgs.clear();
+        if (traceArgs != null) {
+            this.traceArgs.addAll(traceArgs);
+        }
+    }
+    public long getTraceTimeoutSeconds() { return traceTimeoutSeconds; }
+    public void setTraceTimeoutSeconds(long traceTimeoutSeconds) {
+        if (traceTimeoutSeconds > 0) {
+            this.traceTimeoutSeconds = traceTimeoutSeconds;
+        }
+    }
+    public boolean isSmokeOnly() { return smokeOnly; }
+    public void setSmokeOnly(boolean smokeOnly) { this.smokeOnly = smokeOnly; }
 }
