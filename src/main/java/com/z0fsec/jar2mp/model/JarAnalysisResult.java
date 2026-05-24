@@ -17,6 +17,9 @@ public class JarAnalysisResult {
     private final List<ResourceFinding> resourceFindings = new ArrayList<>();
     private final List<StartupFinding> startupFindings = new ArrayList<>();
     private final List<DecompileFinding> decompileFindings = new ArrayList<>();
+    private com.z0fsec.jar2mp.core.RuntimeTraceResult runtimeTraceResult;
+    private VerificationResult verificationResult;
+    private RestorationScore restorationScore;
     /** Maps stripped class path -> original entry path in JAR (for BOOT-INF/classes/, WEB-INF/classes/) */
     private final Map<String, String> classPathMapping = new LinkedHashMap<>();
     private String detectedGroupId;
@@ -42,6 +45,18 @@ public class JarAnalysisResult {
     public List<ResourceFinding> getResourceFindings() { return resourceFindings; }
     public List<StartupFinding> getStartupFindings() { return startupFindings; }
     public List<DecompileFinding> getDecompileFindings() { return decompileFindings; }
+    public com.z0fsec.jar2mp.core.RuntimeTraceResult getRuntimeTraceResult() { return runtimeTraceResult; }
+    public void setRuntimeTraceResult(com.z0fsec.jar2mp.core.RuntimeTraceResult runtimeTraceResult) {
+        this.runtimeTraceResult = runtimeTraceResult;
+    }
+    public VerificationResult getVerificationResult() { return verificationResult; }
+    public void setVerificationResult(VerificationResult verificationResult) {
+        this.verificationResult = verificationResult;
+    }
+    public RestorationScore getRestorationScore() { return restorationScore; }
+    public void setRestorationScore(RestorationScore restorationScore) {
+        this.restorationScore = restorationScore;
+    }
     public String getDetectedGroupId() { return detectedGroupId; }
     public void setDetectedGroupId(String detectedGroupId) { this.detectedGroupId = detectedGroupId; }
     public String getDetectedArtifactId() { return detectedArtifactId; }

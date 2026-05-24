@@ -56,6 +56,8 @@ class ProjectBuilderTest {
         assertFalse(Files.exists(outputDir.resolve("src/main/webapp/WEB-INF/lib/embedded.jar")));
         assertTrue(Files.readString(outputDir.resolve("decompile-parity-report.md"))
                 .contains("Decompile parity report"));
+        assertTrue(Files.exists(outputDir.resolve("restoration-score.md")));
+        assertTrue(Files.exists(outputDir.resolve("gap-summary.md")));
     }
 
     @Test

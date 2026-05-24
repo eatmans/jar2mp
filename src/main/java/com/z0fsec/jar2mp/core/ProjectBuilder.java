@@ -20,6 +20,9 @@ public class ProjectBuilder {
     private final DecompilerBridge decompiler;
     private final DecompileParityReporter parityReporter;
     private final RestorationReportWriter restorationReportWriter;
+    private final RestorationScorer restorationScorer;
+    private final RestorationScoreWriter restorationScoreWriter;
+    private final GapSummaryWriter gapSummaryWriter;
 
     public interface ProgressCallback {
         void onProgress(String message, int percent);
@@ -30,6 +33,9 @@ public class ProjectBuilder {
         this.decompiler = new DecompilerBridge(config);
         this.parityReporter = new DecompileParityReporter();
         this.restorationReportWriter = new RestorationReportWriter();
+        this.restorationScorer = new RestorationScorer();
+        this.restorationScoreWriter = new RestorationScoreWriter();
+        this.gapSummaryWriter = new GapSummaryWriter();
     }
 
     public void build(File jarFile, JarAnalysisResult analysis, String pomXml,
@@ -197,6 +203,14 @@ public class ProjectBuilder {
             restorationReportWriter.writeResourceInventory(outputDir, analysis);
             restorationReportWriter.writeRunbook(outputDir, analysis);
             restorationReportWriter.writeDecompileFailures(outputDir, analysis);
+
+            RestorationScore restorationScore = restorationScorer.score(
+                    analysis,
+                    analysis.getRuntimeTraceResult(),
+                    analysis.getVerificationResult());
+            analysis.setRestorationScore(restorationScore);
+            restorationScoreWriter.write(outputDir, restorationScore);
+            gapSummaryWriter.write(outputDir, restorationScore);
         }
 
         if (callback != null) callback.onProgress("Maven project generated successfully!", 100);

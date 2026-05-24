@@ -98,6 +98,8 @@ public class RestorationReportWriter {
         report.append("- `restoration-report.md`\n");
         report.append("- `resource-inventory.md`\n");
         report.append("- `decompile-parity-report.md`\n");
+        report.append("- `restoration-score.md`\n");
+        report.append("- `gap-summary.md`\n");
         report.append("- `RUNBOOK.md`\n");
         report.append("- `decompile-failures.md`\n");
         IoUtils.writeStringToFile(new File(outputDir, "restoration-report.md"), report.toString());
