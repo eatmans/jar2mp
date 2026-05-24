@@ -119,6 +119,22 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void writesPackageInfoSourceAsPackageDeclaration() throws Exception {
+        Path jar = tempDir.resolve("package-info.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "com/example/package-info.class", minimalClassBytes(52));
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertEquals("package com.example;\n",
+                Files.readString(outputDir.resolve("src/main/java/com/example/package-info.java")));
+    }
+
+    @Test
     void skipsResourcePathsThatWouldEscapeOutputDirectories() throws Exception {
         Path jar = tempDir.resolve("unsafe.jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {

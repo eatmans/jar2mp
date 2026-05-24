@@ -59,6 +59,25 @@ class DecompilerBridgeTest {
         assertTrue(result.getSource().contains("Failed to decompile"));
     }
 
+    @Test
+    void scoresCfrHeaderCommentAsStructuralSource() {
+        String source = "/*\n * Decompiled with CFR.\n */\n"
+                + "package demo;\n\npublic class Sample {}\n";
+
+        assertEquals(70, DecompilerEngine.scoreSource(source));
+    }
+
+    @Test
+    void penalizesFernflowerUndecompiledMethodMarkers() {
+        String source = "package demo;\n\npublic class Sample {\n"
+                + "  String value() {\n"
+                + "    // $FF: Couldn't be decompiled\n"
+                + "  }\n"
+                + "}\n";
+
+        assertTrue(DecompilerEngine.scoreSource(source) < 70);
+    }
+
     private List<DecompilerEngine> engines(DecompilerEngine... engines) {
         return Arrays.asList(engines);
     }

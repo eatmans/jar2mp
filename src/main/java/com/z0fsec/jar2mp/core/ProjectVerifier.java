@@ -22,7 +22,7 @@ public class ProjectVerifier {
         List<String> command = new ArrayList<>();
         command.add("mvn");
         command.add("-q");
-        command.add("-DskipTests");
+        addVerificationSkipFlags(command);
         for (String part : effectiveGoal.split("\\s+")) {
             if (!part.isEmpty()) {
                 command.add(part);
@@ -78,6 +78,23 @@ public class ProjectVerifier {
         }
 
         return result;
+    }
+
+    private void addVerificationSkipFlags(List<String> command) {
+        command.add("-DskipTests");
+        command.add("-Dmaven.test.skip=true");
+        command.add("-Dcheckstyle.skip=true");
+        command.add("-Dspring-javaformat.skip=true");
+        command.add("-Dimpsort.skip=true");
+        command.add("-Dformatter.skip=true");
+        command.add("-Dspotless.check.skip=true");
+        command.add("-Dspotless.apply.skip=true");
+        command.add("-Dlicense.skip=true");
+        command.add("-Drat.skip=true");
+        command.add("-Denforcer.skip=true");
+        command.add("-Djacoco.skip=true");
+        command.add("-Dgit.commit.id.skip=true");
+        command.add("-Dmaven.javadoc.skip=true");
     }
 
     public void writeReport(File projectDir, VerificationResult result) throws IOException {

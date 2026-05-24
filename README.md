@@ -167,6 +167,14 @@ Options:
 
 汇总报告写入 `target/regression-samples/report/regression-summary.md` 和 `target/regression-samples/report/regression-summary.csv`。样本矩阵、阈值和 PASS/FAIL 规则见 `docs/regression-samples.md`。
 
+也可以运行真实 GitHub 项目回归集，脚本会下载固定 ref 的 Spring Boot、Spring Security、MyBatis WAR、Shiro 样本，构建原始产物后再用 jar2mp 做 verify-only 还原验证：
+
+```bash
+./scripts/regression/run-github-realworld-regression.sh
+```
+
+汇总报告写入 `target/realworld-samples/report/github-realworld-summary.md` 和 `target/realworld-samples/report/github-realworld-summary.csv`。样本来源、固定 ref、阈值和已知非门禁候选见 `docs/github-realworld-regression.md`。
+
 能还原的主要内容：
 
 - Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标和部分构建元数据

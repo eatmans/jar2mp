@@ -20,23 +20,52 @@ public interface DecompilerEngine {
         }
 
         String trimmed = source.trim();
+        String structuralSource = stripLeadingComments(trimmed);
         int score = 20;
-        if (trimmed.startsWith("package ")) {
+        if (structuralSource.startsWith("package ")) {
             score += 20;
         }
-        if (trimmed.contains(" class ") || trimmed.contains(" interface ") || trimmed.contains(" enum ")) {
+        if (structuralSource.contains(" class ")
+                || structuralSource.contains(" interface ")
+                || structuralSource.contains(" enum ")) {
             score += 20;
         }
-        if (trimmed.contains("{") && trimmed.contains("}")) {
+        if (structuralSource.contains("{") && structuralSource.contains("}")) {
             score += 10;
         }
         if (trimmed.contains("UnsupportedOperationException")) {
             score -= 10;
         }
+        if (trimmed.contains("Couldn't be decompiled")) {
+            score -= 30;
+        }
         if (trimmed.contains("TODO")) {
             score -= 5;
         }
         return Math.max(score, 0);
+    }
+
+    static String stripLeadingComments(String source) {
+        String value = source == null ? "" : source.trim();
+        boolean changed;
+        do {
+            changed = false;
+            if (value.startsWith("/*")) {
+                int end = value.indexOf("*/");
+                if (end >= 0) {
+                    value = value.substring(end + 2).trim();
+                    changed = true;
+                }
+            }
+            if (value.startsWith("//")) {
+                int end = value.indexOf('\n');
+                if (end >= 0) {
+                    value = value.substring(end + 1).trim();
+                    changed = true;
+                }
+            }
+        } while (changed);
+        return value;
     }
 
     static String failureComment(String className, String reason) {

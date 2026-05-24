@@ -22,6 +22,7 @@ public class ProjectBuilder {
     private final RestorationReportWriter restorationReportWriter;
     private final RestorationScorer restorationScorer;
     private final RestorationScoreWriter restorationScoreWriter;
+    private final SourcePostProcessor sourcePostProcessor;
     private final GapSummaryWriter gapSummaryWriter;
 
     public interface ProgressCallback {
@@ -35,6 +36,7 @@ public class ProjectBuilder {
         this.restorationReportWriter = new RestorationReportWriter();
         this.restorationScorer = new RestorationScorer();
         this.restorationScoreWriter = new RestorationScoreWriter();
+        this.sourcePostProcessor = new SourcePostProcessor();
         this.gapSummaryWriter = new GapSummaryWriter();
     }
 
@@ -92,6 +94,8 @@ public class ProjectBuilder {
                     continue;
                 }
 
+                boolean packageInfo = shouldDecompile() && "package-info.class".equals(fileName);
+
                 // Skip inner classes only during decompilation; raw class copying should preserve them.
                 if (shouldDecompile() && DecompilerBridge.isInnerClass(classPath)) {
                     continue;
@@ -117,6 +121,13 @@ public class ProjectBuilder {
                     continue;
                 }
 
+                if (packageInfo) {
+                    IoUtils.ensureDirectory(outputFile.getParentFile());
+                    IoUtils.writeStringToFile(outputFile, packageInfoSource(classPath));
+                    decompileFindings.add(new DecompileFinding(classPath, null, null));
+                    continue;
+                }
+
                 try (InputStream is = jf.getInputStream(entry)) {
                     if (!shouldDecompile()) {
                         IoUtils.ensureDirectory(outputFile.getParentFile());
@@ -138,7 +149,7 @@ public class ProjectBuilder {
                         finding.setSelectedEngine(decompileResult.getSelectedEngine());
                         finding.setFallbackReason(decompileResult.getFallbackReason());
                         if (decompileResult.isSuccess()) {
-                            String javaSource = decompileResult.getSource();
+                            String javaSource = sourcePostProcessor.process(decompileResult.getSource());
                             IoUtils.ensureDirectory(outputFile.getParentFile());
                             IoUtils.writeStringToFile(outputFile, javaSource);
                             decompileFindings.add(finding);
@@ -228,6 +239,18 @@ public class ProjectBuilder {
 
     private boolean shouldDecompile() {
         return config == null || config.isDecompile();
+    }
+
+    private String packageInfoSource(String classPath) {
+        String suffix = "/package-info.class";
+        if (classPath == null || !classPath.endsWith(suffix)) {
+            return "";
+        }
+        String packagePath = classPath.substring(0, classPath.length() - suffix.length());
+        if (packagePath.isEmpty()) {
+            return "// package-info for the default package\n";
+        }
+        return "package " + packagePath.replace('/', '.') + ";\n";
     }
 
     private boolean isClasspathResource(String resourcePath) {

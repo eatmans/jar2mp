@@ -25,6 +25,9 @@ class ProjectVerifierTest {
         assertEquals(0, result.getExitCode());
         assertTrue(result.getCommand().contains("mvn"));
         assertTrue(result.getCommand().contains("compile"));
+        assertTrue(result.getCommand().contains("-Dspring-javaformat.skip=true"));
+        assertTrue(result.getCommand().contains("-Denforcer.skip=true"));
+        assertTrue(result.getCommand().contains("-Drat.skip=true"));
         assertTrue(result.getSummary().contains("BUILD SUCCESS"));
         assertEquals("NONE", result.getFailureType());
     }
