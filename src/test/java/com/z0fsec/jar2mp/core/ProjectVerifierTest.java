@@ -41,6 +41,15 @@ class ProjectVerifierTest {
         assertTrue(result.getExitCode() != 0);
         assertEquals("COMPILATION_ERROR", result.getFailureType());
         assertTrue(result.getSummary().contains("Compilation failure"));
+        assertTrue(result.getErrors().size() > 0);
+        assertTrue(result.getErrors().get(0).getSourcePath().endsWith("App.java"));
+
+        new ProjectVerifier().writeReport(projectDir.toFile(), result);
+        String errorReport = new String(Files.readAllBytes(projectDir.resolve("verification-errors.md")),
+                StandardCharsets.UTF_8);
+        assertTrue(errorReport.contains("# Verification errors"));
+        assertTrue(errorReport.contains("| Category | Source | Line | Column | Message |"));
+        assertTrue(errorReport.contains("src/main/java/demo/App.java"));
     }
 
     @Test
@@ -57,6 +66,12 @@ class ProjectVerifierTest {
         assertTrue(report.contains("- Exit code: 0"));
         assertTrue(report.contains("- Failure type: NONE"));
         assertTrue(report.contains("- Summary:"));
+        assertTrue(report.contains("- Error count: 0"));
+
+        String errorReport = new String(Files.readAllBytes(projectDir.resolve("verification-errors.md")),
+                StandardCharsets.UTF_8);
+        assertTrue(errorReport.contains("# Verification errors"));
+        assertTrue(errorReport.contains("No structured verification errors were parsed."));
     }
 
     private Path createProject(String javaSource) throws Exception {

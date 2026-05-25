@@ -1,6 +1,7 @@
 package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.VerificationResult;
+import com.z0fsec.jar2mp.model.VerificationError;
 import com.z0fsec.jar2mp.util.IoUtils;
 
 import java.io.ByteArrayOutputStream;
@@ -8,14 +9,17 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 public class ProjectVerifier {
 
     private static final int MAX_CAPTURE_BYTES = 20 * 1024;
     private static final long TIMEOUT_SECONDS = 120;
+    private final VerificationErrorParser errorParser = new VerificationErrorParser();
 
     public VerificationResult verify(File projectDir, String goal) {
         String effectiveGoal = goal == null || goal.trim().isEmpty() ? "compile" : goal.trim();
@@ -58,6 +62,7 @@ public class ProjectVerifier {
             stderr.join(1000);
             result.setStdout(stdout.getContent());
             result.setStderr(stderr.getContent());
+            result.getErrors().addAll(errorParser.parse(projectDir, result.getStdout(), result.getStderr()));
 
             if (result.getFailureType() == null) {
                 result.setFailureType(classify(result));
@@ -67,6 +72,7 @@ public class ProjectVerifier {
             result.setFailureType(isMavenNotFound(e) ? "MAVEN_NOT_FOUND" : "UNKNOWN");
             result.setStderr(e.getMessage());
             result.setSummary(e.getMessage());
+            result.getErrors().addAll(errorParser.parse(projectDir, result.getStdout(), result.getStderr()));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (process != null) {
@@ -75,6 +81,7 @@ public class ProjectVerifier {
             result.setFailureType("TIMEOUT");
             result.setTimedOut(true);
             result.setSummary("Verification interrupted.");
+            result.getErrors().addAll(errorParser.parse(projectDir, result.getStdout(), result.getStderr()));
         }
 
         return result;
@@ -104,7 +111,70 @@ public class ProjectVerifier {
         report.append("- Exit code: ").append(result.getExitCode()).append("\n");
         report.append("- Failure type: ").append(nullToEmpty(result.getFailureType())).append("\n");
         report.append("- Summary: ").append(nullToEmpty(result.getSummary()).replace("\r", " ").replace("\n", " ")).append("\n");
+        report.append("- Error count: ").append(result.getErrors().size()).append("\n");
+        Map<String, Integer> categories = countCategories(result);
+        if (!categories.isEmpty()) {
+            report.append("- Error categories: ");
+            boolean first = true;
+            for (Map.Entry<String, Integer> entry : categories.entrySet()) {
+                if (!first) {
+                    report.append(", ");
+                }
+                report.append(entry.getKey()).append("=").append(entry.getValue());
+                first = false;
+            }
+            report.append("\n");
+        }
         IoUtils.writeStringToFile(new File(projectDir, "verification-report.md"), report.toString());
+        writeErrorsReport(projectDir, result);
+    }
+
+    public void writeErrorsReport(File projectDir, VerificationResult result) throws IOException {
+        StringBuilder report = new StringBuilder();
+        report.append("# Verification errors\n\n");
+        report.append("- Total errors: ").append(result.getErrors().size()).append("\n");
+
+        Map<String, Integer> categories = countCategories(result);
+        if (!categories.isEmpty()) {
+            report.append("- Categories:\n");
+            for (Map.Entry<String, Integer> entry : categories.entrySet()) {
+                report.append("  - ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+            }
+        }
+        report.append("\n");
+
+        if (result.getErrors().isEmpty()) {
+            report.append("No structured verification errors were parsed.\n");
+        } else {
+            report.append("| Category | Source | Line | Column | Message |\n");
+            report.append("| --- | --- | ---: | ---: | --- |\n");
+            for (VerificationError error : result.getErrors()) {
+                report.append("| ")
+                        .append(escapeMarkdown(nullToEmpty(error.getCategory()))).append(" | ")
+                        .append(escapeMarkdown(nullToEmpty(error.getSourcePath()))).append(" | ")
+                        .append(error.getLine()).append(" | ")
+                        .append(error.getColumn()).append(" | ")
+                        .append(escapeMarkdown(nullToEmpty(error.getMessage()))).append(" |\n");
+            }
+        }
+        IoUtils.writeStringToFile(new File(projectDir, "verification-errors.md"), report.toString());
+    }
+
+    private Map<String, Integer> countCategories(VerificationResult result) {
+        Map<String, Integer> categories = new LinkedHashMap<>();
+        for (VerificationError error : result.getErrors()) {
+            String category = nullToEmpty(error.getCategory());
+            if (category.isEmpty()) {
+                category = "UNKNOWN";
+            }
+            Integer count = categories.get(category);
+            categories.put(category, count == null ? 1 : count + 1);
+        }
+        return categories;
+    }
+
+    private String escapeMarkdown(String value) {
+        return value.replace("|", "\\|").replace("\r", " ").replace("\n", " ");
     }
 
     private String classify(VerificationResult result) {

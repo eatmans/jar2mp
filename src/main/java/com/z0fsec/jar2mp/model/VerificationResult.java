@@ -1,5 +1,8 @@
 package com.z0fsec.jar2mp.model;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class VerificationResult {
     private String command;
     private int exitCode;
@@ -8,6 +11,7 @@ public class VerificationResult {
     private String summary;
     private String failureType;
     private boolean timedOut;
+    private final List<VerificationError> errors = new ArrayList<>();
 
     public String getCommand() { return command; }
     public void setCommand(String command) { this.command = command; }
@@ -23,4 +27,5 @@ public class VerificationResult {
     public void setFailureType(String failureType) { this.failureType = failureType; }
     public boolean isTimedOut() { return timedOut; }
     public void setTimedOut(boolean timedOut) { this.timedOut = timedOut; }
+    public List<VerificationError> getErrors() { return errors; }
 }

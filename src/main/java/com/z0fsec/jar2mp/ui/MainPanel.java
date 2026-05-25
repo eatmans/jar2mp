@@ -624,6 +624,10 @@ public class MainPanel extends BasePanel {
         if (verificationReport.exists()) {
             appendInfo("  " + verificationReport.getAbsolutePath());
         }
+        File verificationErrors = new File(outDir, "verification-errors.md");
+        if (verificationErrors.exists()) {
+            appendInfo("  " + verificationErrors.getAbsolutePath());
+        }
         appendInfo("  " + new File(outDir, "RUNBOOK.md").getAbsolutePath());
         appendInfo("  " + new File(outDir, "decompile-failures.md").getAbsolutePath());
     }

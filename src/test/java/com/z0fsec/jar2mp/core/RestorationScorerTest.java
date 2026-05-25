@@ -4,6 +4,8 @@ import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ResourceFinding;
 import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.VerificationError;
+import com.z0fsec.jar2mp.model.VerificationResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -151,6 +153,30 @@ class RestorationScorerTest {
         RestorationScore score = new RestorationScorer().score(analysis, null, null);
 
         assertEquals(100, score.getBreakdown().get("source").intValue());
+    }
+
+    @Test
+    void verificationGapIncludesParsedErrorCategories() {
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(1);
+        verification.setFailureType("COMPILATION_ERROR");
+        verification.getErrors().add(verificationError(VerificationErrorParser.MISSING_SYMBOL));
+        verification.getErrors().add(verificationError(VerificationErrorParser.MISSING_SYMBOL));
+        verification.getErrors().add(verificationError(VerificationErrorParser.GENERIC_INFERENCE));
+
+        RestorationScore score = new RestorationScorer().score(new JarAnalysisResult(), null, verification);
+
+        assertEquals(0, score.getBreakdown().get("verification").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "verification_errors".equals(g.getCategory())
+                        && g.getDetail().contains("MISSING_SYMBOL=2")
+                        && g.getDetail().contains("GENERIC_INFERENCE=1")));
+    }
+
+    private VerificationError verificationError(String category) {
+        VerificationError error = new VerificationError();
+        error.setCategory(category);
+        return error;
     }
 
     private Path compileJar(String className, String source) throws Exception {

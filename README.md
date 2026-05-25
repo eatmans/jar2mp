@@ -146,7 +146,8 @@ Options:
 - `gap-summary.md` - 主要缺口汇总
 - `runtime-trace-report.md` - 运行时追踪报告（启用运行时追踪时生成）
 - `RUNBOOK.md` - 启动候选与运行方式
-- `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证结果
+- `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证摘要
+- `verification-errors.md` - 启用 `--verify-build` 时解析出的逐文件编译错误明细
 - `decompile-failures.md` - 反编译失败条目和原始 class 退回位置
 
 推荐验证流程：
@@ -202,6 +203,7 @@ Options:
 │   ├── runtime-trace-report.md   ← 启用运行时追踪时生成
 │   ├── RUNBOOK.md
 │   ├── verification-report.md
+│   ├── verification-errors.md
 │   └── decompile-failures.md
 │   ├── target/
 │   │   └── original-classes/   ← 反编译失败时保留的原始 class

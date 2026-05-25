@@ -4,6 +4,7 @@ import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ResourceFinding;
 import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.VerificationError;
 import com.z0fsec.jar2mp.model.VerificationResult;
 
 import java.io.ByteArrayOutputStream;
@@ -11,9 +12,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -276,7 +279,36 @@ public class RestorationScorer {
         }
 
         score.addGap(VERIFICATION, safeValue(verificationResult.getFailureType()), VERIFICATION_WEIGHT);
+        String errorSummary = summarizeVerificationErrors(verificationResult);
+        if (!errorSummary.isEmpty()) {
+            score.addGap("verification_errors", errorSummary, VERIFICATION_WEIGHT);
+        }
         return 0;
+    }
+
+    private String summarizeVerificationErrors(VerificationResult verificationResult) {
+        Map<String, Integer> categories = new LinkedHashMap<>();
+        for (VerificationError error : verificationResult.getErrors()) {
+            String category = error.getCategory();
+            if (category == null || category.trim().isEmpty()) {
+                category = "UNKNOWN";
+            }
+            Integer count = categories.get(category);
+            categories.put(category, count == null ? 1 : count + 1);
+        }
+        if (categories.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        boolean first = true;
+        for (Map.Entry<String, Integer> entry : categories.entrySet()) {
+            if (!first) {
+                builder.append(", ");
+            }
+            builder.append(entry.getKey()).append("=").append(entry.getValue());
+            first = false;
+        }
+        return builder.toString();
     }
 
     private int weightedAverage(int sourceScore, int resourceScore, int runtimeScore, int verificationScore) {

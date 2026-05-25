@@ -538,11 +538,13 @@ public class CliRunner {
         }
         if (includeVerification && config.isVerifyBuild()) {
             System.out.println("    " + new File(outputDir, "verification-report.md").getAbsolutePath());
+            System.out.println("    " + new File(outputDir, "verification-errors.md").getAbsolutePath());
         }
     }
 
     private void printVerificationReportPath(File outputDir) {
         System.out.println("  " + new File(outputDir, "verification-report.md").getAbsolutePath());
+        System.out.println("  " + new File(outputDir, "verification-errors.md").getAbsolutePath());
     }
 
     private void refreshRestorationScore(File outputDir, JarAnalysisResult result,
