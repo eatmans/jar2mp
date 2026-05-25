@@ -53,7 +53,8 @@ public class RestorationScorer {
         score.putBucket(RUNTIME, runtimeScore);
         score.putBucket(VERIFICATION, verificationScore);
 
-        int overall = weightedAverage(sourceScore, resourceScore, runtimeScore, verificationScore);
+        int overall = capPerfectScoreWhenGapsExist(weightedAverage(sourceScore, resourceScore,
+                runtimeScore, verificationScore), score);
         score.setOverall(overall);
         return score;
     }
@@ -350,6 +351,13 @@ public class RestorationScorer {
                 + runtimeScore * (RUNTIME_WEIGHT / 100.0)
                 + verificationScore * (VERIFICATION_WEIGHT / 100.0);
         return (int) Math.round(total);
+    }
+
+    private int capPerfectScoreWhenGapsExist(int overall, RestorationScore score) {
+        if (overall >= 100 && score != null && !score.getGaps().isEmpty()) {
+            return 99;
+        }
+        return overall;
     }
 
     private int percent(int restored, int total) {

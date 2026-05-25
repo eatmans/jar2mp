@@ -123,9 +123,16 @@ class RestorationScorerTest {
         nestedLibrary.setCopyStatus(ResourceFinding.CopyStatus.ARCHIVED);
         nestedLibrary.setActualTargetPath("target/original-libs/WEB-INF/lib/private.jar");
         analysis.getResourceFindings().add(nestedLibrary);
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("resource", "demo.App", "getResourceAsStream",
+                        "application.yml", "main", Arrays.asList("demo.App.main"))));
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(0);
+        verification.setFailureType("NONE");
 
-        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, verification);
 
+        assertEquals(99, score.getOverall());
         assertEquals(100, score.getBreakdown().get("resource").intValue());
         assertTrue(score.getGaps().stream().anyMatch(g ->
                 "nested_library".equals(g.getCategory())
