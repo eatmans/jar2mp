@@ -2,11 +2,13 @@ package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ManifestInfo;
+import com.z0fsec.jar2mp.model.RuntimeLaunchPlan;
 import com.z0fsec.jar2mp.model.StartupFinding;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
@@ -88,5 +90,29 @@ class RuntimeSmokeRunnerTest {
         assertTrue(command.contains("--profile=test"));
         assertEquals("demo.Main", smokeCommand.getMainClass());
         assertEquals("startup evidence", smokeCommand.getLaunchSource());
+    }
+
+    @Test
+    void runSmokeReportsUnsupportedStandardWarBeforeLaunching() throws Exception {
+        RuntimeSmokeRunner runner = new RuntimeSmokeRunner();
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.getClassFiles().add("com/example/Servlet.class");
+        File originalWar = Files.createFile(tempDir.resolve("sample.war")).toFile();
+        File agentJar = Files.createFile(tempDir.resolve("trace-agent.jar")).toFile();
+
+        RuntimeSmokeRunner.SmokeRunResult result = runner.runSmoke(
+                originalWar,
+                analysis,
+                agentJar,
+                tempDir.resolve("trace.jsonl"),
+                Arrays.asList("--profile=test"),
+                1L);
+
+        assertEquals(RuntimeLaunchPlan.LaunchType.STANDARD_WAR.name(), result.getLaunchType());
+        assertEquals(RuntimeLaunchPlan.SupportStatus.UNSUPPORTED.name(), result.getLaunchSupport());
+        assertEquals("UNSUPPORTED_LAUNCH", result.getRunStatus());
+        assertTrue(result.getFailureMessage().contains("Unsupported runtime launch"));
+        assertTrue(result.getFailureMessage().contains("servlet container"));
     }
 }

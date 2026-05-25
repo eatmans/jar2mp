@@ -21,6 +21,9 @@ class RuntimeTraceReportWriterTest {
         result.setExitCode(0);
         result.setMainClass("demo.App");
         result.setLaunchSource("manifest Main-Class");
+        result.setLaunchType("EXECUTABLE_JAR");
+        result.setLaunchSupport("SUPPORTED");
+        result.setLaunchReason("Manifest Main-Class can be launched with java -jar.");
         result.setTraceResult(new RuntimeTraceResult(Arrays.asList(
                 new RuntimeTraceEvent("reflection", "demo.App", "Class.forName", "java.lang.String", "main",
                         Arrays.asList("demo.App.main")),
@@ -46,5 +49,8 @@ class RuntimeTraceReportWriterTest {
         assertTrue(report.contains("META-INF/services/demo.Service"));
         assertTrue(report.contains("java -jar demo.jar"));
         assertTrue(report.contains("demo.App"));
+        assertTrue(report.contains("Launch type: `EXECUTABLE_JAR`"));
+        assertTrue(report.contains("Launch support: `SUPPORTED`"));
+        assertTrue(report.contains("Manifest Main-Class can be launched with java -jar."));
     }
 }

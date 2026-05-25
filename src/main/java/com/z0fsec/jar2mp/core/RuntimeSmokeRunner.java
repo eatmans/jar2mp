@@ -2,6 +2,7 @@ package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ManifestInfo;
+import com.z0fsec.jar2mp.model.RuntimeLaunchPlan;
 import com.z0fsec.jar2mp.model.StartupFinding;
 
 import java.io.ByteArrayOutputStream;
@@ -66,24 +67,36 @@ public class RuntimeSmokeRunner {
         long effectiveTimeout = timeoutSeconds > 0 ? timeoutSeconds : DEFAULT_TIMEOUT_SECONDS;
 
         try {
+            RuntimeLaunchPlan launchPlan = new RuntimeLaunchPlanner().plan(originalJar, analysis);
+            applyLaunchPlan(result, launchPlan);
+            result.setTraceFile(traceFile);
+            if (!launchPlan.isSupported()) {
+                result.setRunStatus("UNSUPPORTED_LAUNCH");
+                result.setFailureMessage("Unsupported runtime launch: " + launchPlan.getReason());
+                result.setTraceResult(collector.read(traceFile));
+                return result;
+            }
+
             SmokeCommand command = buildCommand(originalJar, analysis, agentJar, traceFile, appArgs);
             result.setCommand(joinCommand(command.getCommand()));
             result.setMainClass(command.getMainClass());
             result.setLaunchSource(command.getLaunchSource());
             result.getNotes().addAll(command.getNotes());
-            result.setTraceFile(traceFile);
 
             if (originalJar == null || !originalJar.isFile()) {
+                result.setRunStatus("MISSING_ORIGINAL_ARTIFACT");
                 result.setFailureMessage("Original jar not found: " + describe(originalJar));
                 result.setTraceResult(collector.read(traceFile));
                 return result;
             }
             if (agentJar == null || !agentJar.isFile()) {
+                result.setRunStatus("MISSING_TRACE_AGENT");
                 result.setFailureMessage("Runtime trace agent jar not found: " + describe(agentJar));
                 result.setTraceResult(collector.read(traceFile));
                 return result;
             }
             if (command.getMainClass() == null || command.getMainClass().trim().isEmpty()) {
+                result.setRunStatus("NO_ENTRYPOINT");
                 result.setFailureMessage("No runnable entrypoint could be resolved from manifest or startup evidence.");
                 result.setTraceResult(collector.read(traceFile));
                 return result;
@@ -116,11 +129,15 @@ public class RuntimeSmokeRunner {
                 boolean finished = process.waitFor(effectiveTimeout, TimeUnit.SECONDS);
                 if (!finished) {
                     process.destroyForcibly();
+                    result.setRunStatus("TIMEOUT");
                     result.setFailureMessage("Smoke run timed out after " + effectiveTimeout + " seconds.");
                 } else {
                     result.setExitCode(process.exitValue());
                     if (result.getExitCode() != 0) {
+                        result.setRunStatus("EXIT_NON_ZERO");
                         result.setFailureMessage("Smoke run exited with code " + result.getExitCode() + ".");
+                    } else {
+                        result.setRunStatus("EXIT_ZERO");
                     }
                 }
 
@@ -152,6 +169,18 @@ public class RuntimeSmokeRunner {
         }
 
         return result;
+    }
+
+    private void applyLaunchPlan(SmokeRunResult result, RuntimeLaunchPlan launchPlan) {
+        if (result == null || launchPlan == null) {
+            return;
+        }
+        result.setLaunchType(launchPlan.getLaunchType().name());
+        result.setLaunchSupport(launchPlan.getSupportStatus().name());
+        result.setLaunchReason(launchPlan.getReason());
+        result.setMainClass(launchPlan.getMainClass());
+        result.setLaunchSource(launchPlan.getLaunchSource());
+        result.getNotes().addAll(launchPlan.getNotes());
     }
 
     public RuntimeTraceResult collectTrace(Path traceFile) throws IOException {
@@ -328,6 +357,10 @@ public class RuntimeSmokeRunner {
         private String failureMessage;
         private String mainClass;
         private String launchSource;
+        private String launchType;
+        private String launchSupport;
+        private String launchReason;
+        private String runStatus;
         private Path traceFile;
         private RuntimeTraceResult traceResult = new RuntimeTraceResult();
         private final List<String> notes = new ArrayList<>();
@@ -386,6 +419,38 @@ public class RuntimeSmokeRunner {
 
         public void setLaunchSource(String launchSource) {
             this.launchSource = launchSource;
+        }
+
+        public String getLaunchType() {
+            return launchType;
+        }
+
+        public void setLaunchType(String launchType) {
+            this.launchType = launchType;
+        }
+
+        public String getLaunchSupport() {
+            return launchSupport;
+        }
+
+        public void setLaunchSupport(String launchSupport) {
+            this.launchSupport = launchSupport;
+        }
+
+        public String getLaunchReason() {
+            return launchReason;
+        }
+
+        public void setLaunchReason(String launchReason) {
+            this.launchReason = launchReason;
+        }
+
+        public String getRunStatus() {
+            return runStatus;
+        }
+
+        public void setRunStatus(String runStatus) {
+            this.runStatus = runStatus;
         }
 
         public Path getTraceFile() {

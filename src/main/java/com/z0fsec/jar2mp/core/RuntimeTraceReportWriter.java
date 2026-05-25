@@ -20,8 +20,12 @@ public class RuntimeTraceReportWriter {
         report.append("## Run summary\n\n");
         report.append("- Command: ").append(formatInline(result == null ? null : result.getCommand())).append("\n");
         report.append("- Exit code: ").append(result == null ? -1 : result.getExitCode()).append("\n");
+        report.append("- Run status: ").append(formatInline(result == null ? null : result.getRunStatus())).append("\n");
         report.append("- Main class: ").append(formatInline(result == null ? null : result.getMainClass())).append("\n");
         report.append("- Launch source: ").append(formatInline(result == null ? null : result.getLaunchSource())).append("\n");
+        report.append("- Launch type: ").append(formatInline(result == null ? null : result.getLaunchType())).append("\n");
+        report.append("- Launch support: ").append(formatInline(result == null ? null : result.getLaunchSupport())).append("\n");
+        report.append("- Launch reason: ").append(formatInline(result == null ? null : result.getLaunchReason())).append("\n");
         report.append("- Trace file: ").append(formatInline(result == null ? null : pathValue(result.getTraceFile()))).append("\n");
         report.append("- Total events: ").append(events.size()).append("\n");
         report.append("- Reflection events: ").append(count(events, "reflection")).append("\n");
