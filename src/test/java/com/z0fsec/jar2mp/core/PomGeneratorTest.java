@@ -86,6 +86,27 @@ class PomGeneratorTest {
     }
 
     @Test
+    void omitsReactorLocalParentFromStandalonePom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("org.apache.shiro");
+        analysis.setDetectedArtifactId("shiro-core");
+        analysis.setDetectedVersion("2.0.6");
+        analysis.setJavaVersion(8);
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.setParentGroupId("org.apache.shiro");
+        pomInfo.setParentArtifactId("shiro-root");
+        pomInfo.setParentVersion("2.0.6");
+        pomInfo.setParentRelativePath("../pom.xml");
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<parent>"));
+        assertFalse(pomXml.contains("<relativePath>../pom.xml</relativePath>"));
+    }
+
+    @Test
     void omitsSourceGenerationPluginsFromStandaloneCompilePom() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("io.netty");

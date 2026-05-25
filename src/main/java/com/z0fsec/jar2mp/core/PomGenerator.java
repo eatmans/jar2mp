@@ -17,15 +17,15 @@ public class PomGenerator {
         sb.append("    <modelVersion>4.0.0</modelVersion>\n\n");
 
         PomInfo embeddedPom = analysis.getEmbeddedPomInfo();
-        boolean parentIncluded = shouldIncludeParent(embeddedPom);
-        if (parentIncluded) {
-            appendParent(sb, embeddedPom);
-        }
-
         // GAV
         String groupId = config.getGroupId() != null ? config.getGroupId() : analysis.getDetectedGroupId();
         String artifactId = config.getArtifactId() != null ? config.getArtifactId() : analysis.getDetectedArtifactId();
         String version = config.getVersion() != null ? config.getVersion() : analysis.getDetectedVersion();
+
+        boolean parentIncluded = shouldIncludeParent(embeddedPom, groupId, version);
+        if (parentIncluded) {
+            appendParent(sb, embeddedPom);
+        }
 
         sb.append("    <groupId>").append(escapeXml(groupId)).append("</groupId>\n");
         sb.append("    <artifactId>").append(escapeXml(artifactId)).append("</artifactId>\n");
@@ -139,7 +139,7 @@ public class PomGenerator {
         sb.append("    </parent>\n\n");
     }
 
-    private boolean shouldIncludeParent(PomInfo pomInfo) {
+    private boolean shouldIncludeParent(PomInfo pomInfo, String projectGroupId, String projectVersion) {
         if (pomInfo == null || pomInfo.getParentArtifactId() == null) {
             return false;
         }
@@ -148,7 +148,29 @@ public class PomGenerator {
             return false;
         }
         String trimmed = version.trim();
-        return !trimmed.contains("${") && !trimmed.toUpperCase().contains("SNAPSHOT");
+        return !trimmed.contains("${")
+                && !trimmed.toUpperCase().contains("SNAPSHOT")
+                && !isReactorLocalParent(pomInfo, projectGroupId, projectVersion);
+    }
+
+    private boolean isReactorLocalParent(PomInfo pomInfo, String projectGroupId, String projectVersion) {
+        if (!sameValue(pomInfo.getParentGroupId(), projectGroupId)
+                || !sameValue(pomInfo.getParentVersion(), projectVersion)) {
+            return false;
+        }
+        String relativePath = pomInfo.getParentRelativePath();
+        if (relativePath == null || relativePath.trim().isEmpty()) {
+            return false;
+        }
+        String normalized = relativePath.trim().replace('\\', '/');
+        return normalized.equals("pom.xml")
+                || normalized.endsWith("/pom.xml")
+                || normalized.equals("../pom.xml")
+                || normalized.startsWith("../");
+    }
+
+    private boolean sameValue(String left, String right) {
+        return left != null && right != null && left.trim().equals(right.trim());
     }
 
     private boolean canRenderDependency(MavenDependency dep, boolean managedVersionAvailable,
