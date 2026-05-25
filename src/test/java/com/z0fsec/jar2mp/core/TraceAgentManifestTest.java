@@ -92,6 +92,7 @@ class TraceAgentManifestTest {
                 "public class AgentMain {\n" +
                 "  public static void main(String[] args) throws Exception {\n" +
                 "    Class.forName(\"demo.AgentTarget\").getDeclaredConstructor().newInstance();\n" +
+                "    Class.forName(\"demo.AgentTarget\", true, AgentMain.class.getClassLoader());\n" +
                 "  }\n" +
                 "}\n").getBytes(StandardCharsets.UTF_8));
         Path targetFile = sourceDir.resolve("AgentTarget.java");

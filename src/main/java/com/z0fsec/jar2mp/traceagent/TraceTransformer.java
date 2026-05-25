@@ -39,7 +39,6 @@ public class TraceTransformer {
                     .and(not(nameStartsWith("net.bytebuddy.")))
                     .and(not(nameStartsWith("com.z0fsec.jar2mp.traceagent.")));
 
-    private static final AtomicReference<Method> FOR_NAME = new AtomicReference<Method>();
     private static final AtomicReference<Method> FOR_NAME_3 = new AtomicReference<Method>();
     private static final AtomicReference<Method> GET_METHOD = new AtomicReference<Method>();
     private static final AtomicReference<Method> GET_DECLARED_METHOD = new AtomicReference<Method>();
@@ -68,6 +67,7 @@ public class TraceTransformer {
     private static final AtomicReference<Method> HTTP_CONNECT = new AtomicReference<Method>();
     private static final AtomicReference<Method> HTTP_GET_INPUT_STREAM = new AtomicReference<Method>();
     private static final AtomicReference<Method> HTTP_GET_OUTPUT_STREAM = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FOR_NAME = new AtomicReference<Method>();
 
     private final TraceEventSink sink;
 

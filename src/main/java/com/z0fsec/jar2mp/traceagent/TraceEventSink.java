@@ -82,7 +82,7 @@ public class TraceEventSink implements AutoCloseable {
                     }
                 });
             } catch (IOException e) {
-                throw new IllegalStateException("Failed to write runtime trace event", e);
+                closed = true;
             }
         }
     }

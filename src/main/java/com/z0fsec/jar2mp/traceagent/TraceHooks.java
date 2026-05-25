@@ -28,54 +28,24 @@ public final class TraceHooks {
     private static final String RESOURCE = "resource";
     private static final String FILE = "file";
     private static final String SOCKET = "socket";
+    private static final CallerResolver CALLER_RESOLVER = new CallerResolver();
 
     private TraceHooks() {
     }
 
     public static Class<?> forName(String name) throws ClassNotFoundException {
-        ClassNotFoundException failure = null;
-        for (String candidate : classNameCandidates(name)) {
-            try {
-                Class<?> loaded = Class.forName(candidate);
-                record(REFLECTION, "java.lang.Class", "forName", candidate);
-                return loaded;
-            } catch (ClassNotFoundException e) {
-                if (failure == null) {
-                    failure = e;
-                }
-            }
-            ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
-            if (contextLoader != null) {
-                try {
-                    Class<?> loaded = Class.forName(candidate, true, contextLoader);
-                    record(REFLECTION, "java.lang.Class", "forName", candidate);
-                    return loaded;
-                } catch (ClassNotFoundException e) {
-                    if (failure == null) {
-                        failure = e;
-                    }
-                }
-            }
-        }
+        ClassLoader callerLoader = callerClassLoader();
+        Class<?> loaded = callerLoader == null
+                ? Class.forName(name)
+                : Class.forName(name, true, callerLoader);
         record(REFLECTION, "java.lang.Class", "forName", name);
-        throw failure == null ? new ClassNotFoundException(String.valueOf(name)) : failure;
+        return loaded;
     }
 
     public static Class<?> forName(String name, boolean initialize, ClassLoader loader) throws ClassNotFoundException {
-        ClassNotFoundException failure = null;
-        for (String candidate : classNameCandidates(name)) {
-            try {
-                Class<?> loaded = Class.forName(candidate, initialize, loader);
-                record(REFLECTION, "java.lang.Class", "forName", candidate);
-                return loaded;
-            } catch (ClassNotFoundException e) {
-                if (failure == null) {
-                    failure = e;
-                }
-            }
-        }
+        Class<?> loaded = Class.forName(name, initialize, loader);
         record(REFLECTION, "java.lang.Class", "forName", name);
-        throw failure == null ? new ClassNotFoundException(String.valueOf(name)) : failure;
+        return loaded;
     }
 
     public static Method getMethod(Class<?> type, String name, Class<?>[] parameterTypes) throws NoSuchMethodException {
@@ -249,19 +219,33 @@ public final class TraceHooks {
         return connection == null ? "" : connection.getURL() == null ? "" : connection.getURL().toString();
     }
 
-    private static String normalizeBinaryClassName(String name) {
-        if (name == null || name.startsWith("[") || name.indexOf('/') < 0) {
-            return name;
-        }
-        return name.replace('/', '.');
+    private static ClassLoader callerClassLoader() {
+        Class<?> caller = callerClass();
+        return caller == null ? null : caller.getClassLoader();
     }
 
-    private static String[] classNameCandidates(String name) {
-        String binaryName = normalizeBinaryClassName(name);
-        if (binaryName == null || binaryName.equals(name)) {
-            return new String[]{name};
+    private static Class<?> callerClass() {
+        Class<?>[] context;
+        try {
+            context = CALLER_RESOLVER.getClasses();
+        } catch (Throwable ignored) {
+            return null;
         }
-        return new String[]{name, binaryName};
+        if (context == null) {
+            return null;
+        }
+        for (Class<?> type : context) {
+            if (type == null || type == TraceHooks.class || type == CallerResolver.class) {
+                continue;
+            }
+            String name = type.getName();
+            if (name.startsWith("java.lang.") || name.startsWith("sun.reflect.")
+                    || name.startsWith("jdk.internal.reflect.")) {
+                continue;
+            }
+            return type;
+        }
+        return null;
     }
 
     private static String signature(String name, Class<?>[] parameterTypes) {
@@ -273,6 +257,12 @@ public final class TraceHooks {
             return "";
         }
         return signature(method.getName(), method.getParameterTypes());
+    }
+
+    private static final class CallerResolver extends SecurityManager {
+        private Class<?>[] getClasses() {
+            return getClassContext();
+        }
     }
 
 }
