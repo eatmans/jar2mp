@@ -206,8 +206,9 @@ public class ProjectBuilder {
                     if (!isClasspathResource(resourcePath)) {
                         continue;
                     }
-                    copyJarEntry(jf, resourcePath, srcMainResources,
+                    CopyResult copyResult = copyJarEntry(jf, resourcePath, srcMainResources,
                             stripClasspathResourcePrefix(resourcePath), copiedResourceOutputs, true);
+                    recordResourceCopyResult(analysis, resourcePath, copyResult);
                 }
 
                 for (String resourcePath : analysis.getResourceFiles()) {
@@ -216,13 +217,17 @@ public class ProjectBuilder {
                         continue;
                     }
                     File targetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
-                    copyJarEntry(jf, resourcePath, targetDir, resourcePath, copiedResourceOutputs, false);
+                    CopyResult copyResult = copyJarEntry(jf, resourcePath, targetDir, resourcePath,
+                            copiedResourceOutputs, false);
+                    recordResourceCopyResult(analysis, resourcePath, copyResult);
                 }
 
                 File metaInfTargetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
                 for (String metaPath : analysis.getMetaInfFiles()) {
                     if (shouldCopyMetaInfResource(metaPath)) {
-                        copyJarEntry(jf, metaPath, metaInfTargetDir, metaPath, copiedResourceOutputs, false);
+                        CopyResult copyResult = copyJarEntry(jf, metaPath, metaInfTargetDir, metaPath,
+                                copiedResourceOutputs, false);
+                        recordResourceCopyResult(analysis, metaPath, copyResult);
                     }
                 }
             }
@@ -335,29 +340,85 @@ public class ProjectBuilder {
                 && !source.contains("** ");
     }
 
-    private void copyJarEntry(JarFile jarFile, String entryPath, File baseDir, String outputRelativePath,
-                              Set<Path> copiedOutputs, boolean overwriteExisting) throws IOException {
+    private CopyResult copyJarEntry(JarFile jarFile, String entryPath, File baseDir, String outputRelativePath,
+                                    Set<Path> copiedOutputs, boolean overwriteExisting) throws IOException {
         JarEntry entry = jarFile.getJarEntry(entryPath);
         if (entry == null || entry.isDirectory()) {
-            return;
+            return CopyResult.skipped("JAR entry missing or directory");
         }
 
         Path outputPath = resolveOutputPath(baseDir, outputRelativePath);
         if (outputPath == null) {
-            return;
+            return CopyResult.skipped("Unsafe output path");
         }
 
         if (!overwriteExisting && (copiedOutputs.contains(outputPath) || Files.exists(outputPath))) {
-            return;
+            return CopyResult.skipped("Output path collision: " + outputRelativePath);
         }
 
         IoUtils.ensureDirectory(outputPath.getParent().toFile());
         try (InputStream is = jarFile.getInputStream(entry)) {
             Files.copy(is, outputPath, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception ignored) {
-            return;
+        } catch (Exception e) {
+            return CopyResult.skipped("Copy failed: " + e.getMessage());
         }
         copiedOutputs.add(outputPath);
+        return CopyResult.copied(outputRelativePath);
+    }
+
+    private void recordResourceCopyResult(JarAnalysisResult analysis, String originalPath, CopyResult copyResult) {
+        if (analysis == null || originalPath == null || copyResult == null) {
+            return;
+        }
+        for (ResourceFinding finding : analysis.getResourceFindings()) {
+            if (!originalPath.equals(finding.getOriginalPath())) {
+                continue;
+            }
+            if (copyResult.isCopied()) {
+                finding.setNote(appendNote(finding.getNote(), "Copied to " + copyResult.getOutputPath() + "."));
+            } else {
+                finding.setNote(appendNote(finding.getNote(), "Resource not copied: " + copyResult.getReason() + "."));
+            }
+        }
+    }
+
+    private String appendNote(String existing, String addition) {
+        if (existing == null || existing.trim().isEmpty()) {
+            return addition;
+        }
+        return existing.trim() + " " + addition;
+    }
+
+    private static class CopyResult {
+        private final boolean copied;
+        private final String outputPath;
+        private final String reason;
+
+        private CopyResult(boolean copied, String outputPath, String reason) {
+            this.copied = copied;
+            this.outputPath = outputPath;
+            this.reason = reason;
+        }
+
+        private static CopyResult copied(String outputPath) {
+            return new CopyResult(true, outputPath, null);
+        }
+
+        private static CopyResult skipped(String reason) {
+            return new CopyResult(false, null, reason);
+        }
+
+        private boolean isCopied() {
+            return copied;
+        }
+
+        private String getOutputPath() {
+            return outputPath;
+        }
+
+        private String getReason() {
+            return reason;
+        }
     }
 
     private File resolveOutputFile(File baseDir, String relativePath) {

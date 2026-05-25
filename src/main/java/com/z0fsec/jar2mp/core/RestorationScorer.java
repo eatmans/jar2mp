@@ -101,7 +101,7 @@ public class RestorationScorer {
             if (finding == null) {
                 continue;
             }
-            if (SKIPPED.equalsIgnoreCase(safeValue(finding.getTargetPath()))) {
+            if (!isResourceRestored(finding)) {
                 score.addGap(normalizeCategory(finding.getCategory()), safeValue(finding.getOriginalPath()),
                         bucketImpact(RESOURCE_WEIGHT, total, 1));
             } else {
@@ -110,6 +110,14 @@ public class RestorationScorer {
         }
 
         return percent(restored, total);
+    }
+
+    private boolean isResourceRestored(ResourceFinding finding) {
+        if (SKIPPED.equalsIgnoreCase(safeValue(finding.getTargetPath()))) {
+            return false;
+        }
+        String note = safeValue(finding.getNote()).toLowerCase(Locale.ROOT);
+        return !note.contains("resource not copied");
     }
 
     private boolean isIgnorableResourceFinding(ResourceFinding finding) {

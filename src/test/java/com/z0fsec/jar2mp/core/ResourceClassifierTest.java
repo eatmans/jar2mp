@@ -126,6 +126,33 @@ class ResourceClassifierTest {
         assertTrue(report.contains("| FRONTEND_ASSET | META-INF/resources/webjars/demo/app.js |"));
     }
 
+    @Test
+    void projectBuilderReportsResourceCopyCollisions() throws Exception {
+        Path jar = tempDir.resolve("collision.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "com/example/App.class", minimalClassBytes(52));
+            addEntry(out, "BOOT-INF/classes/static/app.js", "classpath");
+            addEntry(out, "static/app.js", "root");
+        }
+
+        JarAnalysisResult analysis = new JarAnalyzer(new PackagePrefixDatabase()).analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("collision-out");
+
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        ResourceFinding rootAsset = analysis.getResourceFindings().stream()
+                .filter(item -> "static/app.js".equals(item.getOriginalPath()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing root static asset finding"));
+        assertTrue(rootAsset.getNote().contains("not copied"));
+        assertTrue(rootAsset.getNote().contains("collision"));
+
+        String report = Files.readString(outputDir.resolve("resource-inventory.md"));
+        assertTrue(report.contains("static/app.js"));
+        assertTrue(report.contains("not copied"));
+        assertTrue(report.contains("collision"));
+    }
+
     private void assertResource(List<ResourceFinding> findings, String originalPath,
                                 ResourceFinding.Category category, String targetPath) {
         ResourceFinding finding = findings.stream()

@@ -83,6 +83,26 @@ class RestorationScorerTest {
     }
 
     @Test
+    void resourceScoreUsesActualCopyFailures() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getResourceFindings().add(new ResourceFinding("BOOT-INF/classes/static/app.js",
+                ResourceFinding.Category.FRONTEND_ASSET,
+                "src/main/resources/static/app.js",
+                "Copied to static/app.js."));
+        analysis.getResourceFindings().add(new ResourceFinding("static/app.js",
+                ResourceFinding.Category.FRONTEND_ASSET,
+                "src/main/resources/static/app.js",
+                "Resource not copied: Output path collision: static/app.js."));
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(50, score.getBreakdown().get("resource").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "frontend_asset".equals(g.getCategory())
+                        && "static/app.js".equals(g.getDetail())));
+    }
+
+    @Test
     void runtimeScoreUsesStaticBytecodeExpectationsInsteadOfAllTraceKinds() throws Exception {
         Path jar = compileJar("demo.TraceExpectations",
                 "package demo;\n" +
