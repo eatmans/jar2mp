@@ -24,6 +24,7 @@ class RuntimeTraceReportWriterTest {
         result.setLaunchType("EXECUTABLE_JAR");
         result.setLaunchSupport("SUPPORTED");
         result.setLaunchReason("Manifest Main-Class can be launched with java -jar.");
+        result.setRunStatus("TRACE_COLLECTED_TIMEOUT");
         result.setTraceResult(new RuntimeTraceResult(Arrays.asList(
                 new RuntimeTraceEvent("reflection", "demo.App", "Class.forName", "java.lang.String", "main",
                         Arrays.asList("demo.App.main")),
@@ -51,6 +52,7 @@ class RuntimeTraceReportWriterTest {
         assertTrue(report.contains("demo.App"));
         assertTrue(report.contains("Launch type: `EXECUTABLE_JAR`"));
         assertTrue(report.contains("Launch support: `SUPPORTED`"));
+        assertTrue(report.contains("Run status: `TRACE_COLLECTED_TIMEOUT`"));
         assertTrue(report.contains("Manifest Main-Class can be launched with java -jar."));
     }
 }

@@ -119,6 +119,7 @@ public class RuntimeSmokeRunner {
             Process process = null;
             StreamCollector stdout = null;
             StreamCollector stderr = null;
+            boolean timedOut = false;
             try {
                 process = builder.start();
                 stdout = new StreamCollector(process.getInputStream());
@@ -128,8 +129,8 @@ public class RuntimeSmokeRunner {
 
                 boolean finished = process.waitFor(effectiveTimeout, TimeUnit.SECONDS);
                 if (!finished) {
+                    timedOut = true;
                     process.destroyForcibly();
-                    result.setRunStatus("TIMEOUT");
                     result.setFailureMessage("Smoke run timed out after " + effectiveTimeout + " seconds.");
                 } else {
                     result.setExitCode(process.exitValue());
@@ -156,14 +157,21 @@ public class RuntimeSmokeRunner {
             }
 
             result.setTraceResult(collector.read(traceFile));
+            if (timedOut) {
+                int eventCount = result.getTraceResult().getEvents().size();
+                result.setRunStatus(eventCount > 0 ? "TRACE_COLLECTED_TIMEOUT" : "TIMEOUT_NO_EVENTS");
+            }
         } catch (RuntimeException e) {
+            result.setRunStatus("ERROR");
             result.setFailureMessage(e.getMessage() == null ? e.toString() : e.getMessage());
             safeReadTrace(result, traceFile);
         } catch (IOException e) {
+            result.setRunStatus("ERROR");
             result.setFailureMessage(e.getMessage() == null ? e.toString() : e.getMessage());
             safeReadTrace(result, traceFile);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            result.setRunStatus("ERROR");
             result.setFailureMessage("Smoke run was interrupted.");
             safeReadTrace(result, traceFile);
         }
@@ -360,7 +368,7 @@ public class RuntimeSmokeRunner {
         private String launchType;
         private String launchSupport;
         private String launchReason;
-        private String runStatus;
+        private String runStatus = "NOT_RUN";
         private Path traceFile;
         private RuntimeTraceResult traceResult = new RuntimeTraceResult();
         private final List<String> notes = new ArrayList<>();
