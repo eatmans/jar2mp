@@ -64,6 +64,37 @@ class DependencyDetectorTest {
     }
 
     @Test
+    void embeddedPomDependenciesSuppressLowConfidenceTransitiveClassScanAdditions() throws Exception {
+        Path jarPath = tempDir.resolve("boot-shiro.jar");
+        try (JarOutputStream jar = new JarOutputStream(java.nio.file.Files.newOutputStream(jarPath))) {
+            addEntry(jar, "BOOT-INF/classes/com/example/ShiroConfig.class",
+                    classFileWithUtf8Constant(52,
+                            "org/springframework/web/servlet/handler/SimpleMappingExceptionResolver"));
+        }
+
+        PackagePrefixDatabase packageDb = new PackagePrefixDatabase();
+        packageDb.load(new java.io.ByteArrayInputStream(
+                "org.springframework.web.servlet=org.springframework:spring-webmvc:6.1.3\n"
+                        .getBytes(StandardCharsets.UTF_8)));
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.setParentGroupId("org.springframework.boot");
+        pomInfo.setParentArtifactId("spring-boot-starter-parent");
+        pomInfo.setParentVersion("2.1.4.RELEASE");
+        pomInfo.getDependencies().add(new MavenDependency("org.springframework.boot",
+                "spring-boot-starter-web", "unknown", MavenDependency.Confidence.HIGH));
+
+        DependencyDetector detector = new DependencyDetector(packageDb);
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            List<MavenDependency> dependencies = detector.detect(jarFile, null, pomInfo);
+
+            assertEquals(1, dependencies.size());
+            assertEquals("spring-boot-starter-web", dependencies.get(0).getArtifactId());
+            assertFalse(dependencies.stream().anyMatch(dep -> "spring-webmvc".equals(dep.getArtifactId())));
+        }
+    }
+
+    @Test
     void manifestClasspathSkipsUnresolvableUnknownHints() throws Exception {
         Path jarPath = tempDir.resolve("security.jar");
         try (JarOutputStream jar = new JarOutputStream(java.nio.file.Files.newOutputStream(jarPath))) {

@@ -82,6 +82,9 @@ public class DependencyDetector {
             if (hasEmbeddedDependencies && isOwnGroup(coord, pomInfo)) {
                 continue;
             }
+            if (hasEmbeddedDependencies && isCoveredByEmbeddedDependency(coord, deps.values())) {
+                continue;
+            }
             if (!hasEmbeddedDependencies || isExternalPackage(coord, pomInfo)) {
                 MavenDependency dep = new MavenDependency(
                         coord.getGroupId(),
@@ -156,6 +159,49 @@ public class DependencyDetector {
 
     private boolean isExternalPackage(MavenCoordinates coord, PomInfo pomInfo) {
         return !isOwnGroup(coord, pomInfo);
+    }
+
+    private boolean isCoveredByEmbeddedDependency(MavenCoordinates coord, Collection<MavenDependency> embeddedDeps) {
+        if (coord == null || embeddedDeps == null || embeddedDeps.isEmpty()) {
+            return false;
+        }
+        for (MavenDependency embeddedDep : embeddedDeps) {
+            if (embeddedDep == null) {
+                continue;
+            }
+            if (sameGroup(coord, embeddedDep)) {
+                return true;
+            }
+            if (isSpringBootStarter(embeddedDep) && isSpringBootManagedTransitive(coord)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean sameGroup(MavenCoordinates left, MavenCoordinates right) {
+        return left.getGroupId() != null && left.getGroupId().equals(right.getGroupId());
+    }
+
+    private boolean isSpringBootStarter(MavenCoordinates coord) {
+        return "org.springframework.boot".equals(coord.getGroupId())
+                && coord.getArtifactId() != null
+                && coord.getArtifactId().startsWith("spring-boot-starter");
+    }
+
+    private boolean isSpringBootManagedTransitive(MavenCoordinates coord) {
+        String groupId = coord.getGroupId();
+        if (groupId == null) {
+            return false;
+        }
+        return groupId.equals("org.springframework")
+                || groupId.equals("org.springframework.boot")
+                || groupId.equals("org.springframework.security")
+                || groupId.equals("org.slf4j")
+                || groupId.equals("ch.qos.logback")
+                || groupId.equals("org.apache.tomcat.embed")
+                || groupId.equals("com.fasterxml.jackson.core")
+                || groupId.equals("org.hibernate.validator");
     }
 
     /**
