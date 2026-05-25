@@ -27,6 +27,15 @@ public class DependencyDetector {
      * Detect all dependencies from a JAR file using multiple strategies.
      */
     public List<MavenDependency> detect(JarFile jarFile, ManifestInfo manifestInfo, PomInfo pomInfo) {
+        return detect(jarFile, manifestInfo, pomInfo, null, null, null);
+    }
+
+    public List<MavenDependency> detect(JarFile jarFile,
+                                        ManifestInfo manifestInfo,
+                                        PomInfo pomInfo,
+                                        List<PomInfo> embeddedPomInfos,
+                                        List<String> applicationClassFiles,
+                                        Map<String, String> classPathMapping) {
         Map<String, MavenDependency> deps = new LinkedHashMap<>();
         boolean hasEmbeddedDependencies = pomInfo != null
                 && pomInfo.getDependencies() != null
@@ -39,6 +48,7 @@ public class DependencyDetector {
                 deps.put(dep.getKey(), dep);
             }
         }
+        addEmbeddedPomDependencies(deps, pomInfo, embeddedPomInfos);
 
         // Strategy 2: MANIFEST.MF Class-Path hints
         if (manifestInfo != null && manifestInfo.getClassPath() != null) {
@@ -55,7 +65,7 @@ public class DependencyDetector {
         // Strategy 3: Class file scanning against package database. When an
         // embedded POM exists, use scan data to fill missing/property versions
         // and add only external packages that the selected POM did not name.
-        Set<String> packages = classFileScanner.scanPackages(jarFile);
+        Set<String> packages = classFileScanner.scanPackages(jarFile, applicationClassFiles, classPathMapping);
         for (String pkg : packages) {
             MavenCoordinates coord = packageDb.lookup(pkg);
             if (coord == null) {
@@ -87,6 +97,38 @@ public class DependencyDetector {
         // (handled separately in WarAnalyzer)
 
         return new ArrayList<>(deps.values());
+    }
+
+    private void addEmbeddedPomDependencies(Map<String, MavenDependency> deps,
+                                            PomInfo primaryPom,
+                                            List<PomInfo> embeddedPomInfos) {
+        if (embeddedPomInfos == null || embeddedPomInfos.isEmpty()) {
+            return;
+        }
+        for (PomInfo info : embeddedPomInfos) {
+            if (info == null || !info.hasCoordinates() || sameCoordinates(info, primaryPom)) {
+                continue;
+            }
+            MavenDependency dep = new MavenDependency(
+                    info.getGroupId(),
+                    info.getArtifactId(),
+                    info.getVersion(),
+                    MavenDependency.Confidence.HIGH
+            );
+            deps.putIfAbsent(dep.getKey(), dep);
+        }
+    }
+
+    private boolean sameCoordinates(PomInfo left, PomInfo right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        return equals(left.getGroupId(), right.getGroupId())
+                && equals(left.getArtifactId(), right.getArtifactId());
+    }
+
+    private boolean equals(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     private boolean isResolvableManifestHint(MavenDependency dep) {

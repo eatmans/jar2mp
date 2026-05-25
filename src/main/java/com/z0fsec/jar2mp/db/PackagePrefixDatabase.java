@@ -46,18 +46,32 @@ public class PackagePrefixDatabase {
      * Lookup the longest matching prefix for a given package name.
      */
     public MavenCoordinates lookup(String packageName) {
+        Map.Entry<String, MavenCoordinates> entry = lookupEntry(packageName);
+        return entry == null ? null : entry.getValue();
+    }
+
+    public String lookupPrefix(String packageName) {
+        Map.Entry<String, MavenCoordinates> entry = lookupEntry(packageName);
+        return entry == null ? null : entry.getKey();
+    }
+
+    private Map.Entry<String, MavenCoordinates> lookupEntry(String packageName) {
         if (!loaded) return null;
 
         // Try exact match first
         MavenCoordinates exact = mappings.get(packageName);
-        if (exact != null) return exact;
+        if (exact != null) {
+            return new AbstractMap.SimpleImmutableEntry<>(packageName, exact);
+        }
 
         // Try progressively shorter prefixes
         String prefix = packageName;
         while (prefix.contains(".")) {
             prefix = prefix.substring(0, prefix.lastIndexOf('.'));
             MavenCoordinates match = mappings.get(prefix);
-            if (match != null) return match;
+            if (match != null) {
+                return new AbstractMap.SimpleImmutableEntry<>(prefix, match);
+            }
         }
 
         return null;

@@ -5,6 +5,7 @@ import com.z0fsec.jar2mp.model.ProjectConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -118,6 +119,34 @@ class ProjectBuilderTest {
                 Files.readString(outputDir.resolve("src/main/resources/application.yml")));
         assertFalse(Files.exists(outputDir.resolve("src/main/resources/BOOT-INF/lib/dependency.jar")));
         assertFalse(Files.exists(outputDir.resolve("src/main/java/org/springframework/boot/loader/JarLauncher.java")));
+    }
+
+    @Test
+    void doesNotGenerateSkippedEmbeddedDependencyClasses() throws Exception {
+        Path jar = tempDir.resolve("assembly.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "com/example/App.class", minimalClassBytes(52));
+            addEntry(out, "com/google/gson/Gson.class", minimalClassBytes(52));
+            addEntry(out, "META-INF/maven/com.example/sample/pom.properties",
+                    "groupId=com.example\nartifactId=sample\nversion=1.0.0\n");
+            addEntry(out, "META-INF/maven/com.google.code.gson/gson/pom.properties",
+                    "groupId=com.google.code.gson\nartifactId=gson\nversion=2.10.1\n");
+        }
+
+        com.z0fsec.jar2mp.db.PackagePrefixDatabase packageDb = new com.z0fsec.jar2mp.db.PackagePrefixDatabase();
+        packageDb.load(new ByteArrayInputStream(
+                "com.google.gson=com.google.code.gson:gson:2.10.1\n".getBytes(StandardCharsets.UTF_8)));
+        JarAnalysisResult analysis = new JarAnalyzer(packageDb).analyze(jar.toFile(), null);
+        assertTrue(analysis.getSkippedDependencyClassFiles().contains("com/google/gson/Gson.class"));
+
+        ProjectConfig config = new ProjectConfig();
+        config.setDecompile(false);
+        Path outputDir = tempDir.resolve("assembly-out");
+        new ProjectBuilder(config).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertTrue(Files.exists(outputDir.resolve("src/main/java/com/example/App.class")));
+        assertFalse(Files.exists(outputDir.resolve("src/main/java/com/google/gson/Gson.class")));
+        assertFalse(Files.exists(outputDir.resolve("target/original-classes/com/google/gson/Gson.class")));
     }
 
     @Test

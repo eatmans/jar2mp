@@ -37,6 +37,36 @@ public class ClassFileScanner {
         return packages;
     }
 
+    public Set<String> scanPackages(JarFile jarFile, List<String> classFiles, Map<String, String> classPathMapping) {
+        if (classFiles == null) {
+            return scanPackages(jarFile);
+        }
+
+        Set<String> packages = new LinkedHashSet<>();
+        for (String classFile : classFiles) {
+            if (classFile == null || !classFile.endsWith(".class") || classFile.endsWith("module-info.class")) {
+                continue;
+            }
+
+            String rawEntryPath = classPathMapping == null ? null : classPathMapping.get(classFile);
+            if (rawEntryPath == null) {
+                rawEntryPath = classFile;
+            }
+
+            JarEntry entry = jarFile.getJarEntry(rawEntryPath);
+            if (entry == null) {
+                continue;
+            }
+
+            try {
+                packages.addAll(extractClassReferences(readEntryBytes(jarFile, entry)));
+            } catch (Exception ignored) {
+                // Skip unreadable class files
+            }
+        }
+        return packages;
+    }
+
     /**
      * Extract package-like references from a .class file's constant pool.
      */

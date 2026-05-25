@@ -19,6 +19,10 @@ import org.w3c.dom.*;
 public class MavenMetadataExtractor {
 
     public PomInfo extract(JarFile jarFile) {
+        return selectPrimary(extractAll(jarFile), jarFile);
+    }
+
+    public List<PomInfo> extractAll(JarFile jarFile) {
         Map<String, PomInfo> candidates = new LinkedHashMap<>();
 
         // 1. Look for all pom.properties files. Fat/assembly jars may contain
@@ -42,7 +46,11 @@ public class MavenMetadataExtractor {
             }
         }
 
-        return selectPrimaryPom(candidates.values(), jarFile);
+        return new ArrayList<>(candidates.values());
+    }
+
+    public PomInfo selectPrimary(Collection<PomInfo> candidates, JarFile jarFile) {
+        return selectPrimaryPom(candidates, jarFile);
     }
 
     private void mergeCandidate(Map<String, PomInfo> candidates, PomInfo candidate) {

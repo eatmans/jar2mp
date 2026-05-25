@@ -8,7 +8,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -111,6 +114,43 @@ class DependencyDetectorTest {
 
             assertEquals(1, dependencies.size());
             assertEquals("2.0.11", dependencies.get(0).getVersion());
+        }
+    }
+
+    @Test
+    void scopedScanIgnoresSkippedDependencyClassConstants() throws Exception {
+        Path jarPath = tempDir.resolve("scoped-fat.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            addEntry(jar, "com/example/App.class",
+                    classFileWithUtf8Constant(52, "com/example/App"));
+            addEntry(jar, "com/google/gson/Gson.class",
+                    classFileWithUtf8Constant(52, "org/slf4j/Logger"));
+        }
+
+        PackagePrefixDatabase packageDb = new PackagePrefixDatabase();
+        packageDb.load(new java.io.ByteArrayInputStream(
+                ("com.google.gson=com.google.code.gson:gson:2.10.1\n"
+                        + "org.slf4j=org.slf4j:slf4j-api:2.0.11\n")
+                        .getBytes(StandardCharsets.UTF_8)));
+
+        PomInfo gsonPom = new PomInfo();
+        gsonPom.setGroupId("com.google.code.gson");
+        gsonPom.setArtifactId("gson");
+        gsonPom.setVersion("2.10.1");
+
+        DependencyDetector detector = new DependencyDetector(packageDb);
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            List<MavenDependency> dependencies = detector.detect(jarFile, null, null,
+                    Collections.singletonList(gsonPom),
+                    Collections.singletonList("com/example/App.class"),
+                    Collections.emptyMap());
+
+            assertTrue(dependencies.stream()
+                    .anyMatch(dep -> "com.google.code.gson".equals(dep.getGroupId())
+                            && "gson".equals(dep.getArtifactId())));
+            assertFalse(dependencies.stream()
+                    .anyMatch(dep -> "org.slf4j".equals(dep.getGroupId())
+                            && "slf4j-api".equals(dep.getArtifactId())));
         }
     }
 
