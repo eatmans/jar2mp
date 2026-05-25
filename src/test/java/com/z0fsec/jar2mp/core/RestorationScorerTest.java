@@ -64,8 +64,7 @@ class RestorationScorerTest {
         assertEquals(100, score.getBreakdown().get("resource").intValue());
         assertEquals(100, score.getBreakdown().get("runtime").intValue());
         assertEquals(40, score.getBreakdown().get("verification").intValue());
-        assertTrue(score.getGaps().stream().anyMatch(g -> "nested_library".equals(g.getCategory())
-                && g.getDetail().contains("target/original-libs/BOOT-INF/lib/lib.jar")));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "nested_library".equals(g.getCategory())));
     }
 
     @Test
@@ -114,7 +113,7 @@ class RestorationScorerTest {
     }
 
     @Test
-    void archivedNestedLibrariesAreReportedAsClasspathGapsWithoutLoweringResourceCopyScore() {
+    void archivedNestedLibrariesDoNotLowerTheOverallRestorationScore() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         ResourceFinding nestedLibrary = new ResourceFinding("WEB-INF/lib/private.jar",
                 ResourceFinding.Category.NESTED_LIBRARY,
@@ -132,11 +131,9 @@ class RestorationScorerTest {
 
         RestorationScore score = new RestorationScorer().score(analysis, traceResult, verification);
 
-        assertEquals(99, score.getOverall());
+        assertEquals(100, score.getOverall());
         assertEquals(100, score.getBreakdown().get("resource").intValue());
-        assertTrue(score.getGaps().stream().anyMatch(g ->
-                "nested_library".equals(g.getCategory())
-                        && g.getDetail().contains("target/original-libs/WEB-INF/lib/private.jar")));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "nested_library".equals(g.getCategory())));
     }
 
     @Test
