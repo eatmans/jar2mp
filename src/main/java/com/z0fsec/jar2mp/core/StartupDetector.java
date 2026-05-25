@@ -32,6 +32,10 @@ public class StartupDetector {
 
         StartupFinding springBoot = detectSpringBootFramework(result);
         if (springBoot != null) {
+            StartupFinding bytecodeMain = detectMainMethod(result);
+            if (bytecodeMain != null) {
+                enrichSpringBootWithMainClass(springBoot, bytecodeMain);
+            }
             findings.add(springBoot);
             return findings;
         }
@@ -97,6 +101,19 @@ public class StartupDetector {
             }
         }
         return null;
+    }
+
+    private void enrichSpringBootWithMainClass(StartupFinding springBoot, StartupFinding bytecodeMain) {
+        String mainClass = bytecodeMain.getMainClass();
+        if (mainClass == null || mainClass.trim().isEmpty()) {
+            return;
+        }
+        springBoot.setMainClass(mainClass);
+        springBoot.getCommands().add("mvn spring-boot:run -Dspring-boot.run.main-class=" + mainClass);
+        springBoot.getCommands().add("mvn exec:java -Dexec.mainClass=" + mainClass);
+        springBoot.getEvidence().addAll(bytecodeMain.getEvidence());
+        springBoot.getKnownGaps().remove("No Start-Class was found; inspect generated sources for the application class.");
+        springBoot.getKnownGaps().add("No Start-Class was found; bytecode main method was used as startup candidate.");
     }
 
     private StartupFinding detectWar(JarAnalysisResult result) {

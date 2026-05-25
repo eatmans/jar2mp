@@ -85,6 +85,26 @@ class StartupDetectorTest {
     }
 
     @Test
+    void springBootFrameworkFindingStillUsesBytecodeMainWhenStartClassIsMissing() throws Exception {
+        Path jar = tempDir.resolve("boot-main.jar");
+        Path classFile = compileMainClass();
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new JarEntry("demo/Main.class"));
+            out.write(Files.readAllBytes(classFile));
+            out.closeEntry();
+        }
+
+        JarAnalysisResult result = new JarAnalyzer(new PackagePrefixDatabase()).analyze(jar.toFile(), null);
+        result.getFrameworkFindings().add(new FrameworkFinding("Spring Boot", 85));
+
+        List<StartupFinding> findings = new StartupDetector().detect(result);
+
+        assertStartup(findings, "Spring Boot", "demo.Main",
+                "mvn spring-boot:run -Dspring-boot.run.main-class=demo.Main",
+                "main(String[]) bytecode");
+    }
+
+    @Test
     void reportsNoStartupEvidence() {
         JarAnalysisResult result = new JarAnalysisResult();
 
