@@ -42,10 +42,13 @@ class RestorationScorerTest {
                 ResourceFinding.Category.TEMPLATE,
                 "src/main/resources/templates/home.html",
                 "template"));
-        analysis.getResourceFindings().add(new ResourceFinding("BOOT-INF/lib/lib.jar",
+        ResourceFinding nestedLibrary = new ResourceFinding("BOOT-INF/lib/lib.jar",
                 ResourceFinding.Category.NESTED_LIBRARY,
-                "(skipped)",
-                "nested library"));
+                "target/original-libs/BOOT-INF/lib/lib.jar",
+                "nested library");
+        nestedLibrary.setCopyStatus(ResourceFinding.CopyStatus.ARCHIVED);
+        nestedLibrary.setActualTargetPath("target/original-libs/BOOT-INF/lib/lib.jar");
+        analysis.getResourceFindings().add(nestedLibrary);
 
         RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
                 new RuntimeTraceEvent("resource", "demo.App", "getResourceAsStream", "application.yml", "main",
@@ -61,7 +64,8 @@ class RestorationScorerTest {
         assertEquals(100, score.getBreakdown().get("resource").intValue());
         assertEquals(100, score.getBreakdown().get("runtime").intValue());
         assertEquals(40, score.getBreakdown().get("verification").intValue());
-        assertTrue(score.getGaps().stream().noneMatch(g -> "nested_library".equals(g.getCategory())));
+        assertTrue(score.getGaps().stream().anyMatch(g -> "nested_library".equals(g.getCategory())
+                && g.getDetail().contains("target/original-libs/BOOT-INF/lib/lib.jar")));
     }
 
     @Test
@@ -85,14 +89,21 @@ class RestorationScorerTest {
     @Test
     void resourceScoreUsesActualCopyFailures() {
         JarAnalysisResult analysis = new JarAnalysisResult();
-        analysis.getResourceFindings().add(new ResourceFinding("BOOT-INF/classes/static/app.js",
+        ResourceFinding copied = new ResourceFinding("BOOT-INF/classes/static/app.js",
                 ResourceFinding.Category.FRONTEND_ASSET,
                 "src/main/resources/static/app.js",
-                "Copied to static/app.js."));
-        analysis.getResourceFindings().add(new ResourceFinding("static/app.js",
+                "Copied to static/app.js.");
+        copied.setCopyStatus(ResourceFinding.CopyStatus.COPIED);
+        copied.setActualTargetPath("static/app.js");
+        analysis.getResourceFindings().add(copied);
+
+        ResourceFinding failed = new ResourceFinding("static/app.js",
                 ResourceFinding.Category.FRONTEND_ASSET,
                 "src/main/resources/static/app.js",
-                "Resource not copied: Output path collision: static/app.js."));
+                "legacy note says copied");
+        failed.setCopyStatus(ResourceFinding.CopyStatus.SKIPPED);
+        failed.setCopyFailureReason("Output path collision: static/app.js");
+        analysis.getResourceFindings().add(failed);
 
         RestorationScore score = new RestorationScorer().score(analysis, null, null);
 
@@ -100,6 +111,25 @@ class RestorationScorerTest {
         assertTrue(score.getGaps().stream().anyMatch(g ->
                 "frontend_asset".equals(g.getCategory())
                         && "static/app.js".equals(g.getDetail())));
+    }
+
+    @Test
+    void archivedNestedLibrariesAreReportedAsClasspathGapsWithoutLoweringResourceCopyScore() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ResourceFinding nestedLibrary = new ResourceFinding("WEB-INF/lib/private.jar",
+                ResourceFinding.Category.NESTED_LIBRARY,
+                "target/original-libs/WEB-INF/lib/private.jar",
+                "Archived at target/original-libs/WEB-INF/lib/private.jar.");
+        nestedLibrary.setCopyStatus(ResourceFinding.CopyStatus.ARCHIVED);
+        nestedLibrary.setActualTargetPath("target/original-libs/WEB-INF/lib/private.jar");
+        analysis.getResourceFindings().add(nestedLibrary);
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(100, score.getBreakdown().get("resource").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "nested_library".equals(g.getCategory())
+                        && g.getDetail().contains("target/original-libs/WEB-INF/lib/private.jar")));
     }
 
     @Test

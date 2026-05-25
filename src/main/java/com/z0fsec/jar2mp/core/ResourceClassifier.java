@@ -120,7 +120,10 @@ public class ResourceClassifier {
     }
 
     private String targetPathFor(String originalPath, boolean war) {
-        if (isNestedLibrary(originalPath) || shouldSkipMetaInfResource(originalPath)) {
+        if (isNestedLibrary(originalPath)) {
+            return "target/original-libs/" + originalPath;
+        }
+        if (shouldSkipMetaInfResource(originalPath)) {
             return SKIPPED;
         }
 
@@ -139,13 +142,13 @@ public class ResourceClassifier {
 
     private String noteFor(String originalPath, ResourceFinding.Category category, String targetPath) {
         if (SKIPPED.equals(targetPath)) {
-            if (isNestedLibrary(originalPath)) {
-                return "Nested dependency archive is skipped during project generation.";
-            }
             if (shouldSkipMetaInfResource(originalPath)) {
                 return "Build metadata or signature file is skipped during project generation.";
             }
             return "Unsafe output path is skipped during project generation.";
+        }
+        if (isNestedLibrary(originalPath)) {
+            return "Nested dependency archive is archived for inspection; not added to the generated Maven classpath.";
         }
         if (isClasspathResource(originalPath)) {
             return "Classpath resource; container prefix is stripped.";

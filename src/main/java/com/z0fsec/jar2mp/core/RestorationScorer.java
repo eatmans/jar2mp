@@ -86,6 +86,10 @@ public class RestorationScorer {
         Collection<ResourceFinding> findings = safeFindings(analysis.getResourceFindings());
         List<ResourceFinding> scoredFindings = new ArrayList<>();
         for (ResourceFinding finding : findings) {
+            if (isArchivedNestedLibrary(finding)) {
+                score.addGap("nested_library", nestedLibraryDetail(finding), 1);
+                continue;
+            }
             if (!isIgnorableResourceFinding(finding)) {
                 scoredFindings.add(finding);
             }
@@ -113,6 +117,10 @@ public class RestorationScorer {
     }
 
     private boolean isResourceRestored(ResourceFinding finding) {
+        if (finding.getCopyStatus() != null && finding.getCopyStatus() != ResourceFinding.CopyStatus.PENDING) {
+            return finding.getCopyStatus() == ResourceFinding.CopyStatus.COPIED
+                    || finding.getCopyStatus() == ResourceFinding.CopyStatus.ARCHIVED;
+        }
         if (SKIPPED.equalsIgnoreCase(safeValue(finding.getTargetPath()))) {
             return false;
         }
@@ -127,6 +135,23 @@ public class RestorationScorer {
         ResourceFinding.Category category = finding.getCategory();
         return category == ResourceFinding.Category.NESTED_LIBRARY
                 || category == ResourceFinding.Category.META_INF_RUNTIME;
+    }
+
+    private boolean isArchivedNestedLibrary(ResourceFinding finding) {
+        return finding != null
+                && finding.getCategory() == ResourceFinding.Category.NESTED_LIBRARY
+                && finding.getCopyStatus() == ResourceFinding.CopyStatus.ARCHIVED;
+    }
+
+    private String nestedLibraryDetail(ResourceFinding finding) {
+        String target = safeValue(finding.getActualTargetPath());
+        if (target.isEmpty()) {
+            target = safeValue(finding.getTargetPath());
+        }
+        if (target.isEmpty()) {
+            target = safeValue(finding.getOriginalPath());
+        }
+        return target + " archived but not added to the generated Maven classpath.";
     }
 
     private int scoreRuntime(JarAnalysisResult analysis, RuntimeTraceResult runtimeTraceResult,

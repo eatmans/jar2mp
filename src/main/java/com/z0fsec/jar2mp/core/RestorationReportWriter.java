@@ -70,6 +70,14 @@ public class RestorationReportWriter {
                 hasGaps = true;
             }
         }
+        for (ResourceFinding finding : analysis.getResourceFindings()) {
+            if (finding.getCategory() != ResourceFinding.Category.NESTED_LIBRARY) {
+                continue;
+            }
+            report.append("- Nested library `").append(finding.getOriginalPath()).append("` is archived at `")
+                    .append(displayTarget(finding)).append("` but not added to the generated Maven classpath.\n");
+            hasGaps = true;
+        }
         if (!hasGaps) {
             report.append("- None detected from archive metadata.\n");
         }
@@ -93,6 +101,7 @@ public class RestorationReportWriter {
         report.append("- Framework findings: ").append(analysis.getFrameworkFindings().size()).append("\n");
         report.append("- Startup candidates: ").append(analysis.getStartupFindings().size()).append("\n");
         report.append("- Resource findings: ").append(analysis.getResourceFindings().size()).append("\n");
+        report.append("- Nested libraries archived: ").append(countNestedLibraries(analysis)).append("\n");
         report.append("- Decompile failures: ").append(countDecompileFailures(analysis)).append("\n\n");
         report.append("Generated reports:\n");
         report.append("- `restoration-report.md`\n");
@@ -140,6 +149,23 @@ public class RestorationReportWriter {
             }
         }
         return count;
+    }
+
+    private int countNestedLibraries(JarAnalysisResult analysis) {
+        int count = 0;
+        for (ResourceFinding finding : analysis.getResourceFindings()) {
+            if (finding.getCategory() == ResourceFinding.Category.NESTED_LIBRARY) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private String displayTarget(ResourceFinding finding) {
+        if (finding.getActualTargetPath() != null && !finding.getActualTargetPath().trim().isEmpty()) {
+            return finding.getActualTargetPath();
+        }
+        return finding.getTargetPath();
     }
 
     private String escapeCell(String value) {

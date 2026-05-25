@@ -35,6 +35,7 @@ class ResourceClassifierTest {
         jarResult.getMetaInfFiles().add("META-INF/services/com.example.Plugin");
         jarResult.getResourceFiles().add("lib/native/libdemo.so");
         jarResult.getResourceFiles().add("certs/server.jks");
+        jarResult.getResourceFiles().add("BOOT-INF/lib/private-lib.jar");
 
         List<ResourceFinding> findings = new ResourceClassifier().classify(jarResult);
 
@@ -59,6 +60,8 @@ class ResourceClassifierTest {
                 "src/main/resources/lib/native/libdemo.so");
         assertResource(findings, "certs/server.jks", ResourceFinding.Category.CERTIFICATE,
                 "src/main/resources/certs/server.jks");
+        assertResource(findings, "BOOT-INF/lib/private-lib.jar", ResourceFinding.Category.NESTED_LIBRARY,
+                "target/original-libs/BOOT-INF/lib/private-lib.jar");
     }
 
     @Test

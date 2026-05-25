@@ -57,6 +57,11 @@ class ProjectBuilderTest {
         assertFalse(Files.exists(outputDir.resolve("src/main/resources/WEB-INF/lib/embedded.jar")));
         assertFalse(Files.exists(outputDir.resolve("src/main/resources/META-INF/context.xml")));
         assertFalse(Files.exists(outputDir.resolve("src/main/webapp/WEB-INF/lib/embedded.jar")));
+        assertEquals("library-bytes",
+                Files.readString(outputDir.resolve("target/original-libs/WEB-INF/lib/embedded.jar")));
+        String runbook = Files.readString(outputDir.resolve("RUNBOOK.md"));
+        assertTrue(runbook.contains("target/original-libs/WEB-INF/lib/embedded.jar"));
+        assertTrue(runbook.contains("not added to the generated Maven classpath"));
         assertTrue(Files.readString(outputDir.resolve("decompile-parity-report.md"))
                 .contains("Decompile parity report"));
         assertTrue(Files.exists(outputDir.resolve("restoration-score.md")));
@@ -118,6 +123,11 @@ class ProjectBuilderTest {
         assertEquals("spring:\n  application:\n    name: restored\n",
                 Files.readString(outputDir.resolve("src/main/resources/application.yml")));
         assertFalse(Files.exists(outputDir.resolve("src/main/resources/BOOT-INF/lib/dependency.jar")));
+        assertEquals("library-bytes",
+                Files.readString(outputDir.resolve("target/original-libs/BOOT-INF/lib/dependency.jar")));
+        String inventory = Files.readString(outputDir.resolve("resource-inventory.md"));
+        assertTrue(inventory.contains("target/original-libs/BOOT-INF/lib/dependency.jar"));
+        assertTrue(inventory.contains("not added to the generated Maven classpath"));
         assertFalse(Files.exists(outputDir.resolve("src/main/java/org/springframework/boot/loader/JarLauncher.java")));
     }
 

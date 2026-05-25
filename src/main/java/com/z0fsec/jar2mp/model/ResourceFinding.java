@@ -2,6 +2,14 @@ package com.z0fsec.jar2mp.model;
 
 public class ResourceFinding {
 
+    public enum CopyStatus {
+        PENDING,
+        COPIED,
+        ARCHIVED,
+        SKIPPED,
+        FAILED
+    }
+
     public enum Category {
         CONFIG,
         MYBATIS_MAPPER,
@@ -20,6 +28,9 @@ public class ResourceFinding {
     private Category category;
     private String targetPath;
     private String note;
+    private CopyStatus copyStatus = CopyStatus.PENDING;
+    private String actualTargetPath;
+    private String copyFailureReason;
 
     public ResourceFinding() {
     }
@@ -39,4 +50,12 @@ public class ResourceFinding {
     public void setTargetPath(String targetPath) { this.targetPath = targetPath; }
     public String getNote() { return note; }
     public void setNote(String note) { this.note = note; }
+    public CopyStatus getCopyStatus() { return copyStatus; }
+    public void setCopyStatus(CopyStatus copyStatus) {
+        this.copyStatus = copyStatus == null ? CopyStatus.PENDING : copyStatus;
+    }
+    public String getActualTargetPath() { return actualTargetPath; }
+    public void setActualTargetPath(String actualTargetPath) { this.actualTargetPath = actualTargetPath; }
+    public String getCopyFailureReason() { return copyFailureReason; }
+    public void setCopyFailureReason(String copyFailureReason) { this.copyFailureReason = copyFailureReason; }
 }

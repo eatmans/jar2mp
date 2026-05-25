@@ -54,6 +54,7 @@ public class ProjectBuilder {
         File srcMainResources = new File(outputDir, "src/main/resources");
         File srcMainWebapp = new File(outputDir, "src/main/webapp");
         File targetOriginalClasses = new File(outputDir, "target/original-classes");
+        File targetOriginalLibs = new File(outputDir, "target/original-libs");
         File srcTestJava = new File(outputDir, "src/test/java");
         File srcTestResources = new File(outputDir, "src/test/resources");
 
@@ -213,7 +214,13 @@ public class ProjectBuilder {
 
                 for (String resourcePath : analysis.getResourceFiles()) {
                     processed++;
-                    if (isClasspathResource(resourcePath) || isNestedLibrary(resourcePath)) {
+                    if (isClasspathResource(resourcePath)) {
+                        continue;
+                    }
+                    if (isNestedLibrary(resourcePath)) {
+                        CopyResult copyResult = copyJarEntry(jf, resourcePath, targetOriginalLibs,
+                                resourcePath, copiedResourceOutputs, false);
+                        recordResourceCopyResult(analysis, resourcePath, copyResult, true);
                         continue;
                     }
                     File targetDir = analysis.isWar() ? srcMainWebapp : srcMainResources;
@@ -360,13 +367,18 @@ public class ProjectBuilder {
         try (InputStream is = jarFile.getInputStream(entry)) {
             Files.copy(is, outputPath, StandardCopyOption.REPLACE_EXISTING);
         } catch (Exception e) {
-            return CopyResult.skipped("Copy failed: " + e.getMessage());
+            return CopyResult.failed("Copy failed: " + e.getMessage());
         }
         copiedOutputs.add(outputPath);
         return CopyResult.copied(outputRelativePath);
     }
 
     private void recordResourceCopyResult(JarAnalysisResult analysis, String originalPath, CopyResult copyResult) {
+        recordResourceCopyResult(analysis, originalPath, copyResult, false);
+    }
+
+    private void recordResourceCopyResult(JarAnalysisResult analysis, String originalPath, CopyResult copyResult,
+                                          boolean archived) {
         if (analysis == null || originalPath == null || copyResult == null) {
             return;
         }
@@ -375,8 +387,20 @@ public class ProjectBuilder {
                 continue;
             }
             if (copyResult.isCopied()) {
-                finding.setNote(appendNote(finding.getNote(), "Copied to " + copyResult.getOutputPath() + "."));
+                finding.setCopyStatus(archived
+                        ? ResourceFinding.CopyStatus.ARCHIVED
+                        : ResourceFinding.CopyStatus.COPIED);
+                String actualPath = archived
+                        ? "target/original-libs/" + copyResult.getOutputPath()
+                        : copyResult.getOutputPath();
+                finding.setActualTargetPath(actualPath);
+                finding.setNote(appendNote(finding.getNote(),
+                        (archived ? "Archived at " : "Copied to ") + actualPath + "."));
             } else {
+                finding.setCopyStatus(copyResult.isFailure()
+                        ? ResourceFinding.CopyStatus.FAILED
+                        : ResourceFinding.CopyStatus.SKIPPED);
+                finding.setCopyFailureReason(copyResult.getReason());
                 finding.setNote(appendNote(finding.getNote(), "Resource not copied: " + copyResult.getReason() + "."));
             }
         }
@@ -393,19 +417,25 @@ public class ProjectBuilder {
         private final boolean copied;
         private final String outputPath;
         private final String reason;
+        private final boolean failure;
 
-        private CopyResult(boolean copied, String outputPath, String reason) {
+        private CopyResult(boolean copied, String outputPath, String reason, boolean failure) {
             this.copied = copied;
             this.outputPath = outputPath;
             this.reason = reason;
+            this.failure = failure;
         }
 
         private static CopyResult copied(String outputPath) {
-            return new CopyResult(true, outputPath, null);
+            return new CopyResult(true, outputPath, null, false);
         }
 
         private static CopyResult skipped(String reason) {
-            return new CopyResult(false, null, reason);
+            return new CopyResult(false, null, reason, false);
+        }
+
+        private static CopyResult failed(String reason) {
+            return new CopyResult(false, null, reason, true);
         }
 
         private boolean isCopied() {
@@ -418,6 +448,10 @@ public class ProjectBuilder {
 
         private String getReason() {
             return reason;
+        }
+
+        private boolean isFailure() {
+            return failure;
         }
     }
 
