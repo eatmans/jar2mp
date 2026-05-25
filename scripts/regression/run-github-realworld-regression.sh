@@ -11,6 +11,26 @@ JAR2MP_JAR="${ROOT_DIR}/target/jar2mp-1.0-jar-with-dependencies.jar"
 
 MVN="${MVN:-mvn}"
 JAVA8_HOME="${JAVA8_HOME:-${HOME}/.sdkman/candidates/java/8.0.492.fx-librca}"
+JAVA_TRACE_TIMEOUT="${JAVA_TRACE_TIMEOUT:-20}"
+REALWORLD_TRACE_ARGS="${REALWORLD_TRACE_ARGS:---server.port=0}"
+RESTORED_PACKAGE_FLAGS=(
+  -q
+  -DskipTests
+  -Dmaven.test.skip=true
+  -Dcheckstyle.skip=true
+  -Dspring-javaformat.skip=true
+  -Dimpsort.skip=true
+  -Dformatter.skip=true
+  -Dspotless.check.skip=true
+  -Dspotless.apply.skip=true
+  -Dlicense.skip=true
+  -Drat.skip=true
+  -Denforcer.skip=true
+  -Djacoco.skip=true
+  -Dgit.commit.id.skip=true
+  -Dmaven.javadoc.skip=true
+  package
+)
 
 sample_names=()
 sample_repos=()
@@ -298,6 +318,56 @@ parse_decompile_failures() {
   fi
 }
 
+parse_runtime_field() {
+  local report="$1"
+  local label="$2"
+  local fallback="$3"
+  if [[ ! -f "${report}" ]]; then
+    printf '%s' "${fallback}"
+    return
+  fi
+  local value
+  value="$(awk -v label="${label}" -F': ' '$0 ~ "^- " label ":" { print $2; exit }' "${report}" 2>/dev/null || true)"
+  value="${value//\`/}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "${value:-${fallback}}"
+}
+
+package_restored_project() {
+  local project_dir="$1"
+  local java_home="$2"
+  local log_file="$3"
+  run_with_java_home "${java_home}" bash -c "cd \"${project_dir}\" && \"${MVN}\" ${RESTORED_PACKAGE_FLAGS[*]}" \
+    > "${log_file}" 2>&1
+}
+
+find_rebuilt_artifact() {
+  local project_dir="$1"
+  local original_artifact="$2"
+  local extension="${original_artifact##*.}"
+  find "${project_dir}/target" -maxdepth 1 -type f \
+    -name "*.${extension}" \
+    ! -name "*-sources.jar" \
+    ! -name "*-javadoc.jar" \
+    ! -name "original-*.jar" \
+    ! -name "original-*.war" \
+    | sort | head -n 1
+}
+
+parse_artifact_summary_field() {
+  local csv="$1"
+  local column="$2"
+  local fallback="$3"
+  if [[ ! -f "${csv}" ]]; then
+    printf '%s' "${fallback}"
+    return
+  fi
+  local value
+  value="$(awk -F',' -v column="${column}" 'NR == 2 { print $column; exit }' "${csv}" 2>/dev/null || true)"
+  printf '%s' "${value:-${fallback}}"
+}
+
 run_sample() {
   local index="$1"
   local name="${sample_names[${index}]}"
@@ -310,7 +380,7 @@ run_sample() {
   rm -rf "${output_base}"
   mkdir -p "${output_base}"
 
-  local args=(--verbose --verify-build --verify-goal compile -f -o "${output_base}" "${artifact}")
+  local args=(--verbose --trace-runtime --trace-timeout "${JAVA_TRACE_TIMEOUT}" --trace-args "${REALWORLD_TRACE_ARGS}" --verify-build --verify-goal compile -f -o "${output_base}" "${artifact}")
 
   log "Restoring ${name}"
   set +e
@@ -323,6 +393,7 @@ run_sample() {
   project_dir="$(find "${output_base}" -mindepth 1 -maxdepth 1 -type d | sort | head -n 1 || true)"
   local score_report="${project_dir}/restoration-score.md"
   local verification_report="${project_dir}/verification-report.md"
+  local runtime_report="${project_dir}/runtime-trace-report.md"
   local failures_report="${project_dir}/decompile-failures.md"
 
   local overall="0"
@@ -333,6 +404,15 @@ run_sample() {
   local verification_status="missing"
   local verification_failure_type="missing"
   local decompile_failures="missing"
+  local runtime_launch_type="not-run"
+  local runtime_launch_support="not-run"
+  local runtime_run_status="not-run"
+  local runtime_events="not-run"
+  local artifact_exact="not-run"
+  local artifact_diff_sha="not-run"
+  local artifact_missing="not-run"
+  local artifact_extra="not-run"
+  local artifact_diff_classes="not-run"
   local status="FAIL"
 
   if [[ -n "${project_dir}" && -f "${score_report}" ]]; then
@@ -344,6 +424,10 @@ run_sample() {
     verification_status="$(parse_verification_status "${verification_report}")"
     verification_failure_type="$(parse_verification_failure_type "${verification_report}")"
     decompile_failures="$(parse_decompile_failures "${failures_report}")"
+    runtime_launch_type="$(parse_runtime_field "${runtime_report}" "Launch type" "missing")"
+    runtime_launch_support="$(parse_runtime_field "${runtime_report}" "Launch support" "missing")"
+    runtime_run_status="$(parse_runtime_field "${runtime_report}" "Run status" "missing")"
+    runtime_events="$(parse_runtime_field "${runtime_report}" "Total events" "missing")"
 
     overall="${overall:-0}"
     source_score="${source_score:-0}"
@@ -353,6 +437,33 @@ run_sample() {
     verification_status="${verification_status:-missing}"
     verification_failure_type="${verification_failure_type:-missing}"
     decompile_failures="${decompile_failures:-missing}"
+    runtime_launch_type="${runtime_launch_type:-missing}"
+    runtime_launch_support="${runtime_launch_support:-missing}"
+    runtime_run_status="${runtime_run_status:-missing}"
+    runtime_events="${runtime_events:-missing}"
+
+    local rebuilt_artifact=""
+    if package_restored_project "${project_dir}" "${java_home}" "${REPORT_DIR}/${name}.package.log"; then
+      rebuilt_artifact="$(find_rebuilt_artifact "${project_dir}" "${artifact}")"
+      if [[ -n "${rebuilt_artifact}" && -f "${rebuilt_artifact}" ]]; then
+        if run_with_java_home "${java_home}" java -jar "${JAR2MP_JAR}" \
+          --compare-artifact "${rebuilt_artifact}" -q -o "${project_dir}" "${artifact}" \
+          > "${REPORT_DIR}/${name}.artifact-fidelity.log" 2>&1; then
+          local artifact_csv="${project_dir}/artifact-fidelity-summary.csv"
+          artifact_exact="$(parse_artifact_summary_field "${artifact_csv}" 1 "missing")"
+          artifact_diff_sha="$(parse_artifact_summary_field "${artifact_csv}" 6 "missing")"
+          artifact_missing="$(parse_artifact_summary_field "${artifact_csv}" 7 "missing")"
+          artifact_extra="$(parse_artifact_summary_field "${artifact_csv}" 8 "missing")"
+          artifact_diff_classes="$(parse_artifact_summary_field "${artifact_csv}" 13 "missing")"
+        else
+          artifact_exact="compare-failed"
+        fi
+      else
+        artifact_exact="rebuilt-missing"
+      fi
+    else
+      artifact_exact="package-failed"
+    fi
 
     if [[ "${exit_code}" -eq 0 \
       && "${overall}" -ge "${threshold}" \
@@ -379,13 +490,22 @@ run_sample() {
     csv_field "${verification_status}"; printf ','
     csv_field "${verification_failure_type}"; printf ','
     csv_field "${decompile_failures}"; printf ','
+    csv_field "${runtime_launch_type}"; printf ','
+    csv_field "${runtime_launch_support}"; printf ','
+    csv_field "${runtime_run_status}"; printf ','
+    csv_field "${runtime_events}"; printf ','
+    csv_field "${artifact_exact}"; printf ','
+    csv_field "${artifact_diff_sha}"; printf ','
+    csv_field "${artifact_missing}"; printf ','
+    csv_field "${artifact_extra}"; printf ','
+    csv_field "${artifact_diff_classes}"; printf ','
     csv_field "${threshold}"; printf ','
     csv_field "${java_home:-default}"; printf ','
     csv_field "${sample_notes[${index}]}"; printf '\n'
   } >> "${REPORT_DIR}/github-realworld-summary.csv"
 
   cat >> "${REPORT_DIR}/github-realworld-summary.md" <<MD
-| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${threshold} |
+| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${threshold} |
 MD
 }
 
@@ -399,15 +519,15 @@ main() {
   prepare_samples
 
   write_file "${REPORT_DIR}/github-realworld-summary.csv" <<'CSV'
-sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,threshold,java_home,note
+sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,threshold,java_home,note
 CSV
   write_file "${REPORT_DIR}/github-realworld-summary.md" <<'MD'
 # jar2mp GitHub Real-World Regression Summary
 
-This is a verify-only gate. Runtime score is expected to remain 0 unless a sample is explicitly run with tracing.
+This is a compile-gate summary with non-gating runtime and artifact-fidelity evidence columns.
 
-| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Threshold |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: |
+| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Runtime launch | Runtime support | Runtime status | Runtime events | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Threshold |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
 MD
 
   local i

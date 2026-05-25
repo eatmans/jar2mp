@@ -27,6 +27,10 @@ public class CliRunner {
             return 0;
         }
 
+        if (options.getCompareArtifactFile() != null) {
+            return compareArtifacts(options);
+        }
+
         if (options.getInputFiles().isEmpty()) {
             System.err.println("Error: 未指定输入文件。使用 --help 查看用法。");
             return 1;
@@ -310,6 +314,10 @@ public class CliRunner {
                     options.getConfig().setTraceRuntime(true);
                     options.getConfig().setSmokeOnly(true);
                     break;
+                case "--compare-artifact":
+                    if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
+                    options.setCompareArtifactFile(args[i]);
+                    break;
                 case "-f":
                 case "--force":
                     options.getConfig().setForceOverwrite(true);
@@ -332,6 +340,43 @@ public class CliRunner {
             i++;
         }
         return options;
+    }
+
+    private int compareArtifacts(CliOptions options) {
+        if (options.getInputFiles().size() != 1) {
+            System.err.println("Error: --compare-artifact requires exactly one original JAR/WAR input.");
+            return 1;
+        }
+
+        File original = new File(options.getInputFiles().get(0));
+        File rebuilt = new File(options.getCompareArtifactFile());
+        if (!original.isFile()) {
+            System.err.println("Error: 原始归档不存在: " + original.getAbsolutePath());
+            return 1;
+        }
+        if (!rebuilt.isFile()) {
+            System.err.println("Error: 重建归档不存在: " + rebuilt.getAbsolutePath());
+            return 1;
+        }
+
+        File outputDir = options.getConfig().getOutputDir() == null
+                ? new File(".")
+                : new File(options.getConfig().getOutputDir());
+        try {
+            ArtifactFidelityResult result = new ArtifactFidelityComparator().compare(original, rebuilt);
+            new ArtifactFidelityReportWriter().write(outputDir, result);
+            if (!options.isQuiet()) {
+                System.out.println("Artifact fidelity exact match: " + result.isExactMatch());
+                System.out.println("Artifact fidelity report: "
+                        + new File(outputDir, "artifact-fidelity-report.md").getAbsolutePath());
+                System.out.println("Artifact fidelity CSV: "
+                        + new File(outputDir, "artifact-fidelity-summary.csv").getAbsolutePath());
+            }
+            return 0;
+        } catch (IOException e) {
+            System.err.println("Error: artifact fidelity compare failed: " + e.getMessage());
+            return 2;
+        }
     }
 
     private void printSummary(JarAnalysisResult result) {

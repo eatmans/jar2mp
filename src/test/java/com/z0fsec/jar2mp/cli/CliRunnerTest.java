@@ -112,6 +112,30 @@ class CliRunnerTest {
     }
 
     @Test
+    void compareArtifactModeWritesFidelityReports() throws Exception {
+        Path original = createJar("original.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"),
+                "config.properties", "value=original\n".getBytes(StandardCharsets.UTF_8));
+        Path rebuilt = createJar("rebuilt.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"),
+                "config.properties", "value=rebuilt\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("compare-out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--compare-artifact", rebuilt.toString(),
+                "-o", output.toString(),
+                original.toString()
+        });
+
+        assertEquals(0, exitCode);
+        String report = Files.readString(output.resolve("artifact-fidelity-report.md"));
+        String csv = Files.readString(output.resolve("artifact-fidelity-summary.csv"));
+        assertTrue(report.contains("# Artifact fidelity report"));
+        assertTrue(report.contains("Exact match: false"));
+        assertTrue(csv.contains("false,"));
+    }
+
+    @Test
     void noDecompileCopiesClassFilesInsteadOfWritingJavaSources() throws Exception {
         Path jar = createJar("sample-1.0.jar", "com/example/App.class",
                 minimalClassBytes(52, "com/example/App"));

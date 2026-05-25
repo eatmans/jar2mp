@@ -1,6 +1,6 @@
 # GitHub Real-World Regression Set
 
-`scripts/regression/run-github-realworld-regression.sh` downloads real Java projects from GitHub, builds their published artifact shape, runs jar2mp, and writes a verify-only restoration summary. Outputs live under `target/realworld-samples/` and are not committed.
+`scripts/regression/run-github-realworld-regression.sh` downloads real Java projects from GitHub, builds their published artifact shape, runs jar2mp, and writes a compile-gate summary with runtime and artifact-fidelity evidence. Outputs live under `target/realworld-samples/` and are not committed.
 
 jar2mp uses multi-engine decompiler arbitration for these samples. CFR and JD-Core run in-process, JADX participates when the `jadx` command is available on `PATH` or `JADX_BIN`, and Fernflower remains as an additional fallback engine. JD-GUI itself is an interactive GUI; JD-Core is the automated engine from the same Java Decompiler family.
 
@@ -13,7 +13,7 @@ Run:
 Optional environment:
 
 ```bash
-MVN=/path/to/mvn JAVA8_HOME=/path/to/jdk8 ./scripts/regression/run-github-realworld-regression.sh
+MVN=/path/to/mvn JAVA8_HOME=/path/to/jdk8 JAVA_TRACE_TIMEOUT=20 REALWORLD_TRACE_ARGS='--server.port=0' ./scripts/regression/run-github-realworld-regression.sh
 ```
 
 The script uses GitHub codeload ZIP archives instead of `git clone`. This keeps the regression less sensitive to local Git HTTPS stalls and avoids cloning full repository history.
@@ -39,7 +39,9 @@ Each pass-gate sample is marked `PASS` only when:
 - `verification-report.md` reports `BUILD SUCCESS` and `Failure type: NONE`.
 - `decompile-failures.md` reports zero failed decompilations.
 
-Runtime score is not part of this gate. These real samples are web applications or libraries, so the script runs `--verify-build` without `--trace-runtime`; an overall score of `80/100` is expected when source, resource, and verification buckets are all complete.
+Runtime status and artifact fidelity are not part of this pass/fail gate yet. The script runs runtime tracing with `REALWORLD_TRACE_ARGS` so executable Spring Boot samples can collect startup evidence; long-running web applications may report `TRACE_COLLECTED_TIMEOUT` after events are recorded. Library JARs, thin JARs without a runnable manifest, and standard WARs can report `UNSUPPORTED` launch support without failing the compile gate.
+
+After jar2mp verification, the script also packages the restored project with skip flags for tests, checkstyle, formatting, license, enforcer, jacoco, git metadata, and javadocs. It then compares the original artifact with the rebuilt artifact and writes `artifact-fidelity-report.md` plus `artifact-fidelity-summary.csv` in each restored project. Artifact exact match is expected to remain `false` for these samples until jar2mp has a raw-bytecode/package-shape preservation mode; current fidelity columns are evidence for the remaining restoration gap, not a gate.
 
 ## Known Non-Gate Findings
 
@@ -62,6 +64,8 @@ The script writes:
 - `target/realworld-samples/report/github-realworld-summary.csv`
 - `target/realworld-samples/report/*.build.log`
 - `target/realworld-samples/report/*.cli.log`
+- `target/realworld-samples/report/*.package.log`
+- `target/realworld-samples/report/*.artifact-fidelity.log`
 - downloaded repositories under `target/realworld-samples/repos/`
 - restored jar2mp projects under `target/realworld-samples/restored/`
 
