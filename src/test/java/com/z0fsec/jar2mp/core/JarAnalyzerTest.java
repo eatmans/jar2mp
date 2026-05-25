@@ -68,6 +68,22 @@ class JarAnalyzerTest {
                         && dep.getConfidence() == MavenDependency.Confidence.HIGH));
     }
 
+    @Test
+    void executableWarSkipsSpringBootLoaderClasses() throws Exception {
+        Path war = createJar("boot-app.war",
+                entry("org/springframework/boot/loader/WarLauncher.class",
+                        minimalClassBytes(52, "org/springframework/boot/loader/WarLauncher",
+                                "org/springframework/boot/loader/Launcher")),
+                entry("WEB-INF/classes/com/example/App.class",
+                        minimalClassBytes(52, "com/example/App", "org/springframework/boot/SpringApplication")));
+
+        JarAnalysisResult result = new JarAnalyzer(new PackagePrefixDatabase()).analyze(war.toFile(), null);
+
+        assertTrue(result.isWar());
+        assertTrue(result.getClassFiles().contains("com/example/App.class"));
+        assertFalse(result.getClassFiles().contains("org/springframework/boot/loader/WarLauncher.class"));
+    }
+
     private Path createJar(String fileName, String classEntry, byte[] classBytes) throws Exception {
         return createJar(fileName, entry(classEntry, classBytes));
     }

@@ -141,7 +141,7 @@ public class JarAnalyzer {
                 && !applicationPrefixes.isEmpty()
                 && !dependencyPrefixes.isEmpty();
         for (String rawClassEntry : rawClassEntries) {
-            if (hasBootApplicationClasses && isSpringBootLoaderClass(rawClassEntry)) {
+            if ((hasBootApplicationClasses || hasWebApplicationClasses) && isSpringBootLoaderClass(rawClassEntry)) {
                 continue;
             }
             String strippedName = stripClassPathPrefix(rawClassEntry);

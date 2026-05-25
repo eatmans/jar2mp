@@ -27,6 +27,9 @@ The script uses GitHub codeload ZIP archives instead of `git clone`. This keeps 
 | `jpetstore-6` | `mybatis/jpetstore-6` | `0632ee486774fb4c09fb267a9e264975862cd778` | WAR / MyBatis | `./mvnw -q -DskipTests -Dimpsort.skip=true package` | 80 | Traditional WAR with `WEB-INF/classes`, JSPs, MyBatis mapper XML, and servlet resources. |
 | `gs-securing-web` | `spring-guides/gs-securing-web` | `6c986e19b4b329dd4a3d9d3d932a6e0e5bf74ad5` | thin Maven JAR / Spring Security | `cd complete && ./mvnw -q -DskipTests package` | 80 | Spring Security and Spring MVC sample; not a Boot executable because it has no repackage step. |
 | `spring-boot-shiro` | `pbw123/springboot_learn` | `3790fd026dd333226cf6a3ec52531b2b8007d541` | Spring Boot executable JAR / Shiro | `cd spring-boot-shiro && ./mvnw -q -DskipTests package` | 80 | Shiro integration sample. It uses older Spring Boot/Lombok, so build and jar2mp verification run with Java 8. |
+| `commons-fileupload` | `apache/commons-fileupload` | `f3e030f09ac8b01b684466c793dec86eafe1e4c9` | Servlet upload library JAR | `mvn -q -DskipTests package` | 80 | Servlet upload library; complements the WAR sample with a dependency-style servlet API artifact. |
+| `gs-uploading-files` | `spring-guides/gs-uploading-files` | `02df6b5a928ed8d91b8aedb37e28f1d6ce9fd32a` | Spring Boot executable JAR / upload | `cd complete && mvn -q -DskipTests package` | 80 | Small Spring Boot upload app with templates and file storage service paths. |
+| `spring-boot-thymeleaf-war` | `kolorobot/spring-boot-thymeleaf` | `00cb739087a7d933fbf3bca716fd06b4b362a996` | Spring Boot executable WAR / Thymeleaf | `./mvnw -q -DskipTests package` | 80 | Executable WAR with `WEB-INF/classes`, Boot loader, templates, static assets, and profile config. |
 
 Each pass-gate sample is marked `PASS` only when:
 
@@ -47,6 +50,9 @@ These projects were useful during real-world probing, but they should not fail t
 | `shiro-core` | `apache/shiro@eee14b9fa14695fd7a3bd295e81436932bf41c55` | source/resource `100`, no decompile failures, verification fails | The restored module inherits Apache Shiro's multi-module parent build and `directory-maven-plugin` expects the original reactor directory for `org.apache.shiro:shiro-root`. |
 | `shiro-quickstart` | `apache/shiro@eee14b9fa14695fd7a3bd295e81436932bf41c55` | source/resource `100`, no decompile failures, verification fails | The restored standalone sample references the non-published reactor parent `org.apache.shiro.samples:shiro-samples:2.0.6`. |
 | `commons-lang3` | `apache/commons-lang@1aa5352287f581b628c48c6f61e38866d4a2f64a` | source/resource `100`, no decompile failures, verification fails | Large library decompilation still emits invalid Java around several complex language constructs; this is a good future decompiler-arbitration target. |
+| `commons-cli` | `apache/commons-cli@91369572408eff424ff5cec2d46dd9667ceba1b3` | source/resource `100`, no decompile failures, verification fails | Decompilation emits incompatible generic wildcard types in `PatternOptionBuilder` and `TypeHandler`. |
+| `commons-logging` | `apache/commons-logging@698cda4096ef648f3d4ee520d86b79b44aba86fe` | source/resource `100`, no decompile failures, verification fails | Decompilation emits ambiguous `AccessController.doPrivileged` method references and several raw/generic type mismatches. |
+| `json-java` | `stleary/JSON-java@f9b5587c87aaf02e4a5ed1991d48d6c05993624a` | source/resource `100`, no decompile failures, verification fails | Decompilation emits unreachable control flow in `org.json.CDL`. |
 
 ## Outputs
 

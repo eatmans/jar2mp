@@ -169,6 +169,48 @@ prepare_samples() {
     "80" \
     "${JAVA8_HOME}" \
     "Shiro sample uses older Lombok/Spring Boot; build and verification must run on Java 8."
+
+  register_sample \
+    "commons-fileupload" \
+    "apache/commons-fileupload" \
+    "https://github.com/apache/commons-fileupload" \
+    "f3e030f09ac8b01b684466c793dec86eafe1e4c9" \
+    "commons-fileupload" \
+    "." \
+    "mvn -q -DskipTests package" \
+    "target/commons-fileupload-1.6.0.jar" \
+    "Servlet upload library JAR" \
+    "80" \
+    "" \
+    "Servlet upload library; complements the WAR sample with a dependency-style servlet API artifact."
+
+  register_sample \
+    "gs-uploading-files" \
+    "spring-guides/gs-uploading-files" \
+    "https://github.com/spring-guides/gs-uploading-files" \
+    "02df6b5a928ed8d91b8aedb37e28f1d6ce9fd32a" \
+    "gs-uploading-files" \
+    "complete" \
+    "mvn -q -DskipTests package" \
+    "complete/target/uploading-files-complete-0.0.1-SNAPSHOT.jar" \
+    "Spring Boot executable JAR / upload" \
+    "80" \
+    "" \
+    "Small Spring Boot upload app with templates and file storage service paths."
+
+  register_sample \
+    "spring-boot-thymeleaf-war" \
+    "kolorobot/spring-boot-thymeleaf" \
+    "https://github.com/kolorobot/spring-boot-thymeleaf" \
+    "00cb739087a7d933fbf3bca716fd06b4b362a996" \
+    "spring-boot-thymeleaf-war" \
+    "." \
+    "./mvnw -q -DskipTests package" \
+    "target/spring-boot-thymeleaf-2.0.0.war" \
+    "Spring Boot executable WAR / Thymeleaf" \
+    "80" \
+    "" \
+    "Executable WAR with WEB-INF/classes, Boot loader, templates, static assets, and profile config."
 }
 
 run_with_java_home() {
