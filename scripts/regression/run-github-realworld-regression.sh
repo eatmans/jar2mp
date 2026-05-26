@@ -380,7 +380,7 @@ run_sample() {
   rm -rf "${output_base}"
   mkdir -p "${output_base}"
 
-  local args=(--verbose --trace-runtime --trace-timeout "${JAVA_TRACE_TIMEOUT}" --trace-args "${REALWORLD_TRACE_ARGS}" --verify-build --verify-goal compile -f -o "${output_base}" "${artifact}")
+  local args=(--verbose --emit-raw-artifact --trace-runtime --trace-timeout "${JAVA_TRACE_TIMEOUT}" --trace-args "${REALWORLD_TRACE_ARGS}" --verify-build --verify-goal compile -f -o "${output_base}" "${artifact}")
 
   log "Restoring ${name}"
   set +e
@@ -413,6 +413,11 @@ run_sample() {
   local artifact_missing="not-run"
   local artifact_extra="not-run"
   local artifact_diff_classes="not-run"
+  local raw_artifact_exact="not-run"
+  local raw_artifact_diff_sha="not-run"
+  local raw_artifact_missing="not-run"
+  local raw_artifact_extra="not-run"
+  local raw_artifact_diff_classes="not-run"
   local status="FAIL"
 
   if [[ -n "${project_dir}" && -f "${score_report}" ]]; then
@@ -441,6 +446,18 @@ run_sample() {
     runtime_launch_support="${runtime_launch_support:-missing}"
     runtime_run_status="${runtime_run_status:-missing}"
     runtime_events="${runtime_events:-missing}"
+
+    local raw_artifact_csv="${project_dir}/target/raw-artifact/artifact-fidelity-summary.csv"
+    raw_artifact_exact="$(parse_artifact_summary_field "${raw_artifact_csv}" 1 "missing")"
+    raw_artifact_diff_sha="$(parse_artifact_summary_field "${raw_artifact_csv}" 6 "missing")"
+    raw_artifact_missing="$(parse_artifact_summary_field "${raw_artifact_csv}" 7 "missing")"
+    raw_artifact_extra="$(parse_artifact_summary_field "${raw_artifact_csv}" 8 "missing")"
+    raw_artifact_diff_classes="$(parse_artifact_summary_field "${raw_artifact_csv}" 13 "missing")"
+    raw_artifact_exact="${raw_artifact_exact:-missing}"
+    raw_artifact_diff_sha="${raw_artifact_diff_sha:-missing}"
+    raw_artifact_missing="${raw_artifact_missing:-missing}"
+    raw_artifact_extra="${raw_artifact_extra:-missing}"
+    raw_artifact_diff_classes="${raw_artifact_diff_classes:-missing}"
 
     local rebuilt_artifact=""
     if package_restored_project "${project_dir}" "${java_home}" "${REPORT_DIR}/${name}.package.log"; then
@@ -499,13 +516,18 @@ run_sample() {
     csv_field "${artifact_missing}"; printf ','
     csv_field "${artifact_extra}"; printf ','
     csv_field "${artifact_diff_classes}"; printf ','
+    csv_field "${raw_artifact_exact}"; printf ','
+    csv_field "${raw_artifact_diff_sha}"; printf ','
+    csv_field "${raw_artifact_missing}"; printf ','
+    csv_field "${raw_artifact_extra}"; printf ','
+    csv_field "${raw_artifact_diff_classes}"; printf ','
     csv_field "${threshold}"; printf ','
     csv_field "${java_home:-default}"; printf ','
     csv_field "${sample_notes[${index}]}"; printf '\n'
   } >> "${REPORT_DIR}/github-realworld-summary.csv"
 
   cat >> "${REPORT_DIR}/github-realworld-summary.md" <<MD
-| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${threshold} |
+| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${threshold} |
 MD
 }
 
@@ -519,15 +541,15 @@ main() {
   prepare_samples
 
   write_file "${REPORT_DIR}/github-realworld-summary.csv" <<'CSV'
-sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,threshold,java_home,note
+sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,threshold,java_home,note
 CSV
   write_file "${REPORT_DIR}/github-realworld-summary.md" <<'MD'
 # jar2mp GitHub Real-World Regression Summary
 
 This is a compile-gate summary with non-gating runtime and artifact-fidelity evidence columns.
 
-| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Runtime launch | Runtime support | Runtime status | Runtime events | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Threshold |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Runtime launch | Runtime support | Runtime status | Runtime events | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Threshold |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
 MD
 
   local i

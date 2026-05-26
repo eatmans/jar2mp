@@ -41,7 +41,12 @@ Each pass-gate sample is marked `PASS` only when:
 
 Runtime status and artifact fidelity are not part of this pass/fail gate yet. The script runs runtime tracing with `REALWORLD_TRACE_ARGS` so executable Spring Boot samples can collect startup evidence; long-running web applications may report `TRACE_COLLECTED_TIMEOUT` after events are recorded. Library JARs, thin JARs without a runnable manifest, and standard WARs can report `UNSUPPORTED` launch support without failing the compile gate.
 
-After jar2mp verification, the script also packages the restored project with skip flags for tests, checkstyle, formatting, license, enforcer, jacoco, git metadata, and javadocs. It then compares the original artifact with the rebuilt artifact and writes `artifact-fidelity-report.md` plus `artifact-fidelity-summary.csv` in each restored project. Artifact exact match is expected to remain `false` for these samples until jar2mp has a raw-bytecode/package-shape preservation mode; current fidelity columns are evidence for the remaining restoration gap, not a gate.
+The script now records two artifact-fidelity tracks:
+
+- `artifact_*` columns compare the original artifact with the Maven package produced from the restored source project. These are expected to remain imperfect until source recompilation can reproduce compiler output and packaging metadata.
+- `raw_artifact_*` columns compare the original artifact with `target/raw-artifact/<original-name>`, a byte-for-byte preserved copy emitted by `--emit-raw-artifact`. These columns prove jar2mp can retain an exact raw artifact alongside the source restoration without claiming that the source rebuild is byte-identical.
+
+After jar2mp verification, the script still packages the restored project with skip flags for tests, checkstyle, formatting, license, enforcer, jacoco, git metadata, and javadocs. It compares that rebuilt artifact separately from the raw artifact. Source-package artifact exact match is non-gating; raw artifact exactness is evidence that a 1:1 preservation path exists.
 
 ## Known Non-Gate Findings
 
@@ -68,5 +73,6 @@ The script writes:
 - `target/realworld-samples/report/*.artifact-fidelity.log`
 - downloaded repositories under `target/realworld-samples/repos/`
 - restored jar2mp projects under `target/realworld-samples/restored/`
+- per-project raw artifact fidelity under `target/realworld-samples/restored/<sample>/<artifactId>/target/raw-artifact/`
 
 Do not commit generated artifacts or reports. Commit the script and this documentation only.
