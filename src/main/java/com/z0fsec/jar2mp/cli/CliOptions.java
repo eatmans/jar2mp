@@ -65,6 +65,7 @@ public class CliOptions {
         System.out.println("      --trace-args <args>         传给原始 JAR 的运行参数（可包含空格，需整体加引号）");
         System.out.println("      --trace-timeout <seconds>   运行时追踪超时时间（默认 120 秒）");
         System.out.println("      --smoke-only                启用运行时追踪并跳过 Maven 构建验证");
+        System.out.println("      --emit-raw-artifact         在 target/raw-artifact/ 生成原始归档的字节保真副本");
         System.out.println("      --compare-artifact <file>   将输入原始归档与指定重建归档做字节保真度对比");
         System.out.println("  -f, --force                     覆盖已存在的输出目录");
         System.out.println("  -q, --quiet                     静默模式");
@@ -77,6 +78,7 @@ public class CliOptions {
         System.out.println("  每个项目会生成 restoration-score.md 和 gap-summary.md。");
         System.out.println("  启用 --verify-build 后额外生成 verification-report.md 和 verification-errors.md。");
         System.out.println("  启用 --trace-runtime 后额外生成 runtime-trace-report.md。");
+        System.out.println("  启用 --emit-raw-artifact 后额外生成 target/raw-artifact/artifact-fidelity-summary.csv。");
         System.out.println("  启用 --compare-artifact 后额外生成 artifact-fidelity-report.md 和 artifact-fidelity-summary.csv。");
         System.out.println();
         System.out.println("Examples:");

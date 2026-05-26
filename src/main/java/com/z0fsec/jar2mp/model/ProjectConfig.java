@@ -25,6 +25,7 @@ public class ProjectConfig {
     private final List<String> traceArgs = new ArrayList<>();
     private long traceTimeoutSeconds = 120L;
     private boolean smokeOnly = false;
+    private boolean emitRawArtifact = false;
 
     public String getOutputDir() { return outputDir; }
     public void setOutputDir(String outputDir) { this.outputDir = outputDir; }
@@ -77,4 +78,6 @@ public class ProjectConfig {
     }
     public boolean isSmokeOnly() { return smokeOnly; }
     public void setSmokeOnly(boolean smokeOnly) { this.smokeOnly = smokeOnly; }
+    public boolean isEmitRawArtifact() { return emitRawArtifact; }
+    public void setEmitRawArtifact(boolean emitRawArtifact) { this.emitRawArtifact = emitRawArtifact; }
 }

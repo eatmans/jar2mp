@@ -64,6 +64,9 @@ public class CliRunner {
             ProjectVerifier verifier = new ProjectVerifier();
             RuntimeSmokeRunner smokeRunner = new RuntimeSmokeRunner();
             RuntimeTraceReportWriter traceReportWriter = new RuntimeTraceReportWriter();
+            RawArtifactPackager rawArtifactPackager = new RawArtifactPackager();
+            ArtifactFidelityComparator artifactFidelityComparator = new ArtifactFidelityComparator();
+            ArtifactFidelityReportWriter artifactFidelityReportWriter = new ArtifactFidelityReportWriter();
             RestorationScorer restorationScorer = new RestorationScorer();
             RestorationScoreWriter restorationScoreWriter = new RestorationScoreWriter();
             GapSummaryWriter gapSummaryWriter = new GapSummaryWriter();
@@ -119,6 +122,17 @@ public class CliRunner {
                             System.out.println("  [" + percent + "%] " + message);
                         }
                     });
+
+                    if (config.isEmitRawArtifact()) {
+                        File preservedArtifact = rawArtifactPackager.preserve(jarFile, outputDir);
+                        File rawArtifactDir = preservedArtifact.getParentFile();
+                        ArtifactFidelityResult rawFidelity = artifactFidelityComparator.compare(jarFile, preservedArtifact);
+                        artifactFidelityReportWriter.write(rawArtifactDir, rawFidelity);
+                        if (!options.isQuiet()) {
+                            System.out.println("  原始归档保真副本: " + preservedArtifact.getAbsolutePath()
+                                    + " (exact=" + rawFidelity.isExactMatch() + ")");
+                        }
+                    }
 
                     if (config.isTraceRuntime() || config.isSmokeOnly()) {
                         RuntimeSmokeRunner.SmokeRunResult smokeResult = smokeRunner.runSmoke(
@@ -313,6 +327,9 @@ public class CliRunner {
                 case "--smoke-only":
                     options.getConfig().setTraceRuntime(true);
                     options.getConfig().setSmokeOnly(true);
+                    break;
+                case "--emit-raw-artifact":
+                    options.getConfig().setEmitRawArtifact(true);
                     break;
                 case "--compare-artifact":
                     if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }

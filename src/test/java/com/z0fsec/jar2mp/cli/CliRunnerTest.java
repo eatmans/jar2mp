@@ -136,6 +136,28 @@ class CliRunnerTest {
     }
 
     @Test
+    void emitRawArtifactWritesExactPreservedCopy() throws Exception {
+        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"),
+                "config.properties", "mode=raw\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--emit-raw-artifact",
+                "--no-decompile",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path rawDir = output.resolve("sample").resolve("target/raw-artifact");
+        assertTrue(Files.exists(rawDir.resolve("sample-1.0.jar")));
+        String csv = Files.readString(rawDir.resolve("artifact-fidelity-summary.csv"));
+        assertTrue(csv.startsWith("exact_match,"));
+        assertTrue(csv.contains("\ntrue,"));
+    }
+
+    @Test
     void noDecompileCopiesClassFilesInsteadOfWritingJavaSources() throws Exception {
         Path jar = createJar("sample-1.0.jar", "com/example/App.class",
                 minimalClassBytes(52, "com/example/App"));
