@@ -142,6 +142,32 @@ class ArtifactFidelityComparatorTest {
         assertTrue(csv.contains("true"));
     }
 
+    @Test
+    void recordsDifferenceBucketsIndependently() {
+        ArtifactFidelityResult result = new ArtifactFidelityResult();
+
+        result.recordMissing(ArtifactFidelityResult.DifferenceBucket.MANIFEST, "META-INF/MANIFEST.MF");
+        result.recordExtra(ArtifactFidelityResult.DifferenceBucket.MANIFEST, "META-INF/MANIFEST.MF");
+        result.recordDifferent(ArtifactFidelityResult.DifferenceBucket.CLASS_BYTECODE, "com/example/App.class");
+
+        ArtifactFidelityResult.DifferenceBucketSummary manifest = result.getBucketSummary(
+                ArtifactFidelityResult.DifferenceBucket.MANIFEST);
+        ArtifactFidelityResult.DifferenceBucketSummary classes = result.getBucketSummary(
+                ArtifactFidelityResult.DifferenceBucket.CLASS_BYTECODE);
+
+        assertEquals(1, manifest.getMissing());
+        assertEquals(1, manifest.getExtra());
+        assertEquals(0, manifest.getDifferent());
+        assertEquals(2, manifest.getTotal());
+        assertTrue(manifest.getSamples().contains("META-INF/MANIFEST.MF"));
+
+        assertEquals(0, classes.getMissing());
+        assertEquals(0, classes.getExtra());
+        assertEquals(1, classes.getDifferent());
+        assertEquals(1, classes.getTotal());
+        assertTrue(classes.getSamples().contains("com/example/App.class"));
+    }
+
     private void writeJar(Path path, TestEntry... entries) throws Exception {
         try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(path))) {
             for (TestEntry entry : entries) {

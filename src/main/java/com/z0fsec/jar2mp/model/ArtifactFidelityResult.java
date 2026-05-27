@@ -1,9 +1,24 @@
 package com.z0fsec.jar2mp.model;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 public class ArtifactFidelityResult {
+    private static final int SAMPLE_LIMIT = 5;
+
+    public enum DifferenceBucket {
+        MANIFEST,
+        CLASS_BYTECODE,
+        NESTED_LIBRARY,
+        MAVEN_METADATA,
+        SERVICE_METADATA,
+        BOOT_INDEX,
+        SIGNATURE_METADATA,
+        RESOURCE_ENTRY
+    }
+
     private int originalEntryTotal;
     private int rebuiltEntryTotal;
     private int originalClassEntries;
@@ -31,6 +46,14 @@ public class ArtifactFidelityResult {
     private final List<String> sampleMissingEntries = new ArrayList<>();
     private final List<String> sampleExtraEntries = new ArrayList<>();
     private final List<String> sampleDifferentEntries = new ArrayList<>();
+    private final Map<DifferenceBucket, DifferenceBucketSummary> bucketSummaries =
+            new EnumMap<>(DifferenceBucket.class);
+
+    public ArtifactFidelityResult() {
+        for (DifferenceBucket bucket : DifferenceBucket.values()) {
+            bucketSummaries.put(bucket, new DifferenceBucketSummary(bucket));
+        }
+    }
 
     public boolean isExactMatch() {
         return differentSha256 == 0 && missingEntries == 0 && extraEntries == 0;
@@ -87,4 +110,74 @@ public class ArtifactFidelityResult {
     public List<String> getSampleMissingEntries() { return sampleMissingEntries; }
     public List<String> getSampleExtraEntries() { return sampleExtraEntries; }
     public List<String> getSampleDifferentEntries() { return sampleDifferentEntries; }
+
+    public void recordMissing(DifferenceBucket bucket, String path) {
+        getBucketSummary(bucket).recordMissing(path);
+    }
+
+    public void recordExtra(DifferenceBucket bucket, String path) {
+        getBucketSummary(bucket).recordExtra(path);
+    }
+
+    public void recordDifferent(DifferenceBucket bucket, String path) {
+        getBucketSummary(bucket).recordDifferent(path);
+    }
+
+    public DifferenceBucketSummary getBucketSummary(DifferenceBucket bucket) {
+        DifferenceBucket normalized = bucket == null ? DifferenceBucket.RESOURCE_ENTRY : bucket;
+        DifferenceBucketSummary summary = bucketSummaries.get(normalized);
+        if (summary == null) {
+            summary = new DifferenceBucketSummary(normalized);
+            bucketSummaries.put(normalized, summary);
+        }
+        return summary;
+    }
+
+    public List<DifferenceBucketSummary> getBucketSummaries() {
+        List<DifferenceBucketSummary> summaries = new ArrayList<>();
+        for (DifferenceBucket bucket : DifferenceBucket.values()) {
+            summaries.add(getBucketSummary(bucket));
+        }
+        return summaries;
+    }
+
+    public static class DifferenceBucketSummary {
+        private final DifferenceBucket bucket;
+        private int missing;
+        private int extra;
+        private int different;
+        private final List<String> samples = new ArrayList<>();
+
+        private DifferenceBucketSummary(DifferenceBucket bucket) {
+            this.bucket = bucket;
+        }
+
+        private void recordMissing(String path) {
+            missing++;
+            addSample(path);
+        }
+
+        private void recordExtra(String path) {
+            extra++;
+            addSample(path);
+        }
+
+        private void recordDifferent(String path) {
+            different++;
+            addSample(path);
+        }
+
+        private void addSample(String path) {
+            if (path != null && samples.size() < SAMPLE_LIMIT && !samples.contains(path)) {
+                samples.add(path);
+            }
+        }
+
+        public DifferenceBucket getBucket() { return bucket; }
+        public int getMissing() { return missing; }
+        public int getExtra() { return extra; }
+        public int getDifferent() { return different; }
+        public int getTotal() { return missing + extra + different; }
+        public List<String> getSamples() { return samples; }
+    }
 }
