@@ -32,6 +32,8 @@ public class RestorationScorer {
     private static final int RUNTIME_WEIGHT = 20;
     private static final int VERIFICATION_WEIGHT = 20;
     private static final String SKIPPED = "(skipped)";
+    private static final String SPRING_BOOT_FILESYSTEM_PROVIDER_SERVICE =
+            "META-INF/services/java.nio.file.spi.FileSystemProvider";
 
     public RestorationScore score(JarAnalysisResult analysis, RuntimeTraceResult runtimeTraceResult,
                                   VerificationResult verificationResult) {
@@ -141,7 +143,14 @@ public class RestorationScorer {
         }
         ResourceFinding.Category category = finding.getCategory();
         return category == ResourceFinding.Category.NESTED_LIBRARY
-                || category == ResourceFinding.Category.META_INF_RUNTIME;
+                || category == ResourceFinding.Category.META_INF_RUNTIME
+                || isSkippedSpringBootLoaderService(finding);
+    }
+
+    private boolean isSkippedSpringBootLoaderService(ResourceFinding finding) {
+        return finding.getCategory() == ResourceFinding.Category.SPI
+                && SPRING_BOOT_FILESYSTEM_PROVIDER_SERVICE.equals(safeValue(finding.getOriginalPath()))
+                && SKIPPED.equalsIgnoreCase(safeValue(finding.getTargetPath()));
     }
 
     private int scoreRuntime(JarAnalysisResult analysis, RuntimeTraceResult runtimeTraceResult,

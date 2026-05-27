@@ -219,7 +219,7 @@ class ProjectBuilderTest {
     }
 
     @Test
-    void retainsAnonymousInnerClassesAsSourceGaps() throws Exception {
+    void treatsAnonymousInnerClassesRepresentedInOuterSourceAsRestored() throws Exception {
         Path jar = compileJar("demo.Outer",
                 "package demo;\n"
                         + "public class Outer {\n"
@@ -233,13 +233,12 @@ class ProjectBuilderTest {
         Path outputDir = tempDir.resolve("anonymous-inner-out");
         new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
 
-        assertTrue(Files.exists(outputDir.resolve("target/original-classes/demo/Outer$1.class")));
-        String failures = Files.readString(outputDir.resolve("decompile-failures.md"));
-        assertTrue(failures.contains("demo/Outer$1.class"));
-        assertTrue(failures.contains("Inner or anonymous class"));
+        assertFalse(Files.exists(outputDir.resolve("target/original-classes/demo/Outer$1.class")));
+        assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
+                .contains("No decompilation failures detected."));
         RestorationScore score = analysis.getRestorationScore();
-        assertTrue(score.getBreakdown().get("source") < 100);
-        assertTrue(score.getGaps().stream().anyMatch(g ->
+        assertEquals(100, score.getBreakdown().get("source").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g ->
                 "decompile".equals(g.getCategory()) && "demo/Outer$1.class".equals(g.getDetail())));
     }
 

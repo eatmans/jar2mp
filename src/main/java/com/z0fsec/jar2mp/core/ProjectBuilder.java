@@ -16,6 +16,10 @@ public class ProjectBuilder {
     private static final String BOOT_LIB_PREFIX = "BOOT-INF/lib/";
     private static final String WEB_CLASSES_PREFIX = "WEB-INF/classes/";
     private static final String WEB_LIB_PREFIX = "WEB-INF/lib/";
+    private static final String NAMED_INNER_DECLARATION_PATTERN =
+            "(?:class|interface|enum|@interface)\\s+%s\\b";
+    private static final Pattern ANONYMOUS_INNER_DECLARATION = Pattern.compile(
+            "new\\s+[^;{}()]+(?:\\([^;{}]*\\))?\\s*\\{");
 
     private final ProjectConfig config;
     private final DecompilerBridge decompiler;
@@ -386,8 +390,7 @@ public class ProjectBuilder {
 
     private boolean isInnerClassCoveredByOuterSource(Map<String, String> contextSources, String classPath) {
         String innerSimpleName = innerSimpleName(classPath);
-        if (innerSimpleName == null || innerSimpleName.isEmpty()
-                || Character.isDigit(innerSimpleName.charAt(0))) {
+        if (innerSimpleName == null || innerSimpleName.isEmpty()) {
             return false;
         }
         String outerClassPath = outerClassPath(classPath);
@@ -398,9 +401,29 @@ public class ProjectBuilder {
         if (!isContextSourceUsable(outerSource)) {
             return false;
         }
-        Pattern declaration = Pattern.compile(
-                "(?:class|interface|enum|@interface)\\s+" + Pattern.quote(innerSimpleName) + "\\b");
+        if (Character.isDigit(innerSimpleName.charAt(0))) {
+            return countAnonymousInnerDeclarations(outerSource) >= anonymousInnerIndex(innerSimpleName);
+        }
+        Pattern declaration = Pattern.compile(String.format(
+                NAMED_INNER_DECLARATION_PATTERN, Pattern.quote(innerSimpleName)));
         return declaration.matcher(outerSource).find();
+    }
+
+    private int anonymousInnerIndex(String innerSimpleName) {
+        try {
+            return Integer.parseInt(innerSimpleName);
+        } catch (NumberFormatException e) {
+            return Integer.MAX_VALUE;
+        }
+    }
+
+    private int countAnonymousInnerDeclarations(String source) {
+        int count = 0;
+        java.util.regex.Matcher matcher = ANONYMOUS_INNER_DECLARATION.matcher(source);
+        while (matcher.find()) {
+            count++;
+        }
+        return count;
     }
 
     private String outerClassPath(String classPath) {
