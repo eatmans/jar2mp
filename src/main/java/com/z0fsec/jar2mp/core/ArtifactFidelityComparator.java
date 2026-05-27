@@ -51,6 +51,7 @@ public class ArtifactFidelityComparator {
                 if (isNestedLibrary(name)) {
                     result.setMissingNestedLibs(result.getMissingNestedLibs() + 1);
                 }
+                result.recordMissing(classifyEntry(name), name);
                 addSample(result.getSampleMissingEntries(), name);
                 continue;
             }
@@ -61,6 +62,7 @@ public class ArtifactFidelityComparator {
                 same++;
             } else {
                 different++;
+                result.recordDifferent(classifyEntry(name), name);
                 addSample(result.getSampleDifferentEntries(), name);
             }
 
@@ -90,6 +92,7 @@ public class ArtifactFidelityComparator {
             if (isNestedLibrary(name)) {
                 result.setExtraNestedLibs(result.getExtraNestedLibs() + 1);
             }
+            result.recordExtra(classifyEntry(name), name);
             addSample(result.getSampleExtraEntries(), name);
         }
 
@@ -193,6 +196,53 @@ public class ArtifactFidelityComparator {
 
     private boolean isClassEntry(String name) {
         return name != null && name.endsWith(".class");
+    }
+
+    private ArtifactFidelityResult.DifferenceBucket classifyEntry(String name) {
+        if (name == null) {
+            return ArtifactFidelityResult.DifferenceBucket.RESOURCE_ENTRY;
+        }
+        if (MANIFEST_PATH.equalsIgnoreCase(name)) {
+            return ArtifactFidelityResult.DifferenceBucket.MANIFEST;
+        }
+        if (isClassEntry(name)) {
+            return ArtifactFidelityResult.DifferenceBucket.CLASS_BYTECODE;
+        }
+        if (isNestedLibrary(name)) {
+            return ArtifactFidelityResult.DifferenceBucket.NESTED_LIBRARY;
+        }
+        if (name.startsWith("META-INF/maven/")) {
+            return ArtifactFidelityResult.DifferenceBucket.MAVEN_METADATA;
+        }
+        if (name.startsWith("META-INF/services/")
+                || name.contains("/META-INF/services/")) {
+            return ArtifactFidelityResult.DifferenceBucket.SERVICE_METADATA;
+        }
+        if (isBootIndex(name)) {
+            return ArtifactFidelityResult.DifferenceBucket.BOOT_INDEX;
+        }
+        if (isSignatureMetadata(name)) {
+            return ArtifactFidelityResult.DifferenceBucket.SIGNATURE_METADATA;
+        }
+        return ArtifactFidelityResult.DifferenceBucket.RESOURCE_ENTRY;
+    }
+
+    private boolean isBootIndex(String name) {
+        return "BOOT-INF/classpath.idx".equals(name)
+                || "BOOT-INF/layers.idx".equals(name)
+                || "WEB-INF/classpath.idx".equals(name)
+                || "WEB-INF/layers.idx".equals(name);
+    }
+
+    private boolean isSignatureMetadata(String name) {
+        if (!name.startsWith("META-INF/")) {
+            return false;
+        }
+        String upper = name.toUpperCase();
+        return upper.endsWith(".SF")
+                || upper.endsWith(".RSA")
+                || upper.endsWith(".DSA")
+                || upper.endsWith(".EC");
     }
 
     private boolean isNestedLibrary(String name) {

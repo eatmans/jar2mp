@@ -168,6 +168,68 @@ class ArtifactFidelityComparatorTest {
         assertTrue(classes.getSamples().contains("com/example/App.class"));
     }
 
+    @Test
+    void classifiesArtifactDifferencesIntoBuckets() throws Exception {
+        Path original = tempDir.resolve("original.jar");
+        Path rebuilt = tempDir.resolve("rebuilt.jar");
+        writeJar(original,
+                entry("META-INF/MANIFEST.MF", "Created-By: original\n"),
+                entry("com/example/App.class", classBytes("App-v1")),
+                entry("BOOT-INF/lib/dependency.jar", "dependency-v1"),
+                entry("META-INF/maven/com.example/app/pom.properties", "version=1.0"),
+                entry("BOOT-INF/classes/META-INF/services/com.example.Plugin", "com.example.PluginV1"),
+                entry("BOOT-INF/classpath.idx", "- old.jar\n"),
+                entry("META-INF/APP.SF", "signature-v1"),
+                entry("static/app.js", "console.log('old');"),
+                entry("WEB-INF/lib/old-only.jar", "old-only"));
+        writeJar(rebuilt,
+                entry("META-INF/MANIFEST.MF", "Created-By: rebuilt\n"),
+                entry("com/example/App.class", classBytes("App-v2")),
+                entry("BOOT-INF/lib/dependency.jar", "dependency-v2"),
+                entry("META-INF/maven/com.example/app/pom.properties", "version=2.0"),
+                entry("BOOT-INF/classes/META-INF/services/com.example.Plugin", "com.example.PluginV2"),
+                entry("BOOT-INF/classpath.idx", "- new.jar\n"),
+                entry("META-INF/APP.SF", "signature-v2"),
+                entry("static/app.js", "console.log('new');"),
+                entry("WEB-INF/lib/new-only.jar", "new-only"));
+
+        ArtifactFidelityResult result = new ArtifactFidelityComparator()
+                .compare(original.toFile(), rebuilt.toFile());
+
+        assertEquals(8, result.getDifferentSha256());
+        assertEquals(1, result.getMissingEntries());
+        assertEquals(1, result.getExtraEntries());
+        assertEquals(1, result.getMissingNestedLibs());
+        assertEquals(1, result.getExtraNestedLibs());
+
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.MANIFEST, 0, 0, 1,
+                "META-INF/MANIFEST.MF");
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.CLASS_BYTECODE, 0, 0, 1,
+                "com/example/App.class");
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.NESTED_LIBRARY, 1, 1, 1,
+                "BOOT-INF/lib/dependency.jar");
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.MAVEN_METADATA, 0, 0, 1,
+                "META-INF/maven/com.example/app/pom.properties");
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.SERVICE_METADATA, 0, 0, 1,
+                "BOOT-INF/classes/META-INF/services/com.example.Plugin");
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.BOOT_INDEX, 0, 0, 1,
+                "BOOT-INF/classpath.idx");
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.SIGNATURE_METADATA, 0, 0, 1,
+                "META-INF/APP.SF");
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.RESOURCE_ENTRY, 0, 0, 1,
+                "static/app.js");
+    }
+
+    private void assertBucket(ArtifactFidelityResult result, ArtifactFidelityResult.DifferenceBucket bucket,
+                              int missing, int extra, int different, String sample) {
+        ArtifactFidelityResult.DifferenceBucketSummary summary = result.getBucketSummary(bucket);
+        assertEquals(missing, summary.getMissing());
+        assertEquals(extra, summary.getExtra());
+        assertEquals(different, summary.getDifferent());
+        assertEquals(missing + extra + different, summary.getTotal());
+        assertTrue(summary.getSamples().contains(sample));
+    }
+
     private void writeJar(Path path, TestEntry... entries) throws Exception {
         try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(path))) {
             for (TestEntry entry : entries) {
