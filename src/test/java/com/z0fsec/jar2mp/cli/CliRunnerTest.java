@@ -241,6 +241,26 @@ class CliRunnerTest {
     }
 
     @Test
+    void batchRunReturnsPartialFailureWhenAnyInputFails() throws Exception {
+        Path validJar = createJar("valid-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"));
+        Path invalidJar = tempDir.resolve("broken.jar");
+        Files.writeString(invalidJar, "not a jar", StandardCharsets.UTF_8);
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--no-decompile",
+                "--no-dependencies",
+                "-o", output.toString(),
+                validJar.toString(),
+                invalidJar.toString()
+        });
+
+        assertEquals(1, exitCode);
+        assertTrue(Files.exists(output.resolve("valid").resolve("pom.xml")));
+    }
+
+    @Test
     void verifyBuildWritesVerificationReportWhenEnabled() throws Exception {
         Path jar = createJar("sample-1.0.jar", "com/example/App.class",
                 minimalClassBytes(52, "com/example/App"));

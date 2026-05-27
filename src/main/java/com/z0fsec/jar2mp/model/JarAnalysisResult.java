@@ -24,6 +24,7 @@ public class JarAnalysisResult {
     private final List<StartupFinding> startupFindings = new ArrayList<>();
     private final List<DecompileFinding> decompileFindings = new ArrayList<>();
     private com.z0fsec.jar2mp.core.RuntimeTraceResult runtimeTraceResult;
+    private com.z0fsec.jar2mp.core.RuntimeSmokeRunner.SmokeRunResult runtimeSmokeResult;
     private VerificationResult verificationResult;
     private RestorationScore restorationScore;
     /** Maps stripped class path -> original entry path in JAR (for BOOT-INF/classes/, WEB-INF/classes/) */
@@ -58,6 +59,10 @@ public class JarAnalysisResult {
     public com.z0fsec.jar2mp.core.RuntimeTraceResult getRuntimeTraceResult() { return runtimeTraceResult; }
     public void setRuntimeTraceResult(com.z0fsec.jar2mp.core.RuntimeTraceResult runtimeTraceResult) {
         this.runtimeTraceResult = runtimeTraceResult;
+    }
+    public com.z0fsec.jar2mp.core.RuntimeSmokeRunner.SmokeRunResult getRuntimeSmokeResult() { return runtimeSmokeResult; }
+    public void setRuntimeSmokeResult(com.z0fsec.jar2mp.core.RuntimeSmokeRunner.SmokeRunResult runtimeSmokeResult) {
+        this.runtimeSmokeResult = runtimeSmokeResult;
     }
     public VerificationResult getVerificationResult() { return verificationResult; }
     public void setVerificationResult(VerificationResult verificationResult) {

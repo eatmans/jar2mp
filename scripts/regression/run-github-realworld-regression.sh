@@ -334,6 +334,50 @@ parse_runtime_field() {
   printf '%s' "${value:-${fallback}}"
 }
 
+is_positive_integer() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+classify_runtime_gate() {
+  local launch_support="$1"
+  local run_status="$2"
+  local runtime_events="$3"
+
+  if [[ "${launch_support}" != "SUPPORTED" ]]; then
+    printf 'SKIPPED_UNSUPPORTED'
+    return
+  fi
+  if [[ "${run_status}" == "EXIT_ZERO" ]]; then
+    printf 'PASS_EXIT_ZERO'
+    return
+  fi
+  if [[ "${run_status}" == "TRACE_COLLECTED_TIMEOUT" ]] && is_positive_integer "${runtime_events}"; then
+    printf 'WARN_STARTED_TIMEOUT'
+    return
+  fi
+  printf 'FAIL_%s' "${run_status:-missing}"
+}
+
+classify_required_exact_gate() {
+  local exact="$1"
+  if [[ "${exact}" == "true" ]]; then
+    printf 'PASS_EXACT'
+  else
+    printf 'FAIL_%s' "${exact:-missing}"
+  fi
+}
+
+classify_source_artifact_gate() {
+  local exact="$1"
+  if [[ "${exact}" == "true" ]]; then
+    printf 'PASS_EXACT'
+  elif [[ "${exact}" == "false" ]]; then
+    printf 'WARN_DIFF'
+  else
+    printf 'WARN_%s' "${exact:-missing}"
+  fi
+}
+
 package_restored_project() {
   local project_dir="$1"
   local java_home="$2"
@@ -418,6 +462,10 @@ run_sample() {
   local raw_artifact_missing="not-run"
   local raw_artifact_extra="not-run"
   local raw_artifact_diff_classes="not-run"
+  local package_status="not-run"
+  local runtime_gate="not-run"
+  local raw_artifact_gate="not-run"
+  local source_artifact_gate="not-run"
   local status="FAIL"
 
   if [[ -n "${project_dir}" && -f "${score_report}" ]]; then
@@ -461,6 +509,7 @@ run_sample() {
 
     local rebuilt_artifact=""
     if package_restored_project "${project_dir}" "${java_home}" "${REPORT_DIR}/${name}.package.log"; then
+      package_status="PASS"
       rebuilt_artifact="$(find_rebuilt_artifact "${project_dir}" "${artifact}")"
       if [[ -n "${rebuilt_artifact}" && -f "${rebuilt_artifact}" ]]; then
         if run_with_java_home "${java_home}" java -jar "${JAR2MP_JAR}" \
@@ -479,8 +528,12 @@ run_sample() {
         artifact_exact="rebuilt-missing"
       fi
     else
+      package_status="FAIL"
       artifact_exact="package-failed"
     fi
+    runtime_gate="$(classify_runtime_gate "${runtime_launch_support}" "${runtime_run_status}" "${runtime_events}")"
+    raw_artifact_gate="$(classify_required_exact_gate "${raw_artifact_exact}")"
+    source_artifact_gate="$(classify_source_artifact_gate "${artifact_exact}")"
 
     if [[ "${exit_code}" -eq 0 \
       && "${overall}" -ge "${threshold}" \
@@ -488,8 +541,14 @@ run_sample() {
       && "${resource_score}" -eq 100 \
       && "${verification_status}" == "BUILD SUCCESS" \
       && "${verification_failure_type}" == "NONE" \
-      && "${decompile_failures}" == "0" ]]; then
+      && "${decompile_failures}" == "0" \
+      && "${package_status}" == "PASS" \
+      && "${raw_artifact_gate}" == "PASS_EXACT" \
+      && "${runtime_gate}" != FAIL_* ]]; then
       status="PASS"
+      if [[ "${runtime_gate}" == WARN_* || "${source_artifact_gate}" == WARN_* ]]; then
+        status="PASS_WITH_WARNINGS"
+      fi
     fi
   fi
 
@@ -507,27 +566,31 @@ run_sample() {
     csv_field "${verification_status}"; printf ','
     csv_field "${verification_failure_type}"; printf ','
     csv_field "${decompile_failures}"; printf ','
+    csv_field "${package_status}"; printf ','
     csv_field "${runtime_launch_type}"; printf ','
     csv_field "${runtime_launch_support}"; printf ','
     csv_field "${runtime_run_status}"; printf ','
     csv_field "${runtime_events}"; printf ','
+    csv_field "${runtime_gate}"; printf ','
     csv_field "${artifact_exact}"; printf ','
     csv_field "${artifact_diff_sha}"; printf ','
     csv_field "${artifact_missing}"; printf ','
     csv_field "${artifact_extra}"; printf ','
     csv_field "${artifact_diff_classes}"; printf ','
+    csv_field "${source_artifact_gate}"; printf ','
     csv_field "${raw_artifact_exact}"; printf ','
     csv_field "${raw_artifact_diff_sha}"; printf ','
     csv_field "${raw_artifact_missing}"; printf ','
     csv_field "${raw_artifact_extra}"; printf ','
     csv_field "${raw_artifact_diff_classes}"; printf ','
+    csv_field "${raw_artifact_gate}"; printf ','
     csv_field "${threshold}"; printf ','
     csv_field "${java_home:-default}"; printf ','
     csv_field "${sample_notes[${index}]}"; printf '\n'
   } >> "${REPORT_DIR}/github-realworld-summary.csv"
 
   cat >> "${REPORT_DIR}/github-realworld-summary.md" <<MD
-| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${threshold} |
+| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${package_status} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${runtime_gate} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${source_artifact_gate} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${raw_artifact_gate} | ${threshold} |
 MD
 }
 
@@ -541,15 +604,15 @@ main() {
   prepare_samples
 
   write_file "${REPORT_DIR}/github-realworld-summary.csv" <<'CSV'
-sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,threshold,java_home,note
+sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,package_status,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,runtime_gate,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,source_artifact_gate,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,raw_artifact_gate,threshold,java_home,note
 CSV
   write_file "${REPORT_DIR}/github-realworld-summary.md" <<'MD'
 # jar2mp GitHub Real-World Regression Summary
 
 This is a compile-gate summary with non-gating runtime and artifact-fidelity evidence columns.
 
-| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Runtime launch | Runtime support | Runtime status | Runtime events | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Threshold |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Package | Runtime launch | Runtime support | Runtime status | Runtime events | Runtime gate | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Source artifact gate | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Raw gate | Threshold |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | ---: |
 MD
 
   local i
@@ -560,7 +623,7 @@ MD
 
   log "Summary: ${REPORT_DIR}/github-realworld-summary.md"
   log "CSV: ${REPORT_DIR}/github-realworld-summary.csv"
-  if grep -q ',"FAIL",' "${REPORT_DIR}/github-realworld-summary.csv"; then
+  if grep -q ',"FAIL' "${REPORT_DIR}/github-realworld-summary.csv"; then
     log "At least one real-world sample failed."
     exit 1
   fi

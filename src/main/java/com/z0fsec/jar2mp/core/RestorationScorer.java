@@ -159,7 +159,31 @@ public class RestorationScorer {
                         bucketImpact(RUNTIME_WEIGHT, expectedKinds.size(), 1));
             }
         }
-        return percent(present, expectedKinds.size());
+        int evidenceScore = percent(present, expectedKinds.size());
+        return applySmokeRunStatus(analysis, evidenceScore, score);
+    }
+
+    private int applySmokeRunStatus(JarAnalysisResult analysis, int evidenceScore, RestorationScore score) {
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = analysis == null ? null : analysis.getRuntimeSmokeResult();
+        if (smokeResult == null) {
+            return evidenceScore;
+        }
+
+        String status = safeValue(smokeResult.getRunStatus()).toUpperCase(Locale.ROOT);
+        if (status.isEmpty() || "EXIT_ZERO".equals(status)) {
+            return evidenceScore;
+        }
+        if ("TRACE_COLLECTED_TIMEOUT".equals(status)) {
+            score.addGap("runtime_status",
+                    "Runtime trace timed out after collecting events; clean exit and health are not verified.",
+                    bucketImpact(RUNTIME_WEIGHT, 5, 1));
+            return Math.min(evidenceScore, 80);
+        }
+
+        score.addGap("runtime_status",
+                "Runtime smoke run did not complete successfully: " + safeValue(smokeResult.getRunStatus()) + ".",
+                RUNTIME_WEIGHT);
+        return 0;
     }
 
     private Set<String> runtimeKinds(RuntimeTraceResult runtimeTraceResult) {

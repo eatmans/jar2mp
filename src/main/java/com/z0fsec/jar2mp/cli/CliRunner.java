@@ -73,6 +73,7 @@ public class CliRunner {
 
             int totalFiles = files.size();
             int successCount = 0;
+            int failedCount = 0;
 
             if (!options.isQuiet()) {
                 System.out.println("共 " + totalFiles + " 个文件待处理\n");
@@ -113,6 +114,7 @@ public class CliRunner {
                     File outputDir = new File(config.getOutputDir(), result.getDetectedArtifactId());
                     if (outputDir.exists() && !config.isForceOverwrite()) {
                         System.err.println("  输出目录已存在: " + outputDir.getAbsolutePath() + " (使用 --force 覆盖)");
+                        failedCount++;
                         continue;
                     }
 
@@ -143,6 +145,7 @@ public class CliRunner {
                                 config.getTraceArgs(),
                                 config.getTraceTimeoutSeconds());
                         traceReportWriter.write(outputDir, smokeResult);
+                        result.setRuntimeSmokeResult(smokeResult);
                         result.setRuntimeTraceResult(smokeResult.getTraceResult());
                         refreshRestorationScore(outputDir, result, restorationScorer, restorationScoreWriter,
                                 gapSummaryWriter);
@@ -176,6 +179,7 @@ public class CliRunner {
                     successCount++;
 
                 } catch (Exception e) {
+                    failedCount++;
                     System.err.println("  处理失败: " + jarFile.getName() + " - " + e.getMessage());
                     if (options.isVerbose()) {
                         e.printStackTrace();
@@ -187,7 +191,10 @@ public class CliRunner {
                 System.out.println("\n完成: " + successCount + "/" + totalFiles + " 个文件处理成功");
             }
 
-            return successCount > 0 ? 0 : 2;
+            if (successCount == totalFiles && failedCount == 0) {
+                return 0;
+            }
+            return successCount > 0 ? 1 : 2;
 
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());

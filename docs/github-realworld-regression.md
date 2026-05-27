@@ -38,8 +38,11 @@ Each pass-gate sample is marked `PASS` only when:
 - Source and resource buckets are both `100`.
 - `verification-report.md` reports `BUILD SUCCESS` and `Failure type: NONE`.
 - `decompile-failures.md` reports zero failed decompilations.
+- The restored project can be packaged with the regression skip flags.
+- The raw preserved artifact under `target/raw-artifact/` compares as exact.
+- Supported runtime launches either exit cleanly or collect startup trace events before timeout.
 
-Runtime status and artifact fidelity are not part of this pass/fail gate yet. The script runs runtime tracing with `REALWORLD_TRACE_ARGS` so executable Spring Boot samples can collect startup evidence; long-running web applications may report `TRACE_COLLECTED_TIMEOUT` after events are recorded. Library JARs, thin JARs without a runnable manifest, and standard WARs can report `UNSUPPORTED` launch support without failing the compile gate.
+Runtime and artifact evidence are reported as separate gate columns. Long-running web applications that collect trace events but do not exit before the timeout are marked `PASS_WITH_WARNINGS` with runtime gate `WARN_STARTED_TIMEOUT`; rebuilt source-package byte differences are also warning-level evidence, not proof of byte-identical source recompilation. Library JARs, thin JARs without a runnable manifest, and standard WARs can report `UNSUPPORTED` launch support with runtime gate `SKIPPED_UNSUPPORTED`.
 
 The script now records two artifact-fidelity tracks:
 
