@@ -96,6 +96,23 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void skipsSpringBootLoaderFileSystemProviderService() throws Exception {
+        Path jar = tempDir.resolve("boot-loader-service.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "BOOT-INF/classes/com/example/App.class", minimalClassBytes(52));
+            addEntry(out, "META-INF/services/java.nio.file.spi.FileSystemProvider",
+                    "org.springframework.boot.loader.nio.file.NestedFileSystemProvider\n");
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("boot-loader-service-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertFalse(Files.exists(outputDir.resolve("src/main/resources/META-INF/services/java.nio.file.spi.FileSystemProvider")));
+    }
+
+    @Test
     void restoresSpringBootClassResourcesAndSkipsNestedLibraries() throws Exception {
         Path jar = tempDir.resolve("boot.jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {

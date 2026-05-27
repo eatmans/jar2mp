@@ -311,6 +311,9 @@ public class ProjectBuilder {
         if ("META-INF/MANIFEST.MF".equals(upperPath) || upperPath.startsWith("META-INF/MAVEN/")) {
             return false;
         }
+        if ("META-INF/SERVICES/JAVA.NIO.FILE.SPI.FILESYSTEMPROVIDER".equals(upperPath)) {
+            return false;
+        }
 
         int lastSlash = upperPath.lastIndexOf('/');
         String fileName = lastSlash >= 0 ? upperPath.substring(lastSlash + 1) : upperPath;
