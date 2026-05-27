@@ -107,6 +107,17 @@ class ResourceClassifierTest {
     }
 
     @Test
+    void skipsSpringBootLoaderFileSystemProviderServiceInInventory() {
+        JarAnalysisResult jarResult = new JarAnalysisResult();
+        jarResult.getMetaInfFiles().add("META-INF/services/java.nio.file.spi.FileSystemProvider");
+
+        List<ResourceFinding> findings = new ResourceClassifier().classify(jarResult);
+
+        assertResource(findings, "META-INF/services/java.nio.file.spi.FileSystemProvider",
+                ResourceFinding.Category.SPI, "(skipped)");
+    }
+
+    @Test
     void projectBuilderWritesResourceInventoryReport() throws Exception {
         Path jar = tempDir.resolve("sample.jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
