@@ -43,6 +43,9 @@ public class ArtifactFidelityResult {
     private boolean manifestOriginalPresent;
     private boolean manifestRebuiltPresent;
     private boolean manifestSame;
+    private boolean archiveBytesSame;
+    private String originalArchiveSha256;
+    private String rebuiltArchiveSha256;
     private final List<String> sampleMissingEntries = new ArrayList<>();
     private final List<String> sampleExtraEntries = new ArrayList<>();
     private final List<String> sampleDifferentEntries = new ArrayList<>();
@@ -56,6 +59,10 @@ public class ArtifactFidelityResult {
     }
 
     public boolean isExactMatch() {
+        return archiveBytesSame;
+    }
+
+    public boolean isContentEntriesMatch() {
         return differentSha256 == 0 && missingEntries == 0 && extraEntries == 0;
     }
 
@@ -107,6 +114,12 @@ public class ArtifactFidelityResult {
     public void setManifestRebuiltPresent(boolean manifestRebuiltPresent) { this.manifestRebuiltPresent = manifestRebuiltPresent; }
     public boolean isManifestSame() { return manifestSame; }
     public void setManifestSame(boolean manifestSame) { this.manifestSame = manifestSame; }
+    public boolean isArchiveBytesSame() { return archiveBytesSame; }
+    public void setArchiveBytesSame(boolean archiveBytesSame) { this.archiveBytesSame = archiveBytesSame; }
+    public String getOriginalArchiveSha256() { return originalArchiveSha256; }
+    public void setOriginalArchiveSha256(String originalArchiveSha256) { this.originalArchiveSha256 = originalArchiveSha256; }
+    public String getRebuiltArchiveSha256() { return rebuiltArchiveSha256; }
+    public void setRebuiltArchiveSha256(String rebuiltArchiveSha256) { this.rebuiltArchiveSha256 = rebuiltArchiveSha256; }
     public List<String> getSampleMissingEntries() { return sampleMissingEntries; }
     public List<String> getSampleExtraEntries() { return sampleExtraEntries; }
     public List<String> getSampleDifferentEntries() { return sampleDifferentEntries; }

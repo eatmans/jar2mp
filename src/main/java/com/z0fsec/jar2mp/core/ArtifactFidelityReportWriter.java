@@ -22,6 +22,8 @@ public class ArtifactFidelityReportWriter {
         StringBuilder report = new StringBuilder();
         report.append("# Artifact fidelity report\n\n");
         report.append("- Exact match: ").append(result.isExactMatch()).append("\n");
+        report.append("- Archive bytes same: ").append(result.isArchiveBytesSame()).append("\n");
+        report.append("- Entry content match: ").append(result.isContentEntriesMatch()).append("\n");
         report.append("- Manifest same: ").append(result.isManifestSame()).append("\n\n");
         report.append("| Metric | Original | Rebuilt | Common | Same | Different | Missing | Extra |\n");
         report.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
@@ -114,7 +116,8 @@ public class ArtifactFidelityReportWriter {
         csv.append("exact_match,original_entries,rebuilt_entries,common_entries,same_sha256,different_sha256,missing_entries,extra_entries,");
         csv.append("original_classes,rebuilt_classes,common_classes,same_class_bytes,different_class_bytes,");
         csv.append("original_nested_libs,rebuilt_nested_libs,common_nested_libs,same_nested_libs,different_nested_libs,missing_nested_libs,extra_nested_libs,manifest_same,");
-        csv.append("bucket_manifest,bucket_class_bytecode,bucket_nested_library,bucket_maven_metadata,bucket_service_metadata,bucket_boot_index,bucket_signature_metadata,bucket_resource_entry\n");
+        csv.append("bucket_manifest,bucket_class_bytecode,bucket_nested_library,bucket_maven_metadata,bucket_service_metadata,bucket_boot_index,bucket_signature_metadata,bucket_resource_entry,");
+        csv.append("content_entries_match,archive_bytes_same,original_archive_sha256,rebuilt_archive_sha256\n");
         csv.append(result.isExactMatch()).append(',')
                 .append(result.getOriginalEntryTotal()).append(',')
                 .append(result.getRebuiltEntryTotal()).append(',')
@@ -139,7 +142,19 @@ public class ArtifactFidelityReportWriter {
         for (ArtifactFidelityResult.DifferenceBucket bucket : ArtifactFidelityResult.DifferenceBucket.values()) {
             csv.append(',').append(result.getBucketSummary(bucket).getTotal());
         }
+        csv.append(',')
+                .append(result.isContentEntriesMatch())
+                .append(',')
+                .append(result.isArchiveBytesSame())
+                .append(',')
+                .append(nullToEmpty(result.getOriginalArchiveSha256()))
+                .append(',')
+                .append(nullToEmpty(result.getRebuiltArchiveSha256()));
         csv.append('\n');
         return csv.toString();
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value;
     }
 }

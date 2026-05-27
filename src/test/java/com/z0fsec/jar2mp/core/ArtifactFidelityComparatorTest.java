@@ -85,6 +85,28 @@ class ArtifactFidelityComparatorTest {
     }
 
     @Test
+    void distinguishesArchiveByteDriftFromEntryContentMatch() throws Exception {
+        Path original = tempDir.resolve("original.jar");
+        Path rebuilt = tempDir.resolve("rebuilt.jar");
+        writeJarWithEntryTime(original, 0L,
+                entry("com/example/App.class", classBytes("App")),
+                entry("application.yml", "name: app\n"));
+        writeJarWithEntryTime(rebuilt, 2000L,
+                entry("com/example/App.class", classBytes("App")),
+                entry("application.yml", "name: app\n"));
+
+        ArtifactFidelityResult result = new ArtifactFidelityComparator()
+                .compare(original.toFile(), rebuilt.toFile());
+
+        assertFalse(result.isExactMatch());
+        assertFalse(result.isArchiveBytesSame());
+        assertTrue(result.isContentEntriesMatch());
+        assertEquals(0, result.getDifferentSha256());
+        assertEquals(0, result.getMissingEntries());
+        assertEquals(0, result.getExtraEntries());
+    }
+
+    @Test
     void reportsNestedLibraryVersionDrift() throws Exception {
         Path original = tempDir.resolve("original.jar");
         Path rebuilt = tempDir.resolve("rebuilt.jar");
@@ -142,6 +164,8 @@ class ArtifactFidelityComparatorTest {
                 StandardCharsets.UTF_8);
         assertTrue(markdown.contains("# Artifact fidelity report"));
         assertTrue(markdown.contains("- Exact match: false"));
+        assertTrue(markdown.contains("- Archive bytes same: false"));
+        assertTrue(markdown.contains("- Entry content match: false"));
         assertTrue(markdown.contains("## Difference buckets"));
         assertTrue(markdown.contains("| Bucket | Missing | Extra | Different | Total | Examples |"));
         assertTrue(markdown.contains("| CLASS_BYTECODE | 0 | 0 | 1 | 1 | `com/example/App.class` |"));
@@ -151,14 +175,12 @@ class ArtifactFidelityComparatorTest {
         String[] headers = csvLines[0].split(",");
         String[] values = csvLines[1].split(",");
         assertEquals(headers.length, values.length);
-        assertEquals("bucket_manifest", headers[headers.length - 8]);
-        assertEquals("bucket_class_bytecode", headers[headers.length - 7]);
-        assertEquals("bucket_nested_library", headers[headers.length - 6]);
-        assertEquals("bucket_resource_entry", headers[headers.length - 1]);
-        assertEquals("1", values[values.length - 8]);
-        assertEquals("1", values[values.length - 7]);
-        assertEquals("0", values[values.length - 6]);
-        assertEquals("0", values[values.length - 1]);
+        assertEquals("1", values[indexOf(headers, "bucket_manifest")]);
+        assertEquals("1", values[indexOf(headers, "bucket_class_bytecode")]);
+        assertEquals("0", values[indexOf(headers, "bucket_nested_library")]);
+        assertEquals("0", values[indexOf(headers, "bucket_resource_entry")]);
+        assertEquals("false", values[indexOf(headers, "content_entries_match")]);
+        assertEquals("false", values[indexOf(headers, "archive_bytes_same")]);
     }
 
     @Test
@@ -287,9 +309,14 @@ class ArtifactFidelityComparatorTest {
     }
 
     private void writeJar(Path path, TestEntry... entries) throws Exception {
+        writeJarWithEntryTime(path, 0L, entries);
+    }
+
+    private void writeJarWithEntryTime(Path path, long entryTime, TestEntry... entries) throws Exception {
         try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(path))) {
             for (TestEntry entry : entries) {
                 JarEntry jarEntry = new JarEntry(entry.name);
+                jarEntry.setTime(entryTime);
                 output.putNextEntry(jarEntry);
                 output.write(entry.content);
                 output.closeEntry();
@@ -307,6 +334,15 @@ class ArtifactFidelityComparatorTest {
 
     private byte[] classBytes(String marker) {
         return ("CAFEBABE-" + marker).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private int indexOf(String[] values, String expected) {
+        for (int i = 0; i < values.length; i++) {
+            if (expected.equals(values[i])) {
+                return i;
+            }
+        }
+        throw new AssertionError("Missing CSV header: " + expected);
     }
 
     private static class TestEntry {

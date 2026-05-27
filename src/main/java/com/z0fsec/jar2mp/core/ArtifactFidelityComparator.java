@@ -23,10 +23,15 @@ public class ArtifactFidelityComparator {
     private static final String MANIFEST_PATH = "META-INF/MANIFEST.MF";
 
     public ArtifactFidelityResult compare(File original, File rebuilt) throws IOException {
+        String originalArchiveSha256 = sha256(original);
+        String rebuiltArchiveSha256 = sha256(rebuilt);
         Map<String, EntryFingerprint> originalEntries = readEntries(original);
         Map<String, EntryFingerprint> rebuiltEntries = readEntries(rebuilt);
 
         ArtifactFidelityResult result = new ArtifactFidelityResult();
+        result.setOriginalArchiveSha256(originalArchiveSha256);
+        result.setRebuiltArchiveSha256(rebuiltArchiveSha256);
+        result.setArchiveBytesSame(originalArchiveSha256.equals(rebuiltArchiveSha256));
         populateTotals(result, originalEntries, true);
         populateTotals(result, rebuiltEntries, false);
 
@@ -172,6 +177,27 @@ public class ArtifactFidelityComparator {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(content);
+            StringBuilder builder = new StringBuilder(hash.length * 2);
+            for (byte value : hash) {
+                builder.append(String.format("%02x", value & 0xff));
+            }
+            return builder.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException("SHA-256 digest is not available", e);
+        }
+    }
+
+    private String sha256(File file) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream input = new java.io.FileInputStream(file)) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    digest.update(buffer, 0, read);
+                }
+            }
+            byte[] hash = digest.digest();
             StringBuilder builder = new StringBuilder(hash.length * 2);
             for (byte value : hash) {
                 builder.append(String.format("%02x", value & 0xff));
