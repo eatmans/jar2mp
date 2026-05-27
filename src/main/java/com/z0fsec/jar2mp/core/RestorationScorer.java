@@ -66,21 +66,31 @@ public class RestorationScorer {
         }
 
         int restored = 0;
-        for (DecompileFinding finding : safeFindings(analysis.getDecompileFindings())) {
-            if (finding == null) {
+        Map<String, DecompileFinding> findingsByClass = decompileFindingsByClass(analysis.getDecompileFindings());
+        for (String classPath : safeFindings(analysis.getClassFiles())) {
+            if (!isScoredSourceClass(classPath)) {
                 continue;
             }
-            if (!isScoredSourceClass(finding.getClassPath())) {
-                continue;
-            }
-            if (!finding.hasRetainedClassPath()) {
+            DecompileFinding finding = findingsByClass.get(classPath);
+            if (finding != null && !finding.hasRetainedClassPath()) {
                 restored++;
             } else {
-                score.addGap("decompile", safeValue(finding.getClassPath()), bucketImpact(SOURCE_WEIGHT, totalClasses, 1));
+                score.addGap("decompile", safeValue(classPath), bucketImpact(SOURCE_WEIGHT, totalClasses, 1));
             }
         }
 
         return percent(restored, totalClasses);
+    }
+
+    private Map<String, DecompileFinding> decompileFindingsByClass(Collection<DecompileFinding> findings) {
+        Map<String, DecompileFinding> byClass = new LinkedHashMap<>();
+        for (DecompileFinding finding : safeFindings(findings)) {
+            if (finding == null || finding.getClassPath() == null) {
+                continue;
+            }
+            byClass.put(finding.getClassPath(), finding);
+        }
+        return byClass;
     }
 
     private int scoreResources(JarAnalysisResult analysis, RestorationScore score) {
@@ -393,9 +403,7 @@ public class RestorationScorer {
         if (value.endsWith("module-info.class")) {
             return false;
         }
-        int lastSlash = value.lastIndexOf('/');
-        String fileName = lastSlash >= 0 ? value.substring(lastSlash + 1) : value;
-        return !fileName.contains("$");
+        return true;
     }
 
     private String normalizeCategory(ResourceFinding.Category category) {

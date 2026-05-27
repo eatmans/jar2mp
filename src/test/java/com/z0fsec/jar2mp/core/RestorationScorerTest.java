@@ -255,7 +255,7 @@ class RestorationScorerTest {
     }
 
     @Test
-    void innerClassesDoNotLowerSourceFidelityWhenOuterClassSourceIsRestored() {
+    void missingInnerClassFindingLowersSourceFidelity() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.getClassFiles().add("demo/App.class");
         analysis.getClassFiles().add("demo/App$Inner.class");
@@ -263,7 +263,9 @@ class RestorationScorerTest {
 
         RestorationScore score = new RestorationScorer().score(analysis, null, null);
 
-        assertEquals(100, score.getBreakdown().get("source").intValue());
+        assertEquals(50, score.getBreakdown().get("source").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "decompile".equals(g.getCategory()) && "demo/App$Inner.class".equals(g.getDetail())));
     }
 
     @Test

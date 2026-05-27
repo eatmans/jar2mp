@@ -8,6 +8,7 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.regex.Pattern;
 
 public class ProjectBuilder {
 
@@ -102,11 +103,6 @@ public class ProjectBuilder {
 
                 boolean packageInfo = shouldDecompile() && "package-info.class".equals(fileName);
 
-                // Skip inner classes only during decompilation; raw class copying should preserve them.
-                if (shouldDecompile() && DecompilerBridge.isInnerClass(classPath)) {
-                    continue;
-                }
-
                 // Check if already decompiled (shouldn't happen for non-inner, but safety check)
                 if (decompiledOuterClasses.contains(classPath)) continue;
                 decompiledOuterClasses.add(classPath);
@@ -117,6 +113,14 @@ public class ProjectBuilder {
 
                 JarEntry entry = jf.getJarEntry(rawEntryPath);
                 if (entry == null) continue;
+
+                // Skip inner classes as standalone source files, but retain them
+                // when the outer source does not visibly cover the named type.
+                if (shouldDecompile() && DecompilerBridge.isInnerClass(classPath)) {
+                    handleSkippedInnerClass(jf, entry, classPath, contextSources, targetOriginalClasses,
+                            outputDir, decompileFindings);
+                    continue;
+                }
 
                 String outputPath = shouldDecompile() ? classPath.replace(".class", ".java") : classPath;
                 File outputFile = resolveOutputFile(srcMainJava, outputPath);
@@ -348,6 +352,78 @@ public class ProjectBuilder {
                 && !source.contains("WARNING - void declaration")
                 && !source.contains("Loose catch block")
                 && !source.contains("** ");
+    }
+
+    private void handleSkippedInnerClass(JarFile jarFile,
+                                         JarEntry entry,
+                                         String classPath,
+                                         Map<String, String> contextSources,
+                                         File targetOriginalClasses,
+                                         File outputDir,
+                                         List<DecompileFinding> decompileFindings) throws IOException {
+        DecompileFinding finding = new DecompileFinding(classPath, null, null);
+        if (isInnerClassCoveredByOuterSource(contextSources, classPath)) {
+            finding.setSelectedEngine("outer-source");
+            finding.setEngineSummary("inner class declaration is present in the outer decompiled source");
+            decompileFindings.add(finding);
+            return;
+        }
+
+        try (InputStream input = jarFile.getInputStream(entry)) {
+            byte[] bytes = readAllBytes(input);
+            File retainedClassFile = resolveOutputFile(targetOriginalClasses, classPath);
+            finding.setSelectedEngine("skipped-inner-class");
+            finding.setFallbackReason("inner class is not emitted as standalone source");
+            finding.setMessage("Inner or anonymous class was not confidently represented in the outer source.");
+            if (retainedClassFile != null) {
+                IoUtils.ensureDirectory(retainedClassFile.getParentFile());
+                Files.write(retainedClassFile.toPath(), bytes);
+                finding.setRetainedClassPath(relativize(outputDir, retainedClassFile));
+            }
+            decompileFindings.add(finding);
+        }
+    }
+
+    private boolean isInnerClassCoveredByOuterSource(Map<String, String> contextSources, String classPath) {
+        String innerSimpleName = innerSimpleName(classPath);
+        if (innerSimpleName == null || innerSimpleName.isEmpty()
+                || Character.isDigit(innerSimpleName.charAt(0))) {
+            return false;
+        }
+        String outerClassPath = outerClassPath(classPath);
+        if (outerClassPath == null) {
+            return false;
+        }
+        String outerSource = findContextSource(contextSources, outerClassPath, null);
+        if (!isContextSourceUsable(outerSource)) {
+            return false;
+        }
+        Pattern declaration = Pattern.compile(
+                "(?:class|interface|enum|@interface)\\s+" + Pattern.quote(innerSimpleName) + "\\b");
+        return declaration.matcher(outerSource).find();
+    }
+
+    private String outerClassPath(String classPath) {
+        if (classPath == null || !classPath.endsWith(".class")) {
+            return null;
+        }
+        int dollar = classPath.indexOf('$');
+        if (dollar < 0) {
+            return null;
+        }
+        return classPath.substring(0, dollar) + ".class";
+    }
+
+    private String innerSimpleName(String classPath) {
+        if (classPath == null) {
+            return null;
+        }
+        int dollar = classPath.lastIndexOf('$');
+        int dot = classPath.endsWith(".class") ? classPath.length() - ".class".length() : classPath.length();
+        if (dollar < 0 || dollar + 1 >= dot) {
+            return null;
+        }
+        return classPath.substring(dollar + 1, dot);
     }
 
     private CopyResult copyJarEntry(JarFile jarFile, String entryPath, File baseDir, String outputRelativePath,

@@ -2,6 +2,7 @@ package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ProjectConfig;
+import com.z0fsec.jar2mp.model.RestorationScore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -211,6 +212,35 @@ class ProjectBuilderTest {
         assertTrue(source.contains("enum Kind"));
         assertTrue(source.contains("Kind getKind()"));
         assertFalse(Files.exists(outputDir.resolve("src/main/java/demo/Outer$Kind.java")));
+        assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
+                .contains("No decompilation failures detected."));
+        RestorationScore score = analysis.getRestorationScore();
+        assertEquals(100, score.getBreakdown().get("source").intValue());
+    }
+
+    @Test
+    void retainsAnonymousInnerClassesAsSourceGaps() throws Exception {
+        Path jar = compileJar("demo.Outer",
+                "package demo;\n"
+                        + "public class Outer {\n"
+                        + "  public Runnable create() {\n"
+                        + "    return new Runnable() { public void run() {} };\n"
+                        + "  }\n"
+                        + "}\n");
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("anonymous-inner-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertTrue(Files.exists(outputDir.resolve("target/original-classes/demo/Outer$1.class")));
+        String failures = Files.readString(outputDir.resolve("decompile-failures.md"));
+        assertTrue(failures.contains("demo/Outer$1.class"));
+        assertTrue(failures.contains("Inner or anonymous class"));
+        RestorationScore score = analysis.getRestorationScore();
+        assertTrue(score.getBreakdown().get("source") < 100);
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "decompile".equals(g.getCategory()) && "demo/Outer$1.class".equals(g.getDetail())));
     }
 
     @Test
