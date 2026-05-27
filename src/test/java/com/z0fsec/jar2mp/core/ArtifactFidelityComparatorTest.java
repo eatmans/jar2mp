@@ -125,8 +125,12 @@ class ArtifactFidelityComparatorTest {
     void writesMarkdownAndCsvReports() throws Exception {
         Path original = tempDir.resolve("original.jar");
         Path rebuilt = tempDir.resolve("rebuilt.jar");
-        writeJar(original, entry("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n"));
-        writeJar(rebuilt, entry("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n"));
+        writeJar(original,
+                entry("META-INF/MANIFEST.MF", "Created-By: original\n"),
+                entry("com/example/App.class", classBytes("App-v1")));
+        writeJar(rebuilt,
+                entry("META-INF/MANIFEST.MF", "Created-By: rebuilt\n"),
+                entry("com/example/App.class", classBytes("App-v2")));
         ArtifactFidelityResult result = new ArtifactFidelityComparator()
                 .compare(original.toFile(), rebuilt.toFile());
 
@@ -137,9 +141,14 @@ class ArtifactFidelityComparatorTest {
         String csv = new String(Files.readAllBytes(tempDir.resolve("artifact-fidelity-summary.csv")),
                 StandardCharsets.UTF_8);
         assertTrue(markdown.contains("# Artifact fidelity report"));
-        assertTrue(markdown.contains("- Exact match: true"));
+        assertTrue(markdown.contains("- Exact match: false"));
+        assertTrue(markdown.contains("## Difference buckets"));
+        assertTrue(markdown.contains("| Bucket | Missing | Extra | Different | Total | Examples |"));
+        assertTrue(markdown.contains("| CLASS_BYTECODE | 0 | 0 | 1 | 1 | `com/example/App.class` |"));
+        assertTrue(markdown.contains("| MANIFEST | 0 | 0 | 1 | 1 | `META-INF/MANIFEST.MF` |"));
         assertTrue(csv.contains("exact_match"));
-        assertTrue(csv.contains("true"));
+        assertTrue(csv.contains("manifest_same,bucket_manifest,bucket_class_bytecode,bucket_nested_library,"));
+        assertTrue(csv.contains("false,1,1,0,0,0,0,0,0"));
     }
 
     @Test
