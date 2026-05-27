@@ -211,7 +211,8 @@ public class ArtifactFidelityComparator {
         if (isNestedLibrary(name)) {
             return ArtifactFidelityResult.DifferenceBucket.NESTED_LIBRARY;
         }
-        if (name.startsWith("META-INF/maven/")) {
+        if (name.startsWith("META-INF/maven/")
+                || name.contains("/META-INF/maven/")) {
             return ArtifactFidelityResult.DifferenceBucket.MAVEN_METADATA;
         }
         if (name.startsWith("META-INF/services/")
@@ -251,6 +252,7 @@ public class ArtifactFidelityComparator {
         }
         return name.startsWith("BOOT-INF/lib/")
                 || name.startsWith("WEB-INF/lib/")
+                || name.startsWith("WEB-INF/lib-provided/")
                 || name.startsWith("lib/")
                 || name.contains("/lib/");
     }

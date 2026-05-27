@@ -147,8 +147,18 @@ class ArtifactFidelityComparatorTest {
         assertTrue(markdown.contains("| CLASS_BYTECODE | 0 | 0 | 1 | 1 | `com/example/App.class` |"));
         assertTrue(markdown.contains("| MANIFEST | 0 | 0 | 1 | 1 | `META-INF/MANIFEST.MF` |"));
         assertTrue(csv.contains("exact_match"));
-        assertTrue(csv.contains("manifest_same,bucket_manifest,bucket_class_bytecode,bucket_nested_library,"));
-        assertTrue(csv.contains("false,1,1,0,0,0,0,0,0"));
+        String[] csvLines = csv.trim().split("\\R");
+        String[] headers = csvLines[0].split(",");
+        String[] values = csvLines[1].split(",");
+        assertEquals(headers.length, values.length);
+        assertEquals("bucket_manifest", headers[headers.length - 8]);
+        assertEquals("bucket_class_bytecode", headers[headers.length - 7]);
+        assertEquals("bucket_nested_library", headers[headers.length - 6]);
+        assertEquals("bucket_resource_entry", headers[headers.length - 1]);
+        assertEquals("1", values[values.length - 8]);
+        assertEquals("1", values[values.length - 7]);
+        assertEquals("0", values[values.length - 6]);
+        assertEquals("0", values[values.length - 1]);
     }
 
     @Test
@@ -227,6 +237,43 @@ class ArtifactFidelityComparatorTest {
                 "META-INF/APP.SF");
         assertBucket(result, ArtifactFidelityResult.DifferenceBucket.RESOURCE_ENTRY, 0, 0, 1,
                 "static/app.js");
+    }
+
+    @Test
+    void classifiesExecutableWarProvidedLibsAsNestedLibraries() throws Exception {
+        Path original = tempDir.resolve("original.war");
+        Path rebuilt = tempDir.resolve("rebuilt.war");
+        writeJar(original, entry("WEB-INF/lib-provided/tomcat-embed-core.jar", "original"));
+        writeJar(rebuilt, entry("WEB-INF/lib-provided/tomcat-embed-core.jar", "rebuilt"));
+
+        ArtifactFidelityResult result = new ArtifactFidelityComparator()
+                .compare(original.toFile(), rebuilt.toFile());
+
+        assertEquals(1, result.getOriginalNestedLibs());
+        assertEquals(1, result.getRebuiltNestedLibs());
+        assertEquals(1, result.getDifferentNestedLibs());
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.NESTED_LIBRARY, 0, 0, 1,
+                "WEB-INF/lib-provided/tomcat-embed-core.jar");
+    }
+
+    @Test
+    void classifiesClasspathMavenMetadataAsMavenMetadata() throws Exception {
+        Path original = tempDir.resolve("original.jar");
+        Path rebuilt = tempDir.resolve("rebuilt.jar");
+        writeJar(original,
+                entry("BOOT-INF/classes/META-INF/maven/com.example/app/pom.properties", "version=1.0"),
+                entry("WEB-INF/classes/META-INF/maven/com.example/web/pom.properties", "version=1.0"));
+        writeJar(rebuilt,
+                entry("BOOT-INF/classes/META-INF/maven/com.example/app/pom.properties", "version=2.0"),
+                entry("WEB-INF/classes/META-INF/maven/com.example/web/pom.properties", "version=2.0"));
+
+        ArtifactFidelityResult result = new ArtifactFidelityComparator()
+                .compare(original.toFile(), rebuilt.toFile());
+
+        assertBucket(result, ArtifactFidelityResult.DifferenceBucket.MAVEN_METADATA, 0, 0, 2,
+                "BOOT-INF/classes/META-INF/maven/com.example/app/pom.properties");
+        assertTrue(result.getBucketSummary(ArtifactFidelityResult.DifferenceBucket.MAVEN_METADATA)
+                .getSamples().contains("WEB-INF/classes/META-INF/maven/com.example/web/pom.properties"));
     }
 
     private void assertBucket(ArtifactFidelityResult result, ArtifactFidelityResult.DifferenceBucket bucket,
