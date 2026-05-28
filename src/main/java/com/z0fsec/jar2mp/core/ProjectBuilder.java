@@ -353,9 +353,11 @@ public class ProjectBuilder {
             return false;
         }
         return !source.contains("Unable to fully structure code")
-                && !source.contains("WARNING - void declaration")
-                && !source.contains("Loose catch block")
-                && !source.contains("** ");
+                && !source.contains("Loose catch block");
+    }
+
+    boolean isContextSourceUsableForTest(String source) {
+        return isContextSourceUsable(source);
     }
 
     private void handleSkippedInnerClass(JarFile jarFile,

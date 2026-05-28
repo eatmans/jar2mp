@@ -18,8 +18,8 @@ public class PomGenerator {
 
         PomInfo embeddedPom = analysis.getEmbeddedPomInfo();
         // GAV
-        String groupId = config.getGroupId() != null ? config.getGroupId() : analysis.getDetectedGroupId();
-        String artifactId = config.getArtifactId() != null ? config.getArtifactId() : analysis.getDetectedArtifactId();
+        String groupId = normalizeGroupId(config.getGroupId() != null ? config.getGroupId() : analysis.getDetectedGroupId());
+        String artifactId = normalizeArtifactId(config.getArtifactId() != null ? config.getArtifactId() : analysis.getDetectedArtifactId());
         String version = config.getVersion() != null ? config.getVersion() : analysis.getDetectedVersion();
 
         boolean parentIncluded = shouldIncludeParent(embeddedPom, groupId, version);
@@ -318,6 +318,29 @@ public class PomGenerator {
         return value != null
                 && !value.trim().isEmpty()
                 && !"unknown".equalsIgnoreCase(value.trim());
+    }
+
+    private String normalizeGroupId(String value) {
+        if (!hasKnownValue(value)) {
+            return "com.unknown";
+        }
+        String normalized = value.trim().toLowerCase()
+                .replaceAll("[\\s_\\-]+", ".")
+                .replaceAll("[^a-z0-9.]+", "")
+                .replaceAll("\\.+", ".")
+                .replaceAll("^\\.|\\.$", "");
+        return normalized.isEmpty() ? "com.unknown" : normalized;
+    }
+
+    private String normalizeArtifactId(String value) {
+        if (!hasKnownValue(value)) {
+            return "artifact";
+        }
+        String normalized = value.trim().toLowerCase()
+                .replaceAll("[^a-z0-9_.-]+", "-")
+                .replaceAll("[-.]+", "-")
+                .replaceAll("^-+|-+$", "");
+        return normalized.isEmpty() ? "artifact" : normalized;
     }
 
     private void appendElement(StringBuilder sb, String tag, String value, String indent) {

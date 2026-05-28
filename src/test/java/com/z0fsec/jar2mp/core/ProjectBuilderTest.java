@@ -219,6 +219,33 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void acceptsContextSourceWithMaskedStringLiteral() {
+        ProjectBuilder builder = new ProjectBuilder(new ProjectConfig());
+        String source = "package demo;\n"
+                + "class Sample {\n"
+                + "  String value = \"*** masked\";\n"
+                + "  static class Nested {}\n"
+                + "}\n";
+
+        assertTrue(builder.isContextSourceUsableForTest(source));
+    }
+
+    @Test
+    void acceptsContextSourceWithCfrVoidDeclarationWarning() {
+        ProjectBuilder builder = new ProjectBuilder(new ProjectConfig());
+        String source = "package demo;\n"
+                + "class Sample {\n"
+                + "  /*\n"
+                + "   * WARNING - void declaration\n"
+                + "   */\n"
+                + "  static class Nested {}\n"
+                + "  void run() { void var1_2; }\n"
+                + "}\n";
+
+        assertTrue(builder.isContextSourceUsableForTest(source));
+    }
+
+    @Test
     void treatsAnonymousInnerClassesRepresentedInOuterSourceAsRestored() throws Exception {
         Path jar = compileJar("demo.Outer",
                 "package demo;\n"

@@ -56,6 +56,21 @@ class PomGeneratorTest {
     }
 
     @Test
+    void sanitizesManifestDerivedMavenCoordinates() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("Remko Popma");
+        analysis.setDetectedArtifactId("Picocli Code Generation");
+        analysis.setDetectedVersion("4.7.7");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<groupId>remko.popma</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>picocli-code-generation</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>Picocli Code Generation</artifactId>"));
+    }
+
+    @Test
     void omitsSnapshotParentAndUnresolvableProjectSiblingsForStandalonePom() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("io.netty");
