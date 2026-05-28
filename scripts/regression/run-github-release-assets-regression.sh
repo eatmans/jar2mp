@@ -512,6 +512,13 @@ CSV
   log "Summary: ${REPORT_DIR}/github-release-assets-summary.md"
   log "CSV: ${REPORT_DIR}/github-release-assets-summary.csv"
 
+  local effective_count
+  effective_count="$(awk -F',' 'NR > 1 && ($2 == "\"PASS\"" || $2 == "\"PASS_WITH_WARNINGS\"") { count++ } END { print count + 0 }' "${REPORT_DIR}/github-release-assets-summary.csv")"
+  if [[ "${effective_count}" -eq 0 ]]; then
+    log "No release asset samples completed successfully."
+    exit 1
+  fi
+
   if [[ "${STRICT_RELEASE_ASSETS}" == "1" ]] \
     && grep -Ev '^sample,' "${REPORT_DIR}/github-release-assets-summary.csv" \
     | grep -Eq ',"(GAP|RESTORE_FAILED|DOWNLOAD_FAILED)"'; then

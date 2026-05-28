@@ -17,6 +17,7 @@ import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CliRunnerTest {
@@ -281,6 +282,34 @@ class CliRunnerTest {
         assertTrue(report.contains("mvn"));
         assertTrue(report.contains("validate"));
         assertTrue(report.contains("Exit code: 0"));
+    }
+
+    @Test
+    void verifyBuildFailureMakesCliFail() throws Exception {
+        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--no-decompile",
+                "--no-dependencies",
+                "--verify-build",
+                "--verify-goal", "no-such-goal",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertNotEquals(0, exitCode);
+        Path report = output.resolve("sample").resolve("verification-report.md");
+        assertTrue(Files.exists(report));
+        assertTrue(Files.readString(report).contains("Failure type:"));
+    }
+
+    @Test
+    void invalidJavaVersionReturnsUsageError() {
+        int exitCode = new CliRunner().run(new String[]{"--java-version", "abc"});
+
+        assertEquals(1, exitCode);
     }
 
     @Test

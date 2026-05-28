@@ -171,6 +171,10 @@ public class CliRunner {
                             System.out.println("  构建验证: " + verification.getFailureType()
                                     + " (exit " + verification.getExitCode() + ")");
                         }
+                        if (isVerificationFailure(verification)) {
+                            failedCount++;
+                            continue;
+                        }
                     }
 
                     if (!options.isQuiet()) {
@@ -275,7 +279,9 @@ public class CliRunner {
                 case "-j":
                 case "--java-version":
                     if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
-                    options.getConfig().setJavaVersion(Integer.parseInt(args[i]));
+                    Integer javaVersion = parsePositiveInt(args[i], arg);
+                    if (javaVersion == null) return null;
+                    options.getConfig().setJavaVersion(javaVersion.intValue());
                     break;
                 case "-p":
                 case "--packaging":
@@ -504,6 +510,27 @@ public class CliRunner {
             System.err.println("Invalid value for " + optionName + ": " + value);
             return null;
         }
+    }
+
+    private Integer parsePositiveInt(String value, String optionName) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed <= 0) {
+                System.err.println("Invalid value for " + optionName + ": " + value);
+                return null;
+            }
+            return Integer.valueOf(parsed);
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid value for " + optionName + ": " + value);
+            return null;
+        }
+    }
+
+    private boolean isVerificationFailure(VerificationResult verification) {
+        if (verification == null) {
+            return true;
+        }
+        return verification.getExitCode() != 0 || !"NONE".equals(verification.getFailureType());
     }
 
     private Path resolveTraceFile(ProjectConfig config, File outputDir) {
