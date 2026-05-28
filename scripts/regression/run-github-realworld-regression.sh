@@ -314,7 +314,7 @@ parse_decompile_failures() {
   elif grep -q 'No decompilation failures detected' "${report}"; then
     printf '0'
   else
-    grep -c '^## ' "${report}" || true
+    grep -c '^- Failed to decompile ' "${report}" || true
   fi
 }
 
