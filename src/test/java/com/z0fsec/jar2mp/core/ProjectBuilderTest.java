@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
+import java.util.Arrays;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +16,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import javax.tools.ToolProvider;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -246,6 +248,37 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void detectsSelfInnerImportsWithoutDeclarationsAsCompilerUnsafe() {
+        ProjectBuilder builder = new ProjectBuilder(new ProjectConfig());
+        String source = "package demo;\n"
+                + "import demo.Outer.Node;\n"
+                + "class Outer {\n"
+                + "  Node head;\n"
+                + "}\n";
+
+        assertTrue(builder.hasMissingSelfInnerReferencesForTest(
+                source,
+                "demo/Outer.class",
+                Arrays.asList("demo/Outer.class", "demo/Outer$Node.class")));
+    }
+
+    @Test
+    void allowsSelfInnerImportsWhenDeclarationIsPresent() {
+        ProjectBuilder builder = new ProjectBuilder(new ProjectConfig());
+        String source = "package demo;\n"
+                + "import demo.Outer.Node;\n"
+                + "class Outer {\n"
+                + "  Node head;\n"
+                + "  static class Node {}\n"
+                + "}\n";
+
+        assertFalse(builder.hasMissingSelfInnerReferencesForTest(
+                source,
+                "demo/Outer.class",
+                Arrays.asList("demo/Outer.class", "demo/Outer$Node.class")));
+    }
+
+    @Test
     void treatsAnonymousInnerClassesRepresentedInOuterSourceAsRestored() throws Exception {
         Path jar = compileJar("demo.Outer",
                 "package demo;\n"
@@ -267,6 +300,91 @@ class ProjectBuilderTest {
         assertEquals(100, score.getBreakdown().get("source").intValue());
         assertTrue(score.getGaps().stream().noneMatch(g ->
                 "decompile".equals(g.getCategory()) && "demo/Outer$1.class".equals(g.getDetail())));
+    }
+
+    @Test
+    void copiesUncoveredInnerClassBytesToResourcesForCompilerFallback() throws Exception {
+        byte[] outerBytes = minimalClassBytes(52);
+        byte[] innerBytes = minimalClassBytes(52);
+        Path jar = tempDir.resolve("uncovered-inner.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "demo/Outer.class", outerBytes);
+            addEntry(out, "demo/Outer$Inner.class", innerBytes);
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("uncovered-inner-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        Path retainedClass = outputDir.resolve("target/original-classes/demo/Outer$Inner.class");
+        Path compilerFallbackClass = outputDir.resolve("src/main/resources/demo/Outer$Inner.class");
+        assertArrayEquals(outerBytes, Files.readAllBytes(outputDir.resolve("target/raw-classes/demo/Outer.class")));
+        assertArrayEquals(innerBytes, Files.readAllBytes(outputDir.resolve("target/raw-classes/demo/Outer$Inner.class")));
+        assertArrayEquals(innerBytes, Files.readAllBytes(retainedClass));
+        assertArrayEquals(innerBytes, Files.readAllBytes(compilerFallbackClass));
+        assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
+                .contains("target/original-classes/demo/Outer$Inner.class"));
+    }
+
+    @Test
+    void fallsBackClassesWithNonJavaSourceNamesToRawBytes() throws Exception {
+        byte[] classBytes = minimalClassBytes(52);
+        Path jar = tempDir.resolve("non-java-name.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "demo/-KotlinName.class", classBytes);
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("non-java-name-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertFalse(Files.exists(outputDir.resolve("src/main/java/demo/-KotlinName.java")));
+        assertArrayEquals(classBytes, Files.readAllBytes(outputDir.resolve("target/raw-classes/demo/-KotlinName.class")));
+        assertArrayEquals(classBytes, Files.readAllBytes(outputDir.resolve("target/original-classes/demo/-KotlinName.class")));
+        assertArrayEquals(classBytes, Files.readAllBytes(outputDir.resolve("src/main/resources/demo/-KotlinName.class")));
+        assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
+                .contains("class name is not a legal Java source identifier"));
+    }
+
+    @Test
+    void fallsBackKotlinMetadataClassesToRawBytes() throws Exception {
+        byte[] classBytes = appendAscii(minimalClassBytes(52), "Lkotlin/Metadata;");
+        Path jar = tempDir.resolve("kotlin-metadata.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "demo/KotlinCompiled.class", classBytes);
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("kotlin-metadata-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertFalse(Files.exists(outputDir.resolve("src/main/java/demo/KotlinCompiled.java")));
+        assertArrayEquals(classBytes, Files.readAllBytes(outputDir.resolve("src/main/resources/demo/KotlinCompiled.class")));
+        assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
+                .contains("class was compiled from Kotlin metadata"));
+    }
+
+    @Test
+    void fallsBackShadedDependencyClassesToRawBytes() throws Exception {
+        byte[] classBytes = minimalClassBytes(52);
+        Path jar = tempDir.resolve("shaded-dependency.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "demo/shaded/vendor/Library.class", classBytes);
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("shaded-dependency-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertFalse(Files.exists(outputDir.resolve("src/main/java/demo/shaded/vendor/Library.java")));
+        assertArrayEquals(classBytes, Files.readAllBytes(
+                outputDir.resolve("src/main/resources/demo/shaded/vendor/Library.class")));
+        assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
+                .contains("class is under a shaded dependency namespace"));
     }
 
     @Test
@@ -367,6 +485,13 @@ class ProjectBuilderTest {
         writeU2(bytes, 27, 0);
         writeU2(bytes, 29, 0);
         return bytes;
+    }
+
+    private byte[] appendAscii(byte[] bytes, String suffix) {
+        byte[] suffixBytes = suffix.getBytes(StandardCharsets.US_ASCII);
+        byte[] combined = Arrays.copyOf(bytes, bytes.length + suffixBytes.length);
+        System.arraycopy(suffixBytes, 0, combined, bytes.length, suffixBytes.length);
+        return combined;
     }
 
     private void writeU2(byte[] bytes, int offset, int value) {

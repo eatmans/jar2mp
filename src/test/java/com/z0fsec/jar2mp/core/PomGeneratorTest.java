@@ -56,6 +56,19 @@ class PomGeneratorTest {
     }
 
     @Test
+    void disablesAnnotationProcessingForRestoredCompilePom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<proc>none</proc>"));
+    }
+
+    @Test
     void sanitizesManifestDerivedMavenCoordinates() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("Remko Popma");

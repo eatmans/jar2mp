@@ -59,6 +59,7 @@ public class ProjectBuilder {
         File srcMainResources = new File(outputDir, "src/main/resources");
         File srcMainWebapp = new File(outputDir, "src/main/webapp");
         File targetOriginalClasses = new File(outputDir, "target/original-classes");
+        File targetRawClasses = new File(outputDir, "target/raw-classes");
         File targetOriginalLibs = new File(outputDir, "target/original-libs");
         File srcTestJava = new File(outputDir, "src/test/java");
         File srcTestResources = new File(outputDir, "src/test/resources");
@@ -118,12 +119,62 @@ public class ProjectBuilder {
                 JarEntry entry = jf.getJarEntry(rawEntryPath);
                 if (entry == null) continue;
 
+                cacheRawClass(jf, entry, classPath, targetRawClasses);
+
                 // Skip inner classes as standalone source files, but retain them
                 // when the outer source does not visibly cover the named type.
                 if (shouldDecompile() && DecompilerBridge.isInnerClass(classPath)) {
                     handleSkippedInnerClass(jf, entry, classPath, contextSources, targetOriginalClasses,
-                            outputDir, decompileFindings);
+                            srcMainResources, outputDir, decompileFindings);
                     continue;
+                }
+
+                if (shouldDecompile() && !hasLegalTopLevelJavaSourceName(classPath)) {
+                    DecompileFinding finding = rawClassFallbackFinding(
+                            classPath,
+                            "class name is not a legal Java source identifier",
+                            "Decompiled source was skipped because the JVM class name cannot be emitted as Java source.");
+                    try (InputStream is = jf.getInputStream(entry)) {
+                        retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
+                                srcMainResources, outputDir, finding);
+                    }
+                    if (finding.hasRetainedClassPath()) {
+                        decompileFindings.add(finding);
+                    }
+                    continue;
+                }
+
+                if (shouldDecompile() && isShadedDependencyClass(classPath)) {
+                    DecompileFinding finding = rawClassFallbackFinding(
+                            classPath,
+                            "class is under a shaded dependency namespace",
+                            "Decompiled source was skipped because relocated dependency bytecode is retained as raw "
+                                    + "classes for compile stability.");
+                    try (InputStream is = jf.getInputStream(entry)) {
+                        retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
+                                srcMainResources, outputDir, finding);
+                    }
+                    if (finding.hasRetainedClassPath()) {
+                        decompileFindings.add(finding);
+                    }
+                    continue;
+                }
+
+                if (shouldDecompile()) {
+                    byte[] rawClassBytes = readRawClassBytes(jf, entry);
+                    if (isKotlinMetadataClass(rawClassBytes)) {
+                        DecompileFinding finding = rawClassFallbackFinding(
+                                classPath,
+                                "class was compiled from Kotlin metadata",
+                                "Decompiled source was skipped because Kotlin bytecode is not reliably emitted as "
+                                        + "compilable Java source.");
+                        retainRawClassForFallback(rawClassBytes, classPath, targetOriginalClasses,
+                                srcMainResources, outputDir, finding);
+                        if (finding.hasRetainedClassPath()) {
+                            decompileFindings.add(finding);
+                        }
+                        continue;
+                    }
                 }
 
                 String outputPath = shouldDecompile() ? classPath.replace(".class", ".java") : classPath;
@@ -146,6 +197,21 @@ public class ProjectBuilder {
                 if (contextSource != null && isContextSourceUsable(contextSource)) {
                     String className = classPath.replace('/', '.').replace(".class", "");
                     String javaSource = sourcePostProcessor.process(contextSource, className);
+                    if (hasMissingSelfInnerReferences(javaSource, classPath, analysis.getClassFiles())) {
+                        DecompileFinding finding = rawClassFallbackFinding(
+                                classPath,
+                                "decompiled outer source references inner classes that are not declared",
+                                "Decompiled source was skipped because javac cannot resolve retained inner classes as "
+                                        + "members of the source type.");
+                        try (InputStream is = jf.getInputStream(entry)) {
+                            retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
+                                    srcMainResources, outputDir, finding);
+                        }
+                        if (finding.hasRetainedClassPath()) {
+                            decompileFindings.add(finding);
+                        }
+                        continue;
+                    }
                     IoUtils.ensureDirectory(outputFile.getParentFile());
                     IoUtils.writeStringToFile(outputFile, javaSource);
                     DecompileFinding finding = new DecompileFinding(classPath, null, null);
@@ -178,15 +244,26 @@ public class ProjectBuilder {
                         finding.setEngineSummary(decompileResult.getEngineSummary());
                         if (decompileResult.isSuccess()) {
                             String javaSource = sourcePostProcessor.process(decompileResult.getSource(), className);
+                            if (hasMissingSelfInnerReferences(javaSource, classPath, analysis.getClassFiles())) {
+                                finding = rawClassFallbackFinding(
+                                        classPath,
+                                        "decompiled outer source references inner classes that are not declared",
+                                        "Decompiled source was skipped because javac cannot resolve retained inner "
+                                                + "classes as members of the source type.");
+                                retainRawClassForFallback(bytes, classPath, targetOriginalClasses,
+                                        srcMainResources, outputDir, finding);
+                                if (finding.hasRetainedClassPath()) {
+                                    decompileFindings.add(finding);
+                                }
+                                continue;
+                            }
                             IoUtils.ensureDirectory(outputFile.getParentFile());
                             IoUtils.writeStringToFile(outputFile, javaSource);
                             decompileFindings.add(finding);
                         } else {
-                            File retainedClassFile = resolveOutputFile(targetOriginalClasses, classPath);
-                            if (retainedClassFile != null) {
-                                IoUtils.ensureDirectory(retainedClassFile.getParentFile());
-                                Files.write(retainedClassFile.toPath(), bytes);
-                                finding.setRetainedClassPath(relativize(outputDir, retainedClassFile));
+                            retainRawClassForFallback(bytes, classPath, targetOriginalClasses,
+                                    srcMainResources, outputDir, finding);
+                            if (finding.hasRetainedClassPath()) {
                                 decompileFindings.add(finding);
                             }
                         }
@@ -360,11 +437,126 @@ public class ProjectBuilder {
         return isContextSourceUsable(source);
     }
 
+    boolean hasMissingSelfInnerReferencesForTest(String source, String classPath, Collection<String> classFiles) {
+        return hasMissingSelfInnerReferences(source, classPath, classFiles);
+    }
+
+    private void cacheRawClass(JarFile jarFile, JarEntry entry, String classPath, File targetRawClasses)
+            throws IOException {
+        File rawClassFile = resolveOutputFile(targetRawClasses, classPath);
+        if (rawClassFile == null) {
+            return;
+        }
+        IoUtils.ensureDirectory(rawClassFile.getParentFile());
+        try (InputStream input = jarFile.getInputStream(entry)) {
+            Files.copy(input, rawClassFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private byte[] readRawClassBytes(JarFile jarFile, JarEntry entry) throws IOException {
+        try (InputStream input = jarFile.getInputStream(entry)) {
+            return readAllBytes(input);
+        }
+    }
+
+    private boolean isKotlinMetadataClass(byte[] bytes) {
+        return containsBytes(bytes, "Lkotlin/Metadata;".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+                || containsBytes(bytes, "kotlin/Metadata".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    }
+
+    private boolean containsBytes(byte[] bytes, byte[] needle) {
+        if (bytes == null || needle == null || needle.length == 0 || bytes.length < needle.length) {
+            return false;
+        }
+        for (int i = 0; i <= bytes.length - needle.length; i++) {
+            int j = 0;
+            while (j < needle.length && bytes[i + j] == needle[j]) {
+                j++;
+            }
+            if (j == needle.length) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasMissingSelfInnerReferences(String source, String classPath, Collection<String> classFiles) {
+        if (source == null || classPath == null || classFiles == null || DecompilerBridge.isInnerClass(classPath)) {
+            return false;
+        }
+        if (!classPath.endsWith(".class")) {
+            return false;
+        }
+
+        String outerClassName = classPath.substring(0, classPath.length() - ".class".length()).replace('/', '.');
+        Pattern selfInnerImport = Pattern.compile("(?m)^\\s*import\\s+"
+                + Pattern.quote(outerClassName)
+                + "\\.([A-Za-z_$][\\w$]*)\\s*;");
+        java.util.regex.Matcher matcher = selfInnerImport.matcher(source);
+        while (matcher.find()) {
+            String innerSimpleName = matcher.group(1);
+            String innerClassPath = classPath.substring(0, classPath.length() - ".class".length())
+                    + "$"
+                    + innerSimpleName
+                    + ".class";
+            if (classFiles.contains(innerClassPath) && !sourceDeclaresInnerType(source, innerSimpleName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean sourceDeclaresInnerType(String source, String innerSimpleName) {
+        Pattern declaration = Pattern.compile(String.format(
+                NAMED_INNER_DECLARATION_PATTERN, Pattern.quote(innerSimpleName)));
+        return declaration.matcher(source).find();
+    }
+
+    private boolean hasLegalTopLevelJavaSourceName(String classPath) {
+        if (classPath == null || !classPath.endsWith(".class")) {
+            return false;
+        }
+        String fileName = classPath;
+        int slash = fileName.lastIndexOf('/');
+        if (slash >= 0) {
+            fileName = fileName.substring(slash + 1);
+        }
+        String simpleName = fileName.substring(0, fileName.length() - ".class".length());
+        if ("package-info".equals(simpleName) || "module-info".equals(simpleName)) {
+            return true;
+        }
+        if (simpleName.isEmpty() || !Character.isJavaIdentifierStart(simpleName.charAt(0))) {
+            return false;
+        }
+        for (int i = 1; i < simpleName.length(); i++) {
+            if (!Character.isJavaIdentifierPart(simpleName.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isShadedDependencyClass(String classPath) {
+        if (classPath == null) {
+            return false;
+        }
+        return classPath.replace('\\', '/').contains("/shaded/");
+    }
+
+    private DecompileFinding rawClassFallbackFinding(String classPath, String fallbackReason, String message) {
+        DecompileFinding finding = new DecompileFinding(classPath, null, null);
+        finding.setSelectedEngine("raw-class-fallback");
+        finding.setFallbackReason(fallbackReason);
+        finding.setMessage(message);
+        return finding;
+    }
+
     private void handleSkippedInnerClass(JarFile jarFile,
                                          JarEntry entry,
                                          String classPath,
                                          Map<String, String> contextSources,
                                          File targetOriginalClasses,
+                                         File srcMainResources,
                                          File outputDir,
                                          List<DecompileFinding> decompileFindings) throws IOException {
         DecompileFinding finding = new DecompileFinding(classPath, null, null);
@@ -377,16 +569,35 @@ public class ProjectBuilder {
 
         try (InputStream input = jarFile.getInputStream(entry)) {
             byte[] bytes = readAllBytes(input);
-            File retainedClassFile = resolveOutputFile(targetOriginalClasses, classPath);
             finding.setSelectedEngine("skipped-inner-class");
             finding.setFallbackReason("inner class is not emitted as standalone source");
             finding.setMessage("Inner or anonymous class was not confidently represented in the outer source.");
-            if (retainedClassFile != null) {
-                IoUtils.ensureDirectory(retainedClassFile.getParentFile());
-                Files.write(retainedClassFile.toPath(), bytes);
-                finding.setRetainedClassPath(relativize(outputDir, retainedClassFile));
-            }
+            retainRawClassForFallback(bytes, classPath, targetOriginalClasses, srcMainResources, outputDir, finding);
             decompileFindings.add(finding);
+        }
+    }
+
+    private void retainRawClassForFallback(byte[] bytes,
+                                           String classPath,
+                                           File targetOriginalClasses,
+                                           File srcMainResources,
+                                           File outputDir,
+                                           DecompileFinding finding) throws IOException {
+        File retainedClassFile = resolveOutputFile(targetOriginalClasses, classPath);
+        if (retainedClassFile != null) {
+            IoUtils.ensureDirectory(retainedClassFile.getParentFile());
+            Files.write(retainedClassFile.toPath(), bytes);
+            finding.setRetainedClassPath(relativize(outputDir, retainedClassFile));
+        }
+
+        File compilerFallbackClassFile = resolveOutputFile(srcMainResources, classPath);
+        if (compilerFallbackClassFile != null) {
+            IoUtils.ensureDirectory(compilerFallbackClassFile.getParentFile());
+            Files.write(compilerFallbackClassFile.toPath(), bytes);
+            finding.setMessage(appendNote(finding.getMessage(),
+                    "Raw class copied to `"
+                            + relativize(outputDir, compilerFallbackClassFile)
+                            + "` for Maven compile fallback."));
         }
     }
 

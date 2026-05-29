@@ -8,17 +8,23 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 public class ProjectVerifier {
 
     private static final int MAX_CAPTURE_BYTES = 20 * 1024;
     private static final long TIMEOUT_SECONDS = 120;
+    private static final int MAX_COMPILE_FALLBACK_ROUNDS = 20;
     private final VerificationErrorParser errorParser = new VerificationErrorParser();
 
     public VerificationResult verify(File projectDir, String goal) {
@@ -33,6 +39,25 @@ public class ProjectVerifier {
             }
         }
 
+        List<String> compileFallbacks = new ArrayList<>();
+        VerificationResult result = runMavenVerification(projectDir, command);
+        for (int round = 0; shouldApplyCompileFallback(result) && round < MAX_COMPILE_FALLBACK_ROUNDS; round++) {
+            List<String> applied = applyCompileFallbacks(projectDir, result);
+            if (applied.isEmpty()) {
+                break;
+            }
+            for (String classPath : applied) {
+                if (!compileFallbacks.contains(classPath)) {
+                    compileFallbacks.add(classPath);
+                }
+            }
+            result = runMavenVerification(projectDir, command);
+        }
+        result.getCompileFallbackClassPaths().addAll(compileFallbacks);
+        return result;
+    }
+
+    private VerificationResult runMavenVerification(File projectDir, List<String> command) {
         VerificationResult result = new VerificationResult();
         result.setCommand(joinCommand(command));
         result.setExitCode(-1);
@@ -87,6 +112,110 @@ public class ProjectVerifier {
         return result;
     }
 
+    private boolean shouldApplyCompileFallback(VerificationResult result) {
+        return result != null
+                && result.getExitCode() != 0
+                && "COMPILATION_ERROR".equals(result.getFailureType())
+                && !result.getErrors().isEmpty();
+    }
+
+    private List<String> applyCompileFallbacks(File projectDir, VerificationResult result) {
+        List<String> applied = new ArrayList<>();
+        if (projectDir == null || result == null) {
+            return applied;
+        }
+
+        Path projectPath = projectDir.toPath().toAbsolutePath().normalize();
+        Path rawRoot = projectPath.resolve("target/raw-classes").normalize();
+        Path resourcesRoot = projectPath.resolve("src/main/resources").normalize();
+        if (!Files.isDirectory(rawRoot)) {
+            return applied;
+        }
+
+        Set<String> sourceClassPaths = new LinkedHashSet<>();
+        for (VerificationError error : result.getErrors()) {
+            String classPath = classPathFromSourcePath(error.getSourcePath());
+            if (classPath != null) {
+                sourceClassPaths.add(classPath);
+            }
+        }
+
+        for (String classPath : sourceClassPaths) {
+            Path rawClass = resolveUnder(rawRoot, classPath);
+            if (rawClass == null || !Files.isRegularFile(rawClass)) {
+                continue;
+            }
+            try {
+                copyRawClassFamily(rawRoot, resourcesRoot, classPath);
+                Path sourceFile = resolveUnder(projectPath, "src/main/java/"
+                        + classPath.substring(0, classPath.length() - ".class".length())
+                        + ".java");
+                if (sourceFile != null) {
+                    Files.deleteIfExists(sourceFile);
+                }
+                applied.add(classPath);
+            } catch (IOException ignored) {
+                // Leave the original verification failure intact if the fallback cannot be applied.
+            }
+        }
+        return applied;
+    }
+
+    private String classPathFromSourcePath(String sourcePath) {
+        if (sourcePath == null) {
+            return null;
+        }
+        String normalized = sourcePath.replace('\\', '/');
+        String marker = "src/main/java/";
+        int markerIndex = normalized.indexOf(marker);
+        if (markerIndex < 0 || !normalized.endsWith(".java")) {
+            return null;
+        }
+        String relativeJavaPath = normalized.substring(markerIndex + marker.length());
+        return relativeJavaPath.substring(0, relativeJavaPath.length() - ".java".length()) + ".class";
+    }
+
+    private void copyRawClassFamily(Path rawRoot, Path resourcesRoot, String classPath) throws IOException {
+        Path rawClass = resolveUnder(rawRoot, classPath);
+        if (rawClass == null || !Files.isRegularFile(rawClass)) {
+            return;
+        }
+        copyRawClass(rawRoot, resourcesRoot, classPath);
+
+        Path parent = rawClass.getParent();
+        String fileName = rawClass.getFileName().toString();
+        if (parent == null || !fileName.endsWith(".class")) {
+            return;
+        }
+        String innerClassGlob = fileName.substring(0, fileName.length() - ".class".length()) + "$*.class";
+        try (java.nio.file.DirectoryStream<Path> stream = Files.newDirectoryStream(parent, innerClassGlob)) {
+            for (Path sibling : stream) {
+                if (Files.isRegularFile(sibling)) {
+                    copyRawClass(rawRoot, resourcesRoot, rawRoot.relativize(sibling).toString().replace('\\', '/'));
+                }
+            }
+        }
+    }
+
+    private void copyRawClass(Path rawRoot, Path resourcesRoot, String classPath) throws IOException {
+        Path source = resolveUnder(rawRoot, classPath);
+        Path target = resolveUnder(resourcesRoot, classPath);
+        if (source == null || target == null || !Files.isRegularFile(source)) {
+            return;
+        }
+        Files.createDirectories(target.getParent());
+        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private Path resolveUnder(Path baseDir, String relativePath) {
+        if (baseDir == null || relativePath == null || relativePath.trim().isEmpty()) {
+            return null;
+        }
+        Path base = baseDir.toAbsolutePath().normalize();
+        Path resolved = base.resolve(relativePath.replace('\\', '/')).normalize();
+        return resolved.startsWith(base) ? resolved : null;
+    }
+
     private void addVerificationSkipFlags(List<String> command) {
         command.add("-DskipTests");
         command.add("-Dmaven.test.skip=true");
@@ -112,6 +241,11 @@ public class ProjectVerifier {
         report.append("- Failure type: ").append(nullToEmpty(result.getFailureType())).append("\n");
         report.append("- Summary: ").append(nullToEmpty(result.getSummary()).replace("\r", " ").replace("\n", " ")).append("\n");
         report.append("- Error count: ").append(result.getErrors().size()).append("\n");
+        report.append("- Compile fallback classes: ").append(result.getCompileFallbackClassPaths().size()).append("\n");
+        if (!result.getCompileFallbackClassPaths().isEmpty()) {
+            report.append("- Compile fallback class paths: ")
+                    .append(abbreviateList(result.getCompileFallbackClassPaths(), 20)).append("\n");
+        }
         Map<String, Integer> categories = countCategories(result);
         if (!categories.isEmpty()) {
             report.append("- Error categories: ");
@@ -202,6 +336,21 @@ public class ProjectVerifier {
             return "TEST_FAILURE";
         }
         return "UNKNOWN";
+    }
+
+    private String abbreviateList(List<String> values, int limit) {
+        StringBuilder builder = new StringBuilder();
+        int count = Math.min(values.size(), limit);
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append('`').append(values.get(i)).append('`');
+        }
+        if (values.size() > limit) {
+            builder.append(", ...");
+        }
+        return builder.toString();
     }
 
     private String summarize(VerificationResult result) {

@@ -7,8 +7,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectVerifierTest {
@@ -53,6 +55,22 @@ class ProjectVerifierTest {
     }
 
     @Test
+    void retriesCompileWithRawClassFallbackForBrokenGeneratedSource() throws Exception {
+        Path projectDir = createProject("public class App { public void broken() { missing } }");
+        compileRawClass(projectDir.resolve("target/raw-classes"),
+                "demo.App",
+                "package demo;\npublic class App { public String run() { return \"ok\"; } }\n");
+
+        VerificationResult result = new ProjectVerifier().verify(projectDir.toFile(), "compile");
+
+        assertEquals(0, result.getExitCode());
+        assertEquals("NONE", result.getFailureType());
+        assertTrue(result.getCompileFallbackClassPaths().contains("demo/App.class"));
+        assertFalse(Files.exists(projectDir.resolve("src/main/java/demo/App.java")));
+        assertTrue(Files.exists(projectDir.resolve("src/main/resources/demo/App.class")));
+    }
+
+    @Test
     void writesVerificationReport() throws Exception {
         Path projectDir = createProject("public class App { public String run() { return \"ok\"; } }");
 
@@ -82,6 +100,32 @@ class ProjectVerifierTest {
         Files.write(sourceDir.resolve("App.java"),
                 ("package demo;\n" + javaSource + "\n").getBytes(StandardCharsets.UTF_8));
         return projectDir;
+    }
+
+    private void compileRawClass(Path rawClassesDir, String className, String source) throws Exception {
+        String packagePath = "";
+        String simpleName = className;
+        int lastDot = className.lastIndexOf('.');
+        if (lastDot >= 0) {
+            packagePath = className.substring(0, lastDot).replace('.', '/');
+            simpleName = className.substring(lastDot + 1);
+        }
+
+        Path sourceDir = tempDir.resolve("raw-src-" + System.nanoTime()).resolve(packagePath);
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve(simpleName + ".java");
+        Files.write(sourceFile, source.getBytes(StandardCharsets.UTF_8));
+        Files.createDirectories(rawClassesDir);
+
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-d", rawClassesDir.toString(),
+                sourceFile.toString());
+        if (result != 0) {
+            throw new IllegalStateException("javac failed with exit code " + result);
+        }
     }
 
     private String pomXml() {

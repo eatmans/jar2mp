@@ -12,6 +12,7 @@ public class VerificationResult {
     private String failureType;
     private boolean timedOut;
     private final List<VerificationError> errors = new ArrayList<>();
+    private final List<String> compileFallbackClassPaths = new ArrayList<>();
 
     public String getCommand() { return command; }
     public void setCommand(String command) { this.command = command; }
@@ -28,4 +29,5 @@ public class VerificationResult {
     public boolean isTimedOut() { return timedOut; }
     public void setTimedOut(boolean timedOut) { this.timedOut = timedOut; }
     public List<VerificationError> getErrors() { return errors; }
+    public List<String> getCompileFallbackClassPaths() { return compileFallbackClassPaths; }
 }

@@ -251,6 +251,10 @@ public class PomGenerator {
                     ? sanitizeCompilerConfiguration(plugin.getConfigurationXml())
                     : plugin.getConfigurationXml();
             appendRawXml(sb, configurationXml, "                ");
+        } else if (compilerPlugin) {
+            sb.append("                <configuration>\n");
+            sb.append("                    <proc>none</proc>\n");
+            sb.append("                </configuration>\n");
         }
         if (!plugin.getExecutionsXml().isEmpty()) {
             sb.append("                <executions>\n");
@@ -267,10 +271,17 @@ public class PomGenerator {
         if (xml == null) {
             return null;
         }
-        return xml.replaceAll("(?s)\\s*<arg>\\s*-Werror\\s*</arg>", "")
+        String sanitized = xml.replaceAll("(?s)\\s*<arg>\\s*-Werror\\s*</arg>", "")
                 .replaceAll("(?s)\\s*<compilerArgument>\\s*-Werror\\s*</compilerArgument>", "")
                 .replaceAll("(?s)<failOnWarning>\\s*true\\s*</failOnWarning>",
                         "<failOnWarning>false</failOnWarning>");
+        if (sanitized.matches("(?s).*<proc>.*?</proc>.*")) {
+            return sanitized.replaceAll("(?s)<proc>.*?</proc>", "<proc>none</proc>");
+        }
+        if (sanitized.contains("</configuration>")) {
+            return sanitized.replace("</configuration>", "  <proc>none</proc>\n</configuration>");
+        }
+        return sanitized;
     }
 
     private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin) {
@@ -310,6 +321,7 @@ public class PomGenerator {
         sb.append("                    <source>").append(javaVersion).append("</source>\n");
         sb.append("                    <target>").append(javaVersion).append("</target>\n");
         sb.append("                    <encoding>UTF-8</encoding>\n");
+        sb.append("                    <proc>none</proc>\n");
         sb.append("                </configuration>\n");
         sb.append("            </plugin>\n");
     }
