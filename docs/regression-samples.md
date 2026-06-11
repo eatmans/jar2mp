@@ -52,6 +52,28 @@ The script writes:
 
 Do not commit the generated artifacts or reports. Commit the script and this documentation only.
 
+## GitHub Release Assets
+
+`scripts/regression/run-github-release-assets-regression.sh` downloads fixed GitHub Release JAR/WAR assets and restores them with Maven compile verification, runtime tracing where safe, and raw artifact preservation enabled.
+
+Run:
+
+```bash
+./scripts/regression/run-github-release-assets-regression.sh
+```
+
+The script writes:
+
+- `target/release-assets-samples/report/github-release-assets-summary.md`
+- `target/release-assets-samples/report/github-release-assets-summary.csv`
+- `target/release-assets-samples/report/*.cli.log`
+- downloaded release assets under `target/release-assets-samples/assets/`
+- restored jar2mp projects under `target/release-assets-samples/restored/`
+
+Each sample is marked `PASS` when the overall score meets the sample threshold, Maven verification reports `BUILD SUCCESS` with `Failure type: NONE`, raw artifact preservation reports `exact_match=true`, and runtime evidence does not fail. A sample is marked `PASS_WITH_WARNINGS` when those gates pass but there are non-gating warnings such as raw-class fallback, decompile-failure records, runtime skip/warn status, or source/resource buckets below `100`.
+
+`STRICT_RELEASE_ASSETS=1` turns any remaining `GAP`, `RESTORE_FAILED`, or `DOWNLOAD_FAILED` row into a non-zero script exit. The default mode is exploratory and only fails when no sample reaches `PASS` or `PASS_WITH_WARNINGS`.
+
 ## Cached Ad-hoc Release Assets
 
 `scripts/regression/run-cached-adhoc-release-assets-regression.sh` replays the cached binary release assets under `target/adhoc-github-release-assets/assets/`. It does not download artifacts, so it is useful for refreshing stale ad-hoc reports after a source fix.

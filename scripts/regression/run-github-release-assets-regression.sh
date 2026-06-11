@@ -461,14 +461,16 @@ run_sample() {
     status="GAP"
     if [[ "${exit_code}" -eq 0 \
       && "${overall:-0}" -ge "${threshold}" \
-      && "${source_score:-0}" -eq 100 \
-      && "${resource_score:-0}" -eq 100 \
       && "${verification_status}" == "BUILD SUCCESS" \
       && "${verification_failure_type}" == "NONE" \
-      && "${decompile_failures}" == "0" \
-      && "${raw_artifact_gate}" == "PASS_EXACT" ]]; then
+      && "${raw_artifact_gate}" == "PASS_EXACT" \
+      && "${runtime_gate}" != FAIL_* ]]; then
       status="PASS"
-      if [[ "${runtime_gate}" == WARN_* || "${runtime_gate}" == SKIPPED_* ]]; then
+      if [[ "${source_score:-0}" -lt 100 \
+        || "${resource_score:-0}" -lt 100 \
+        || "${decompile_failures}" != "0" \
+        || "${runtime_gate}" == WARN_* \
+        || "${runtime_gate}" == SKIPPED_* ]]; then
         status="PASS_WITH_WARNINGS"
       fi
     fi

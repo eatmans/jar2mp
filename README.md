@@ -176,6 +176,14 @@ Options:
 
 汇总报告写入 `target/realworld-samples/report/github-realworld-summary.md` 和 `target/realworld-samples/report/github-realworld-summary.csv`。样本来源、固定 ref、阈值和已知非门禁候选见 `docs/github-realworld-regression.md`。
 
+也可以运行下载型 GitHub Release 二进制样本矩阵，脚本会下载固定 release asset 并验证还原项目的编译门禁与 raw artifact 保真：
+
+```bash
+./scripts/regression/run-github-release-assets-regression.sh
+```
+
+汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven 编译与 raw artifact exact 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警或源码分数未满分。
+
 对于已经下载到 `target/adhoc-github-release-assets/assets/` 的临时 GitHub Release 二进制样本，可以运行离线缓存矩阵来刷新当前源码的编译与 raw artifact 门禁结果：
 
 ```bash
