@@ -369,9 +369,13 @@ classify_required_exact_gate() {
 
 classify_source_artifact_gate() {
   local exact="$1"
+  local content_entries_match="$2"
+  local archive_bytes_same="$3"
   if [[ "${exact}" == "true" ]]; then
     printf 'PASS_EXACT'
-  elif [[ "${exact}" == "false" ]]; then
+  elif [[ "${content_entries_match}" == "true" && "${archive_bytes_same}" == "false" ]]; then
+    printf 'PASS_CONTENT'
+  elif [[ "${exact}" == "false" || "${content_entries_match}" == "false" ]]; then
     printf 'WARN_DIFF'
   else
     printf 'WARN_%s' "${exact:-missing}"
@@ -458,6 +462,8 @@ run_sample() {
   local artifact_missing="not-run"
   local artifact_extra="not-run"
   local artifact_diff_classes="not-run"
+  local artifact_content_entries_match="not-run"
+  local artifact_archive_bytes_same="not-run"
   local raw_artifact_exact="not-run"
   local raw_artifact_diff_sha="not-run"
   local raw_artifact_missing="not-run"
@@ -527,6 +533,8 @@ run_sample() {
           artifact_missing="$(parse_artifact_summary_field "${artifact_csv}" 7 "missing")"
           artifact_extra="$(parse_artifact_summary_field "${artifact_csv}" 8 "missing")"
           artifact_diff_classes="$(parse_artifact_summary_field "${artifact_csv}" 13 "missing")"
+          artifact_content_entries_match="$(parse_artifact_summary_field "${artifact_csv}" 30 "missing")"
+          artifact_archive_bytes_same="$(parse_artifact_summary_field "${artifact_csv}" 31 "missing")"
         else
           artifact_exact="compare-failed"
         fi
@@ -580,7 +588,8 @@ run_sample() {
 
     runtime_gate="$(classify_runtime_gate "${runtime_launch_support}" "${runtime_run_status}" "${runtime_events}")"
     raw_artifact_gate="$(classify_required_exact_gate "${raw_artifact_exact}")"
-    source_artifact_gate="$(classify_source_artifact_gate "${artifact_exact}")"
+    source_artifact_gate="$(classify_source_artifact_gate "${artifact_exact}" \
+      "${artifact_content_entries_match}" "${artifact_archive_bytes_same}")"
     byte_exact_package_gate="$(classify_required_exact_gate "${byte_exact_package_exact}")"
 
     if [[ "${exit_code}" -eq 0 \
@@ -629,6 +638,8 @@ run_sample() {
     csv_field "${artifact_missing}"; printf ','
     csv_field "${artifact_extra}"; printf ','
     csv_field "${artifact_diff_classes}"; printf ','
+    csv_field "${artifact_content_entries_match}"; printf ','
+    csv_field "${artifact_archive_bytes_same}"; printf ','
     csv_field "${source_artifact_gate}"; printf ','
     csv_field "${raw_artifact_exact}"; printf ','
     csv_field "${raw_artifact_diff_sha}"; printf ','
@@ -647,7 +658,7 @@ run_sample() {
   } >> "${REPORT_DIR}/github-realworld-summary.csv"
 
   cat >> "${REPORT_DIR}/github-realworld-summary.md" <<MD
-| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${package_status} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${runtime_gate} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${source_artifact_gate} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${raw_artifact_gate} | ${byte_exact_verification_status} | ${byte_exact_verification_failure_type} | ${byte_exact_package_status} | ${byte_exact_package_exact} | ${byte_exact_package_gate} | ${threshold} |
+| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${package_status} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${runtime_gate} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${artifact_content_entries_match} | ${artifact_archive_bytes_same} | ${source_artifact_gate} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${raw_artifact_gate} | ${byte_exact_verification_status} | ${byte_exact_verification_failure_type} | ${byte_exact_package_status} | ${byte_exact_package_exact} | ${byte_exact_package_gate} | ${threshold} |
 MD
 }
 
@@ -661,15 +672,15 @@ main() {
   prepare_samples
 
   write_file "${REPORT_DIR}/github-realworld-summary.csv" <<'CSV'
-sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,package_status,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,runtime_gate,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,source_artifact_gate,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,raw_artifact_gate,byte_exact_verification_status,byte_exact_verification_failure_type,byte_exact_package_status,byte_exact_package_exact,byte_exact_package_gate,threshold,java_home,note
+sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,package_status,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,runtime_gate,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,artifact_content_entries_match,artifact_archive_bytes_same,source_artifact_gate,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,raw_artifact_gate,byte_exact_verification_status,byte_exact_verification_failure_type,byte_exact_package_status,byte_exact_package_exact,byte_exact_package_gate,threshold,java_home,note
 CSV
   write_file "${REPORT_DIR}/github-realworld-summary.md" <<'MD'
 # jar2mp GitHub Real-World Regression Summary
 
 This is a compile/package-gate summary with runtime, source artifact, raw artifact, and byte-exact package evidence columns.
 
-| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Package | Runtime launch | Runtime support | Runtime status | Runtime events | Runtime gate | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Source artifact gate | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Raw gate | Byte-exact verification | Byte-exact failure type | Byte-exact package | Byte-exact package exact | Byte-exact package gate | Threshold |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | ---: |
+| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Package | Runtime launch | Runtime support | Runtime status | Runtime events | Runtime gate | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Artifact content entries match | Artifact archive bytes same | Source artifact gate | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Raw gate | Byte-exact verification | Byte-exact failure type | Byte-exact package | Byte-exact package exact | Byte-exact package gate | Threshold |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | ---: |
 MD
 
   local i
