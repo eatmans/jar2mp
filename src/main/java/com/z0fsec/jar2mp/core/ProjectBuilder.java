@@ -8,6 +8,7 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.jar.JarOutputStream;
 import java.util.regex.Pattern;
 
 public class ProjectBuilder {
@@ -61,6 +62,7 @@ public class ProjectBuilder {
         File targetOriginalClasses = new File(outputDir, "target/original-classes");
         File targetRawClasses = new File(outputDir, "target/raw-classes");
         File targetOriginalLibs = new File(outputDir, "target/original-libs");
+        File compilerFallbackJar = new File(outputDir, "target/compiler-fallback-classes.jar");
         File srcTestJava = new File(outputDir, "src/test/java");
         File srcTestResources = new File(outputDir, "src/test/resources");
 
@@ -85,6 +87,9 @@ public class ProjectBuilder {
 
             Set<String> decompiledOuterClasses = new HashSet<>();
             List<DecompileFinding> decompileFindings = analysis.getDecompileFindings();
+            Set<String> caseInsensitiveClassCollisions =
+                    findCaseInsensitiveClassCollisions(analysis.getClassFiles());
+            Map<String, byte[]> compilerFallbackJarEntries = new LinkedHashMap<>();
             Map<String, String> contextSources = shouldDecompile()
                     ? cfrJarDecompiler.decompile(jarFile)
                     : Collections.emptyMap();
@@ -119,13 +124,29 @@ public class ProjectBuilder {
                 JarEntry entry = jf.getJarEntry(rawEntryPath);
                 if (entry == null) continue;
 
+                if (shouldDecompile() && caseInsensitiveClassCollisions.contains(classPath)) {
+                    DecompileFinding finding = rawClassFallbackFinding(
+                            classPath,
+                            "class path collides on case-insensitive file systems",
+                            "Decompiled source was skipped because the output file system cannot safely store "
+                                    + "case-only distinct class paths as separate files.");
+                    try (InputStream is = jf.getInputStream(entry)) {
+                        retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
+                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, true);
+                    }
+                    if (finding.hasRetainedClassPath()) {
+                        decompileFindings.add(finding);
+                    }
+                    continue;
+                }
+
                 cacheRawClass(jf, entry, classPath, targetRawClasses);
 
                 // Skip inner classes as standalone source files, but retain them
                 // when the outer source does not visibly cover the named type.
                 if (shouldDecompile() && DecompilerBridge.isInnerClass(classPath)) {
                     handleSkippedInnerClass(jf, entry, classPath, contextSources, targetOriginalClasses,
-                            srcMainResources, outputDir, decompileFindings);
+                            srcMainResources, outputDir, decompileFindings, compilerFallbackJarEntries);
                     continue;
                 }
 
@@ -136,7 +157,7 @@ public class ProjectBuilder {
                             "Decompiled source was skipped because the JVM class name cannot be emitted as Java source.");
                     try (InputStream is = jf.getInputStream(entry)) {
                         retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
-                                srcMainResources, outputDir, finding);
+                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
                     }
                     if (finding.hasRetainedClassPath()) {
                         decompileFindings.add(finding);
@@ -152,7 +173,7 @@ public class ProjectBuilder {
                                     + "classes for compile stability.");
                     try (InputStream is = jf.getInputStream(entry)) {
                         retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
-                                srcMainResources, outputDir, finding);
+                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
                     }
                     if (finding.hasRetainedClassPath()) {
                         decompileFindings.add(finding);
@@ -169,7 +190,7 @@ public class ProjectBuilder {
                                 "Decompiled source was skipped because Kotlin bytecode is not reliably emitted as "
                                         + "compilable Java source.");
                         retainRawClassForFallback(rawClassBytes, classPath, targetOriginalClasses,
-                                srcMainResources, outputDir, finding);
+                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
                         if (finding.hasRetainedClassPath()) {
                             decompileFindings.add(finding);
                         }
@@ -205,7 +226,7 @@ public class ProjectBuilder {
                                         + "members of the source type.");
                         try (InputStream is = jf.getInputStream(entry)) {
                             retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
-                                    srcMainResources, outputDir, finding);
+                                    srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
                         }
                         if (finding.hasRetainedClassPath()) {
                             decompileFindings.add(finding);
@@ -251,7 +272,7 @@ public class ProjectBuilder {
                                         "Decompiled source was skipped because javac cannot resolve retained inner "
                                                 + "classes as members of the source type.");
                                 retainRawClassForFallback(bytes, classPath, targetOriginalClasses,
-                                        srcMainResources, outputDir, finding);
+                                        srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
                                 if (finding.hasRetainedClassPath()) {
                                     decompileFindings.add(finding);
                                 }
@@ -262,7 +283,7 @@ public class ProjectBuilder {
                             decompileFindings.add(finding);
                         } else {
                             retainRawClassForFallback(bytes, classPath, targetOriginalClasses,
-                                    srcMainResources, outputDir, finding);
+                                    srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
                             if (finding.hasRetainedClassPath()) {
                                 decompileFindings.add(finding);
                             }
@@ -325,6 +346,11 @@ public class ProjectBuilder {
             }
 
             if (callback != null) callback.onProgress("Generating decompile parity report...", 95);
+            if (!compilerFallbackJarEntries.isEmpty()) {
+                writeCompilerFallbackJar(compilerFallbackJar, compilerFallbackJarEntries);
+                IoUtils.writeStringToFile(new File(outputDir, "pom.xml"),
+                        addCompilerFallbackDependency(pomXml));
+            }
             restorationReportWriter.writeRestorationReport(outputDir, analysis);
             parityReporter.writeReport(jf, analysis, outputDir);
             restorationReportWriter.writeResourceInventory(outputDir, analysis);
@@ -558,7 +584,8 @@ public class ProjectBuilder {
                                          File targetOriginalClasses,
                                          File srcMainResources,
                                          File outputDir,
-                                         List<DecompileFinding> decompileFindings) throws IOException {
+                                         List<DecompileFinding> decompileFindings,
+                                         Map<String, byte[]> compilerFallbackJarEntries) throws IOException {
         DecompileFinding finding = new DecompileFinding(classPath, null, null);
         if (isInnerClassCoveredByOuterSource(contextSources, classPath)) {
             finding.setSelectedEngine("outer-source");
@@ -572,7 +599,8 @@ public class ProjectBuilder {
             finding.setSelectedEngine("skipped-inner-class");
             finding.setFallbackReason("inner class is not emitted as standalone source");
             finding.setMessage("Inner or anonymous class was not confidently represented in the outer source.");
-            retainRawClassForFallback(bytes, classPath, targetOriginalClasses, srcMainResources, outputDir, finding);
+            retainRawClassForFallback(bytes, classPath, targetOriginalClasses, srcMainResources, outputDir, finding,
+                    compilerFallbackJarEntries, false);
             decompileFindings.add(finding);
         }
     }
@@ -582,7 +610,17 @@ public class ProjectBuilder {
                                            File targetOriginalClasses,
                                            File srcMainResources,
                                            File outputDir,
-                                           DecompileFinding finding) throws IOException {
+                                           DecompileFinding finding,
+                                           Map<String, byte[]> compilerFallbackJarEntries,
+                                           boolean compilerJarOnly) throws IOException {
+        if (compilerJarOnly) {
+            compilerFallbackJarEntries.put(classPath, bytes);
+            finding.setRetainedClassPath("target/compiler-fallback-classes.jar!/" + classPath);
+            finding.setMessage(appendNote(finding.getMessage(),
+                    "Raw class added to `target/compiler-fallback-classes.jar` for Maven compile fallback."));
+            return;
+        }
+
         File retainedClassFile = resolveOutputFile(targetOriginalClasses, classPath);
         if (retainedClassFile != null) {
             IoUtils.ensureDirectory(retainedClassFile.getParentFile());
@@ -599,6 +637,68 @@ public class ProjectBuilder {
                             + relativize(outputDir, compilerFallbackClassFile)
                             + "` for Maven compile fallback."));
         }
+    }
+
+    private Set<String> findCaseInsensitiveClassCollisions(List<String> classPaths) {
+        Map<String, String> firstByLowercase = new HashMap<>();
+        Set<String> collisions = new HashSet<>();
+        for (String classPath : classPaths) {
+            String lowercase = classPath.toLowerCase(Locale.ROOT);
+            String first = firstByLowercase.putIfAbsent(lowercase, classPath);
+            if (first != null && !first.equals(classPath)) {
+                collisions.add(first);
+                collisions.add(classPath);
+            }
+        }
+        return collisions;
+    }
+
+    private void writeCompilerFallbackJar(File jarFile, Map<String, byte[]> entries) throws IOException {
+        IoUtils.ensureDirectory(jarFile.getParentFile());
+        try (JarOutputStream out = new JarOutputStream(new FileOutputStream(jarFile))) {
+            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+                JarEntry jarEntry = new JarEntry(entry.getKey());
+                jarEntry.setTime(0L);
+                out.putNextEntry(jarEntry);
+                out.write(entry.getValue());
+                out.closeEntry();
+            }
+        }
+    }
+
+    private String addCompilerFallbackDependency(String pomXml) {
+        if (pomXml.contains("<artifactId>compiler-fallback-classes</artifactId>")) {
+            return pomXml;
+        }
+        String dependency = "        <dependency>\n"
+                + "            <groupId>com.z0fsec.jar2mp</groupId>\n"
+                + "            <artifactId>compiler-fallback-classes</artifactId>\n"
+                + "            <version>1.0.0</version>\n"
+                + "            <scope>system</scope>\n"
+                + "            <systemPath>${project.basedir}/target/compiler-fallback-classes.jar</systemPath>\n"
+                + "        </dependency>\n";
+        int searchStart = 0;
+        int dependencyManagementEnd = pomXml.indexOf("</dependencyManagement>");
+        if (dependencyManagementEnd >= 0) {
+            searchStart = dependencyManagementEnd + "</dependencyManagement>".length();
+        }
+        int dependenciesStart = pomXml.indexOf("<dependencies>", searchStart);
+        if (dependenciesStart >= 0) {
+            int dependenciesEnd = pomXml.indexOf("</dependencies>", dependenciesStart);
+            if (dependenciesEnd >= 0) {
+                return pomXml.substring(0, dependenciesEnd) + dependency + pomXml.substring(dependenciesEnd);
+            }
+        }
+        String block = "    <dependencies>\n" + dependency + "    </dependencies>\n\n";
+        int buildStart = pomXml.indexOf("<build>");
+        if (buildStart >= 0) {
+            return pomXml.substring(0, buildStart) + block + pomXml.substring(buildStart);
+        }
+        int projectEnd = pomXml.lastIndexOf("</project>");
+        if (projectEnd >= 0) {
+            return pomXml.substring(0, projectEnd) + block + pomXml.substring(projectEnd);
+        }
+        return pomXml + "\n" + block;
     }
 
     private boolean isInnerClassCoveredByOuterSource(Map<String, String> contextSources, String classPath) {

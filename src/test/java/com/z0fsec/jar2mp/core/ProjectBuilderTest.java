@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
 import javax.tools.ToolProvider;
 
@@ -328,6 +329,38 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void storesCaseInsensitiveClassCollisionsInCompilerFallbackJar() throws Exception {
+        byte[] upperBytes = TestClassCompiler.compile("demo.C", "package demo; public class C {}\n");
+        byte[] lowerBytes = TestClassCompiler.compile("demo.c", "package demo; public class c {}\n");
+        Path jar = tempDir.resolve("case-collision.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "demo/C.class", upperBytes);
+            addEntry(out, "demo/c.class", lowerBytes);
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("case-collision-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project><build/></project>",
+                outputDir.toFile(), null);
+
+        Path fallbackJar = outputDir.resolve("target/compiler-fallback-classes.jar");
+        assertTrue(Files.exists(fallbackJar));
+        try (JarFile fallback = new JarFile(fallbackJar.toFile())) {
+            assertArrayEquals(upperBytes, readJarEntry(fallback, "demo/C.class"));
+            assertArrayEquals(lowerBytes, readJarEntry(fallback, "demo/c.class"));
+        }
+        assertFalse(Files.exists(outputDir.resolve("src/main/java/demo/C.java")));
+        assertFalse(Files.exists(outputDir.resolve("src/main/java/demo/c.java")));
+        assertFalse(Files.exists(outputDir.resolve("src/main/resources/demo/C.class")));
+        assertFalse(Files.exists(outputDir.resolve("src/main/resources/demo/c.class")));
+        assertTrue(Files.readString(outputDir.resolve("pom.xml"))
+                .contains("<systemPath>${project.basedir}/target/compiler-fallback-classes.jar</systemPath>"));
+        assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
+                .contains("case-insensitive file systems"));
+    }
+
+    @Test
     void fallsBackClassesWithNonJavaSourceNamesToRawBytes() throws Exception {
         byte[] classBytes = minimalClassBytes(52);
         Path jar = tempDir.resolve("non-java-name.jar");
@@ -413,6 +446,14 @@ class ProjectBuilderTest {
         out.putNextEntry(new JarEntry(name));
         out.write(bytes);
         out.closeEntry();
+    }
+
+    private byte[] readJarEntry(JarFile jar, String name) throws Exception {
+        JarEntry entry = jar.getJarEntry(name);
+        assertTrue(entry != null, "Missing jar entry " + name);
+        try (java.io.InputStream in = jar.getInputStream(entry)) {
+            return in.readAllBytes();
+        }
     }
 
     private Path compileJar(String className, String source) throws Exception {

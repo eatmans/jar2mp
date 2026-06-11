@@ -150,6 +150,8 @@ Options:
 - `verification-errors.md` - 启用 `--verify-build` 时解析出的逐文件编译错误明细
 - `decompile-failures.md` - 反编译失败条目和原始 class 退回位置
 
+当输入归档包含仅大小写不同的 class 路径时，jar2mp 不会把这些 class 展开到普通目录；它会生成 `target/compiler-fallback-classes.jar` 并在 `pom.xml` 中加入 system-scope 依赖，避免大小写不敏感文件系统破坏 Maven 编译类路径。
+
 推荐验证流程：
 
 1. 先看 `restoration-report.md` 和 `resource-inventory.md`
@@ -222,7 +224,8 @@ Options:
 │   ├── verification-errors.md
 │   └── decompile-failures.md
 │   ├── target/
-│   │   └── original-classes/   ← 反编译失败时保留的原始 class
+│   │   ├── original-classes/   ← 反编译失败时保留的原始 class
+│   │   └── compiler-fallback-classes.jar  ← 大小写冲突 class 的编译 fallback jar
 │   └── src/
 │       ├── main/
 │       │   ├── java/          ← 反编译后的 .java 文件（保留包结构）
