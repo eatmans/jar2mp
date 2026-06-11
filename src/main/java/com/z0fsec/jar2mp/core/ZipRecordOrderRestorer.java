@@ -44,12 +44,17 @@ public class ZipRecordOrderRestorer {
         Map<String, Long> newOffsets = new LinkedHashMap<>();
         for (String name : original.entryOrder) {
             newOffsets.put(name, Long.valueOf(output.size()));
-            output.write(rebuilt.localRecords.get(name));
+            byte[] localRecord = rebuilt.localRecords.get(name).clone();
+            copyDosTimestamp(original.localRecords.get(name), 10, localRecord, 10);
+            copyExtraFieldIfSameLength(original.localRecords.get(name), localRecord, 26, 28, 30);
+            output.write(localRecord);
         }
 
         long centralDirectoryOffset = output.size();
         for (String name : original.entryOrder) {
             byte[] centralRecord = rebuilt.centralRecords.get(name).clone();
+            copyDosTimestamp(original.centralRecords.get(name), 12, centralRecord, 12);
+            copyExtraFieldIfSameLength(original.centralRecords.get(name), centralRecord, 28, 30, 46);
             writeUInt32(centralRecord, 42, newOffsets.get(name).longValue());
             output.write(centralRecord);
         }
@@ -74,6 +79,26 @@ public class ZipRecordOrderRestorer {
 
     private String describe(File file) {
         return file == null ? "(null)" : file.getAbsolutePath();
+    }
+
+    private static void copyDosTimestamp(byte[] source, int sourceOffset, byte[] target, int targetOffset) {
+        target[targetOffset] = source[sourceOffset];
+        target[targetOffset + 1] = source[sourceOffset + 1];
+        target[targetOffset + 2] = source[sourceOffset + 2];
+        target[targetOffset + 3] = source[sourceOffset + 3];
+    }
+
+    private static void copyExtraFieldIfSameLength(byte[] source, byte[] target, int nameLengthOffset,
+            int extraLengthOffset, int dataOffset) {
+        int sourceNameLength = readUInt16(source, nameLengthOffset);
+        int sourceExtraLength = readUInt16(source, extraLengthOffset);
+        int targetNameLength = readUInt16(target, nameLengthOffset);
+        int targetExtraLength = readUInt16(target, extraLengthOffset);
+        if (sourceExtraLength != targetExtraLength) {
+            return;
+        }
+        System.arraycopy(source, dataOffset + sourceNameLength, target, dataOffset + targetNameLength,
+                sourceExtraLength);
     }
 
     private static long readUInt32(byte[] data, int offset) {

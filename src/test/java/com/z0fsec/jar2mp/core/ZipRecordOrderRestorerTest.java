@@ -23,8 +23,22 @@ class ZipRecordOrderRestorerTest {
     void restoresOriginalEntryOrderWithoutRecompressingRecords() throws Exception {
         TestEntry first = entry("first.txt", "one");
         TestEntry second = entry("second.txt", "two");
-        Path original = writeStoredZip("original.jar", first, second);
-        Path rebuilt = writeStoredZip("rebuilt.jar", second, first);
+        Path original = writeStoredZip("original.jar", 0L, first, second);
+        Path rebuilt = writeStoredZip("rebuilt.jar", 0L, second, first);
+
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+    }
+
+    @Test
+    void restoresOriginalEntryTimestampsWhileReorderingRecords() throws Exception {
+        TestEntry first = entry("first.txt", "one");
+        TestEntry second = entry("second.txt", "two");
+        Path original = writeStoredZip("original.jar", 0L, first, second);
+        Path rebuilt = writeStoredZip("rebuilt.jar", 2000L, second, first);
 
         Path restored = new ZipRecordOrderRestorer()
                 .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
@@ -35,20 +49,20 @@ class ZipRecordOrderRestorerTest {
 
     @Test
     void rejectsArchivesWithDifferentEntrySets() throws Exception {
-        Path original = writeStoredZip("original.jar", entry("first.txt", "one"));
-        Path rebuilt = writeStoredZip("rebuilt.jar", entry("second.txt", "two"));
+        Path original = writeStoredZip("original.jar", 0L, entry("first.txt", "one"));
+        Path rebuilt = writeStoredZip("rebuilt.jar", 0L, entry("second.txt", "two"));
 
         assertThrows(IOException.class, () -> new ZipRecordOrderRestorer()
                 .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile()));
     }
 
-    private Path writeStoredZip(String fileName, TestEntry... entries) throws Exception {
+    private Path writeStoredZip(String fileName, long entryTime, TestEntry... entries) throws Exception {
         Path zip = tempDir.resolve(fileName);
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(zip))) {
             for (TestEntry entry : entries) {
                 ZipEntry zipEntry = new ZipEntry(entry.name);
                 zipEntry.setMethod(ZipEntry.STORED);
-                zipEntry.setTime(0L);
+                zipEntry.setTime(entryTime);
                 zipEntry.setSize(entry.content.length);
                 zipEntry.setCompressedSize(entry.content.length);
                 zipEntry.setCrc(crc32(entry.content));
