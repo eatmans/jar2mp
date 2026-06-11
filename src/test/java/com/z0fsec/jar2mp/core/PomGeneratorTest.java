@@ -538,4 +538,57 @@ class PomGeneratorTest {
         assertTrue(pomXml.contains("<arg>-Xlint:all</arg>"));
         assertTrue(pomXml.contains("<proc>none</proc>"));
     }
+
+    @Test
+    void omitsQualityGatePluginsAndUnresolvedVersionReferencesFromStandalonePom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("org.openapitools");
+        analysis.setDetectedArtifactId("openapi-generator-cli");
+        analysis.setDetectedVersion("7.22.0");
+        analysis.setJavaVersion(21);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+
+        analysis.getDetectedDependencies().add(new MavenDependency("org.testng",
+                "testng", "${testng.version}", MavenDependency.Confidence.HIGH));
+        analysis.getDetectedDependencies().add(new MavenDependency("org.mockito",
+                "mockito-core", "${mockito.version}", MavenDependency.Confidence.HIGH));
+        analysis.getDetectedDependencies().add(new MavenDependency("org.antlr",
+                "antlr4-runtime", "${antlr4.version}", MavenDependency.Confidence.HIGH));
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.getProperties().put("antlr4.version", "4.9.3");
+
+        BuildPluginInfo xmlPlugin = new BuildPluginInfo();
+        xmlPlugin.setGroupId("org.codehaus.mojo");
+        xmlPlugin.setArtifactId("xml-maven-plugin");
+        xmlPlugin.getExecutionsXml().add(
+                "<execution><goals><goal>validate</goal><goal>check-format</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(xmlPlugin);
+
+        BuildPluginInfo antlrPlugin = new BuildPluginInfo();
+        antlrPlugin.setGroupId("org.antlr");
+        antlrPlugin.setArtifactId("antlr4-maven-plugin");
+        antlrPlugin.setVersion("${antlr4.version}");
+        antlrPlugin.getExecutionsXml().add("<execution><goals><goal>antlr4</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(antlrPlugin);
+
+        BuildPluginInfo jarPlugin = new BuildPluginInfo();
+        jarPlugin.setGroupId("org.apache.maven.plugins");
+        jarPlugin.setArtifactId("maven-jar-plugin");
+        jarPlugin.setVersion("${maven-jar-plugin.version}");
+        pomInfo.getBuildPlugins().add(jarPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<artifactId>testng</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>mockito-core</artifactId>"));
+        assertTrue(pomXml.contains("<artifactId>antlr4-runtime</artifactId>"));
+        assertTrue(pomXml.contains("<version>${antlr4.version}</version>"));
+        assertFalse(pomXml.contains("<artifactId>xml-maven-plugin</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>antlr4-maven-plugin</artifactId>"));
+        assertFalse(pomXml.contains("${maven-jar-plugin.version}"));
+        assertTrue(pomXml.contains("<artifactId>maven-jar-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));
+    }
 }

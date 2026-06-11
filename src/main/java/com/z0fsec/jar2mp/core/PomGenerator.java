@@ -102,7 +102,8 @@ public class PomGenerator {
         List<MavenDependency> included = new java.util.ArrayList<>();
         boolean dependencyManagementIncluded = embeddedPom != null && !embeddedPom.getDependencyManagement().isEmpty();
         for (MavenDependency dep : deps) {
-            if (dep.isIncluded() && canRenderDependency(dep, parentIncluded || dependencyManagementIncluded, groupId, version)) {
+            if (dep.isIncluded() && canRenderDependency(dep, parentIncluded || dependencyManagementIncluded,
+                    groupId, version, properties)) {
                 included.add(dep);
             }
         }
@@ -140,13 +141,13 @@ public class PomGenerator {
         boolean hasArchiveDescriptorPlugin = false;
         if (embeddedPom != null) {
             for (BuildPluginInfo plugin : embeddedPom.getBuildPlugins()) {
-                if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
-                    hasCompilerPlugin = true;
-                }
-                if (isArchiveDescriptorPlugin(plugin.getArtifactId(), packaging)) {
-                    hasArchiveDescriptorPlugin = true;
-                }
-                if (shouldAppendBuildPlugin(plugin, byteExactPackage)) {
+                if (shouldAppendBuildPlugin(plugin, byteExactPackage, properties)) {
+                    if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
+                        hasCompilerPlugin = true;
+                    }
+                    if (isArchiveDescriptorPlugin(plugin.getArtifactId(), packaging)) {
+                        hasArchiveDescriptorPlugin = true;
+                    }
                     appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalCreatedBy,
                             originalBuildInfoPresent, useOriginalWarLibraries);
                 }
@@ -243,12 +244,16 @@ public class PomGenerator {
     }
 
     private boolean canRenderDependency(MavenDependency dep, boolean managedVersionAvailable,
-                                        String projectGroupId, String projectVersion) {
+                                        String projectGroupId, String projectVersion,
+                                        Map<String, String> properties) {
         if (dep == null) {
             return false;
         }
         String version = dep.getVersion();
         if (hasKnownValue(version)) {
+            if (!hasResolvablePropertyReferences(version, properties)) {
+                return false;
+            }
             if (isProjectVersionReference(version) && isSameGroupSnapshot(dep, projectGroupId, projectVersion)) {
                 return false;
             }
@@ -397,12 +402,20 @@ public class PomGenerator {
                 "<configuration combine.self=\"override\"$1>");
     }
 
-    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin, boolean byteExactPackage) {
+    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin, boolean byteExactPackage,
+                                            Map<String, String> properties) {
         if (plugin == null || plugin.getArtifactId() == null) {
+            return false;
+        }
+        if (hasKnownValue(plugin.getVersion())
+                && !hasResolvablePropertyReferences(plugin.getVersion(), properties)) {
             return false;
         }
         if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
             return true;
+        }
+        if (isQualityGatePlugin(plugin.getArtifactId())) {
+            return false;
         }
         if (byteExactPackage && isPackageTransformingPlugin(plugin.getArtifactId())) {
             return false;
@@ -413,6 +426,19 @@ public class PomGenerator {
             }
         }
         return true;
+    }
+
+    private boolean isQualityGatePlugin(String artifactId) {
+        return "xml-maven-plugin".equals(artifactId)
+                || "maven-checkstyle-plugin".equals(artifactId)
+                || "maven-pmd-plugin".equals(artifactId)
+                || "spotbugs-maven-plugin".equals(artifactId)
+                || "spotless-maven-plugin".equals(artifactId)
+                || "rewrite-maven-plugin".equals(artifactId)
+                || "forbiddenapis".equals(artifactId)
+                || "nondex-maven-plugin".equals(artifactId)
+                || "json-schema-validator".equals(artifactId)
+                || "antlr4-maven-plugin".equals(artifactId);
     }
 
     private boolean isPackageTransformingPlugin(String artifactId) {
@@ -434,6 +460,34 @@ public class PomGenerator {
                 || normalized.contains("<phase>process-sources</phase>")
                 || normalized.contains("<phase>generate-resources</phase>")
                 || normalized.contains("<phase>process-resources</phase>");
+    }
+
+    private boolean hasResolvablePropertyReferences(String value, Map<String, String> properties) {
+        if (value == null) {
+            return true;
+        }
+        int start = value.indexOf("${");
+        while (start >= 0) {
+            int end = value.indexOf('}', start + 2);
+            if (end < 0) {
+                return false;
+            }
+            String propertyName = value.substring(start + 2, end);
+            if (!isAlwaysResolvableProperty(propertyName)) {
+                String resolved = properties.get(propertyName);
+                if (!hasKnownValue(resolved) || resolved.contains("${")) {
+                    return false;
+                }
+            }
+            start = value.indexOf("${", end + 1);
+        }
+        return true;
+    }
+
+    private boolean isAlwaysResolvableProperty(String propertyName) {
+        return "project.version".equals(propertyName)
+                || "project.groupId".equals(propertyName)
+                || "project.artifactId".equals(propertyName);
     }
 
     private void appendFallbackCompilerPlugin(StringBuilder sb, int javaVersion) {
