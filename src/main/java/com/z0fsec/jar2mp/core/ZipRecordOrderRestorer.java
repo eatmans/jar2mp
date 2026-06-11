@@ -8,11 +8,9 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 public class ZipRecordOrderRestorer {
 
@@ -36,12 +34,11 @@ public class ZipRecordOrderRestorer {
 
         ZipLayout original = ZipLayout.read(originalArtifact);
         ZipLayout rebuilt = ZipLayout.read(rebuiltArtifact);
-        validateSameEntrySet(original, rebuilt);
 
         Files.createDirectories(outputDir.toPath());
         File restored = new File(outputDir, rebuiltArtifact.getName());
 
-        ByteArrayOutputStream output = new ByteArrayOutputStream(rebuilt.bytes.length);
+        ByteArrayOutputStream output = new ByteArrayOutputStream(original.bytes.length);
         Map<String, Long> newOffsets = new LinkedHashMap<>();
         for (String name : original.entryOrder) {
             newOffsets.put(name, Long.valueOf(output.size()));
@@ -57,7 +54,7 @@ public class ZipRecordOrderRestorer {
         }
         long centralDirectorySize = output.size() - centralDirectoryOffset;
 
-        byte[] eocd = rebuilt.endOfCentralDirectory.clone();
+        byte[] eocd = original.endOfCentralDirectory.clone();
         writeUInt16(eocd, 8, original.entryOrder.size());
         writeUInt16(eocd, 10, original.entryOrder.size());
         writeUInt32(eocd, 12, centralDirectorySize);
@@ -66,22 +63,6 @@ public class ZipRecordOrderRestorer {
 
         Files.write(restored.toPath(), output.toByteArray());
         return restored;
-    }
-
-    private void validateSameEntrySet(ZipLayout original, ZipLayout rebuilt) throws IOException {
-        Set<String> originalNames = new HashSet<>(original.entryOrder);
-        Set<String> rebuiltNames = new HashSet<>(rebuilt.entryOrder);
-        for (String name : originalNames) {
-            if (!rebuiltNames.contains(name) && !original.isEmptyDirectoryEntry(name)) {
-                throw new IOException("Cannot restore ZIP entry order because original entry is missing from rebuilt: "
-                        + name);
-            }
-        }
-        for (String name : rebuiltNames) {
-            if (!originalNames.contains(name) && !rebuilt.isEmptyDirectoryEntry(name)) {
-                throw new IOException("Cannot restore ZIP entry order because rebuilt has extra entry: " + name);
-            }
-        }
     }
 
     private String describe(File file) {

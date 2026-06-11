@@ -360,7 +360,7 @@ class PomGeneratorTest {
     }
 
     @Test
-    void byteExactPackageKeepsPackageTransformingPluginsForSourceRebuild() {
+    void byteExactPackageSkipsPackageTransformingPluginsBeforeHelperRestoresArtifact() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("com.example");
         analysis.setDetectedArtifactId("demo");
@@ -380,8 +380,8 @@ class PomGeneratorTest {
 
         String pomXml = new PomGenerator().generate(analysis, config);
 
-        assertTrue(pomXml.contains("<artifactId>maven-shade-plugin</artifactId>"));
-        assertTrue(pomXml.contains("<goal>shade</goal>"));
+        assertFalse(pomXml.contains("<artifactId>maven-shade-plugin</artifactId>"));
+        assertFalse(pomXml.contains("<goal>shade</goal>"));
         assertFalse(pomXml.contains("restore-byte-exact-artifact"));
         assertTrue(pomXml.contains("restore-byte-exact-package-records"));
         assertTrue(pomXml.contains(".jar2mp/byte-exact/raw-artifact/demo-1.0.0-all.jar"));

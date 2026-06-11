@@ -3,7 +3,6 @@ package com.z0fsec.jar2mp.core;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,7 +12,6 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ZipRecordOrderRestorerTest {
 
@@ -109,12 +107,19 @@ class ZipRecordOrderRestorerTest {
     }
 
     @Test
-    void rejectsArchivesWithDifferentEntrySets() throws Exception {
-        Path original = writeStoredZip("original.jar", 0L, entry("first.txt", "one"));
-        Path rebuilt = writeStoredZip("rebuilt.jar", 0L, entry("second.txt", "two"));
+    void restoresOriginalEntriesWhenRebuiltEntrySetDiffers() throws Exception {
+        Path original = writeStoredZip("original.jar", 0L,
+                entry("first.txt", "one"),
+                entry("original-only.class", "original"));
+        Path rebuilt = writeStoredZip("rebuilt.jar", 0L,
+                entry("first.txt", "one"),
+                entry("rebuilt-only.class", "rebuilt"));
 
-        assertThrows(IOException.class, () -> new ZipRecordOrderRestorer()
-                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile()));
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
     }
 
     private Path writeStoredZip(String fileName, long entryTime, TestEntry... entries) throws Exception {

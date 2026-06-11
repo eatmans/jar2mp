@@ -124,6 +124,7 @@ public class PomGenerator {
         if (config != null && config.isByteExactPackage() && analysis.getSourceFile() != null) {
             byteExactArtifactFileName = analysis.getSourceFile().getName();
         }
+        boolean byteExactPackage = byteExactArtifactFileName != null;
         boolean useOriginalClassOverlay = analysis != null && !analysis.getClassFiles().isEmpty();
         boolean useOriginalResourceOverlay = analysis != null && !analysis.getResourceFiles().isEmpty();
 
@@ -145,7 +146,7 @@ public class PomGenerator {
                 if (isArchiveDescriptorPlugin(plugin.getArtifactId(), packaging)) {
                     hasArchiveDescriptorPlugin = true;
                 }
-                if (shouldAppendBuildPlugin(plugin)) {
+                if (shouldAppendBuildPlugin(plugin, byteExactPackage)) {
                     appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalCreatedBy,
                             originalBuildInfoPresent, useOriginalWarLibraries);
                 }
@@ -396,12 +397,15 @@ public class PomGenerator {
                 "<configuration combine.self=\"override\"$1>");
     }
 
-    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin) {
+    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin, boolean byteExactPackage) {
         if (plugin == null || plugin.getArtifactId() == null) {
             return false;
         }
         if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
             return true;
+        }
+        if (byteExactPackage && isPackageTransformingPlugin(plugin.getArtifactId())) {
+            return false;
         }
         for (String executionXml : plugin.getExecutionsXml()) {
             if (runsBeforeCompile(executionXml)) {
@@ -409,6 +413,14 @@ public class PomGenerator {
             }
         }
         return true;
+    }
+
+    private boolean isPackageTransformingPlugin(String artifactId) {
+        return "maven-shade-plugin".equals(artifactId)
+                || "spring-boot-maven-plugin".equals(artifactId)
+                || "maven-assembly-plugin".equals(artifactId)
+                || "maven-source-plugin".equals(artifactId)
+                || "maven-javadoc-plugin".equals(artifactId);
     }
 
     private boolean runsBeforeCompile(String executionXml) {
