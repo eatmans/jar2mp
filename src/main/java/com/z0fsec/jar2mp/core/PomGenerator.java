@@ -781,7 +781,7 @@ public class PomGenerator {
         sb.append("                        <configuration>\n");
         sb.append("                            <target>\n");
         sb.append("                                <mkdir dir=\"${project.build.directory}/byte-exact-package-helper-classes\" />\n");
-        sb.append("                                <javac srcdir=\"${project.basedir}/.jar2mp/byte-exact\" destdir=\"${project.build.directory}/byte-exact-package-helper-classes\" includeantruntime=\"false\" source=\"${maven.compiler.source}\" target=\"${maven.compiler.target}\" />\n");
+        sb.append("                                <javac srcdir=\"${project.basedir}/.jar2mp/byte-exact\" destdir=\"${project.build.directory}/byte-exact-package-helper-classes\" includeantruntime=\"false\" source=\"8\" target=\"8\" />\n");
         sb.append("                                <mkdir dir=\"${project.build.directory}/byte-exact-package-restored\" />\n");
         sb.append("                                <java classname=\"ByteExactPackageRestorer\" fork=\"true\" failonerror=\"true\">\n");
         sb.append("                                    <classpath>\n");

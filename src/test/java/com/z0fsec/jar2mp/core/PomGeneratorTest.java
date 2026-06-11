@@ -349,7 +349,7 @@ class PomGeneratorTest {
         analysis.setDetectedGroupId("com.example");
         analysis.setDetectedArtifactId("demo");
         analysis.setDetectedVersion("1.0.0");
-        analysis.setJavaVersion(8);
+        analysis.setJavaVersion(24);
         analysis.setSourceFile(new File("demo-1.0.0-all.jar"));
         ProjectConfig config = new ProjectConfig();
         config.setByteExactPackage(true);
@@ -377,6 +377,7 @@ class PomGeneratorTest {
         analysis.setEmbeddedPomInfo(pomInfo);
         ProjectConfig config = new ProjectConfig();
         config.setByteExactPackage(true);
+        config.setJavaVersion(24);
 
         String pomXml = new PomGenerator().generate(analysis, config);
 
@@ -386,6 +387,8 @@ class PomGeneratorTest {
         assertTrue(pomXml.contains("restore-byte-exact-package-records"));
         assertTrue(pomXml.contains(".jar2mp/byte-exact/raw-artifact/demo-1.0.0-all.jar"));
         assertTrue(pomXml.contains("<finalName>demo-1.0.0-all</finalName>"));
+        assertTrue(pomXml.contains("<maven.compiler.source>24</maven.compiler.source>"));
+        assertTrue(pomXml.contains("source=\"8\" target=\"8\""));
     }
 
     @Test
