@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.zip.CRC32;
+import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -94,6 +95,20 @@ class ZipRecordOrderRestorerTest {
     }
 
     @Test
+    void restoresOriginalCompressedPayloadWhenContentMatches() throws Exception {
+        TestEntry resource = deflatedEntry("org/example/Resource.txt",
+                "same payload ".repeat(400).getBytes(StandardCharsets.UTF_8));
+        Path original = writeDeflatedZip("original.jar", 0L, Deflater.BEST_COMPRESSION, resource);
+        Path rebuilt = writeDeflatedZip("rebuilt.jar", 2000L, Deflater.BEST_SPEED, resource);
+
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+    }
+
+    @Test
     void rejectsArchivesWithDifferentEntrySets() throws Exception {
         Path original = writeStoredZip("original.jar", 0L, entry("first.txt", "one"));
         Path rebuilt = writeStoredZip("rebuilt.jar", 0L, entry("second.txt", "two"));
@@ -123,6 +138,24 @@ class ZipRecordOrderRestorerTest {
         return zip;
     }
 
+    private Path writeDeflatedZip(String fileName, long entryTime, int level, TestEntry... entries)
+            throws Exception {
+        Path zip = tempDir.resolve(fileName);
+        try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(zip))) {
+            output.setLevel(level);
+            for (TestEntry entry : entries) {
+                ZipEntry zipEntry = new ZipEntry(entry.name);
+                zipEntry.setMethod(entry.method);
+                zipEntry.setTime(entryTime);
+                zipEntry.setExtra(new byte[0]);
+                output.putNextEntry(zipEntry);
+                output.write(entry.content);
+                output.closeEntry();
+            }
+        }
+        return zip;
+    }
+
     private long crc32(byte[] content) {
         CRC32 crc = new CRC32();
         crc.update(content);
@@ -143,6 +176,10 @@ class ZipRecordOrderRestorerTest {
 
     private TestEntry deflatedDirectory(String name) {
         return new TestEntry(name, new byte[0], ZipEntry.DEFLATED);
+    }
+
+    private TestEntry deflatedEntry(String name, byte[] content) {
+        return new TestEntry(name, content, ZipEntry.DEFLATED);
     }
 
     private static class TestEntry {

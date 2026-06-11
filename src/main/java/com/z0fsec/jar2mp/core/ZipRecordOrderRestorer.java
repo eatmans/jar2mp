@@ -99,7 +99,7 @@ public class ZipRecordOrderRestorer {
         if (original.isEmptyDirectoryEntry(name) || !rebuilt.localRecords.containsKey(name)) {
             return original.localRecords.get(name).clone();
         }
-        if (usesOriginalPayload(name)) {
+        if (usesOriginalPayload(original, rebuilt, name)) {
             return original.localRecords.get(name).clone();
         }
         byte[] restoredRecord = restoreLocalRecordMetadata(original, rebuilt, name);
@@ -116,7 +116,7 @@ public class ZipRecordOrderRestorer {
         if (original.isEmptyDirectoryEntry(name) || !rebuilt.centralRecords.containsKey(name)) {
             return original.centralRecords.get(name).clone();
         }
-        if (usesOriginalPayload(name)) {
+        if (usesOriginalPayload(original, rebuilt, name)) {
             return original.centralRecords.get(name).clone();
         }
         if (compressedSizesMatch(original, rebuilt, name)) {
@@ -176,13 +176,24 @@ public class ZipRecordOrderRestorer {
         return (int) compressedSize;
     }
 
-    private static boolean usesOriginalPayload(String name) {
-        return MANIFEST_ENTRY.equals(name) || isModuleInfoEntry(name);
+    private static boolean usesOriginalPayload(ZipLayout original, ZipLayout rebuilt, String name) {
+        return MANIFEST_ENTRY.equals(name)
+                || isModuleInfoEntry(name)
+                || payloadIdentityMatches(original, rebuilt, name);
     }
 
     private static boolean isModuleInfoEntry(String name) {
         return "module-info.class".equals(name)
                 || (name != null && name.endsWith("/module-info.class"));
+    }
+
+    private static boolean payloadIdentityMatches(ZipLayout original, ZipLayout rebuilt, String name) {
+        byte[] originalCentralRecord = original.centralRecords.get(name);
+        byte[] rebuiltCentralRecord = rebuilt.centralRecords.get(name);
+        return originalCentralRecord != null
+                && rebuiltCentralRecord != null
+                && readUInt32(originalCentralRecord, 16) == readUInt32(rebuiltCentralRecord, 16)
+                && readUInt32(originalCentralRecord, 24) == readUInt32(rebuiltCentralRecord, 24);
     }
 
     private static void copyExtraFieldIfSameLength(byte[] source, byte[] target, int nameLengthOffset,
