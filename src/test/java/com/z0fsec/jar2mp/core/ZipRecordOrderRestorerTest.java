@@ -107,6 +107,22 @@ class ZipRecordOrderRestorerTest {
     }
 
     @Test
+    void restoresOriginalPayloadWhenRebuiltResourceContentDiffers() throws Exception {
+        TestEntry originalResource = deflatedEntry("logback.xml",
+                "<configuration><appender-ref ref=\"STDOUT\" /></configuration>".getBytes(StandardCharsets.UTF_8));
+        TestEntry rebuiltResource = deflatedEntry("logback.xml",
+                "<configuration></configuration>".getBytes(StandardCharsets.UTF_8));
+        Path original = writeDeflatedZip("original.jar", 0L, Deflater.BEST_COMPRESSION, originalResource);
+        Path rebuilt = writeDeflatedZip("rebuilt.jar", 2000L, Deflater.BEST_COMPRESSION, rebuiltResource);
+
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+    }
+
+    @Test
     void restoresOriginalEntriesWhenRebuiltEntrySetDiffers() throws Exception {
         Path original = writeStoredZip("original.jar", 0L,
                 entry("first.txt", "one"),

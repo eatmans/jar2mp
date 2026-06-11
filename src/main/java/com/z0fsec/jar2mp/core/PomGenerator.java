@@ -57,6 +57,12 @@ public class PomGenerator {
         boolean useOriginalWarLibraries = "war".equals(packaging)
                 && hasResourcePathPrefix(analysis, "WEB-INF/lib/")
                 && !isSpringBootExecutable(analysis);
+        String byteExactArtifactFileName = null;
+        if (config != null && config.isByteExactPackage() && analysis.getSourceFile() != null) {
+            byteExactArtifactFileName = analysis.getSourceFile().getName();
+        }
+        boolean byteExactPackage = byteExactArtifactFileName != null;
+        Map<String, String> originalWarLibraryPaths = originalWarLibraryPaths(analysis, useOriginalWarLibraries);
 
         // Properties
         int javaVersion = config.getJavaVersion() > 0 ? config.getJavaVersion() : analysis.getJavaVersion();
@@ -91,7 +97,7 @@ public class PomGenerator {
             sb.append("    <dependencyManagement>\n");
             sb.append("        <dependencies>\n");
             for (MavenDependency dep : embeddedPom.getDependencyManagement()) {
-                appendDependency(sb, dep, "            ", false);
+                appendDependency(sb, dep, "            ", false, null);
             }
             sb.append("        </dependencies>\n");
             sb.append("    </dependencyManagement>\n\n");
@@ -102,7 +108,9 @@ public class PomGenerator {
         List<MavenDependency> included = new java.util.ArrayList<>();
         boolean dependencyManagementIncluded = embeddedPom != null && !embeddedPom.getDependencyManagement().isEmpty();
         for (MavenDependency dep : deps) {
-            if (dep.isIncluded() && canRenderDependency(dep, parentIncluded || dependencyManagementIncluded,
+            if (dep.isIncluded()
+                    && !isBundledByteExactDependency(dep, analysis, byteExactPackage)
+                    && canRenderDependency(dep, parentIncluded || dependencyManagementIncluded,
                     groupId, version, properties)) {
                 included.add(dep);
             }
@@ -111,7 +119,7 @@ public class PomGenerator {
         if (!included.isEmpty()) {
             sb.append("    <dependencies>\n");
             for (MavenDependency dep : included) {
-                appendDependency(sb, dep, "        ", useOriginalWarLibraries);
+                appendDependency(sb, dep, "        ", useOriginalWarLibraries, originalWarLibraryPaths);
             }
             sb.append("    </dependencies>\n\n");
         }
@@ -121,11 +129,6 @@ public class PomGenerator {
             appendRepositories(sb, "pluginRepositories", "pluginRepository", embeddedPom.getPluginRepositories());
         }
 
-        String byteExactArtifactFileName = null;
-        if (config != null && config.isByteExactPackage() && analysis.getSourceFile() != null) {
-            byteExactArtifactFileName = analysis.getSourceFile().getName();
-        }
-        boolean byteExactPackage = byteExactArtifactFileName != null;
         boolean useOriginalClassOverlay = analysis != null && !analysis.getClassFiles().isEmpty();
         boolean useOriginalResourceOverlay = analysis != null && !analysis.getResourceFiles().isEmpty();
 
@@ -274,7 +277,8 @@ public class PomGenerator {
     }
 
     private void appendDependency(StringBuilder sb, MavenDependency dep, String indent,
-                                  boolean useOriginalWarLibraries) {
+                                  boolean useOriginalWarLibraries,
+                                  Map<String, String> originalWarLibraryPaths) {
         sb.append(indent).append("<dependency>\n");
         appendElement(sb, "groupId", dep.getGroupId(), indent + "    ");
         appendElement(sb, "artifactId", dep.getArtifactId(), indent + "    ");
@@ -284,9 +288,13 @@ public class PomGenerator {
         if (dep.getType() != null && !"jar".equals(dep.getType())) {
             appendElement(sb, "type", dep.getType(), indent + "    ");
         }
-        String scope = dependencyScope(dep, useOriginalWarLibraries);
+        String systemPath = originalWarLibrarySystemPath(dep, originalWarLibraryPaths);
+        String scope = systemPath == null ? dependencyScope(dep, useOriginalWarLibraries) : "system";
         if (scope != null && !"compile".equals(scope)) {
             appendElement(sb, "scope", scope, indent + "    ");
+        }
+        if (systemPath != null) {
+            appendElement(sb, "systemPath", systemPath, indent + "    ");
         }
         sb.append(indent).append("</dependency>\n");
     }
@@ -300,6 +308,53 @@ public class PomGenerator {
             return "provided";
         }
         return scope;
+    }
+
+    private Map<String, String> originalWarLibraryPaths(JarAnalysisResult analysis,
+                                                        boolean useOriginalWarLibraries) {
+        Map<String, String> libraries = new LinkedHashMap<>();
+        if (!useOriginalWarLibraries || analysis == null) {
+            return libraries;
+        }
+        for (String resource : analysis.getResourceFiles()) {
+            if (resource != null && resource.startsWith("WEB-INF/lib/") && resource.endsWith(".jar")) {
+                int slash = resource.lastIndexOf('/');
+                String fileName = slash >= 0 ? resource.substring(slash + 1) : resource;
+                libraries.putIfAbsent(fileName, "${project.basedir}/src/main/original-libs/" + resource);
+            }
+        }
+        return libraries;
+    }
+
+    private String originalWarLibrarySystemPath(MavenDependency dep, Map<String, String> originalWarLibraryPaths) {
+        if (dep == null || originalWarLibraryPaths == null || originalWarLibraryPaths.isEmpty()
+                || !hasKnownValue(dep.getArtifactId()) || !hasKnownValue(dep.getVersion())
+                || dep.getVersion().contains("${")) {
+            return null;
+        }
+        return originalWarLibraryPaths.get(dep.getArtifactId() + "-" + dep.getVersion() + ".jar");
+    }
+
+    private boolean isBundledByteExactDependency(MavenDependency dep, JarAnalysisResult analysis,
+                                                 boolean byteExactPackage) {
+        if (!byteExactPackage || dep == null || analysis == null || !hasKnownValue(dep.getGroupId())) {
+            return false;
+        }
+        String prefix = dep.getGroupId().replace('.', '/') + "/";
+        return hasClassPrefix(analysis.getClassFiles(), prefix)
+                || hasClassPrefix(analysis.getSkippedDependencyClassFiles(), prefix);
+    }
+
+    private boolean hasClassPrefix(List<String> classFiles, String prefix) {
+        if (classFiles == null || prefix == null || prefix.isEmpty()) {
+            return false;
+        }
+        for (String classFile : classFiles) {
+            if (classFile != null && classFile.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void appendRepositories(StringBuilder sb, String containerName, String entryName,
@@ -438,7 +493,9 @@ public class PomGenerator {
                 || "forbiddenapis".equals(artifactId)
                 || "nondex-maven-plugin".equals(artifactId)
                 || "json-schema-validator".equals(artifactId)
-                || "antlr4-maven-plugin".equals(artifactId);
+                || "antlr4-maven-plugin".equals(artifactId)
+                || "replacer".equals(artifactId)
+                || "moditect-maven-plugin".equals(artifactId);
     }
 
     private boolean isPackageTransformingPlugin(String artifactId) {

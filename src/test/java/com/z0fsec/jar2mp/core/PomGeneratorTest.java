@@ -131,7 +131,9 @@ class PomGeneratorTest {
 
         String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
 
-        assertTrue(pomXml.contains("<scope>provided</scope>"));
+        assertTrue(pomXml.contains("<scope>system</scope>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/WEB-INF/lib/original-lib-1.0.0.jar</systemPath>"));
         assertTrue(pomXml.contains(
                 "<directory>${project.basedir}/src/main/original-libs/WEB-INF/lib</directory>"));
         assertTrue(pomXml.contains("<targetPath>WEB-INF/lib</targetPath>"));
@@ -572,6 +574,18 @@ class PomGeneratorTest {
         antlrPlugin.getExecutionsXml().add("<execution><goals><goal>antlr4</goal></goals></execution>");
         pomInfo.getBuildPlugins().add(antlrPlugin);
 
+        BuildPluginInfo replacerPlugin = new BuildPluginInfo();
+        replacerPlugin.setGroupId("com.google.code.maven-replacer-plugin");
+        replacerPlugin.setArtifactId("replacer");
+        replacerPlugin.getExecutionsXml().add("<execution><goals><goal>replace</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(replacerPlugin);
+
+        BuildPluginInfo moditectPlugin = new BuildPluginInfo();
+        moditectPlugin.setGroupId("org.moditect");
+        moditectPlugin.setArtifactId("moditect-maven-plugin");
+        moditectPlugin.getExecutionsXml().add("<execution><goals><goal>add-module-info</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(moditectPlugin);
+
         BuildPluginInfo jarPlugin = new BuildPluginInfo();
         jarPlugin.setGroupId("org.apache.maven.plugins");
         jarPlugin.setArtifactId("maven-jar-plugin");
@@ -587,8 +601,61 @@ class PomGeneratorTest {
         assertTrue(pomXml.contains("<version>${antlr4.version}</version>"));
         assertFalse(pomXml.contains("<artifactId>xml-maven-plugin</artifactId>"));
         assertFalse(pomXml.contains("<artifactId>antlr4-maven-plugin</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>replacer</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>moditect-maven-plugin</artifactId>"));
         assertFalse(pomXml.contains("${maven-jar-plugin.version}"));
         assertTrue(pomXml.contains("<artifactId>maven-jar-plugin</artifactId>"));
         assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));
+    }
+
+    @Test
+    void usesOriginalWarLibrariesAsLocalSystemDependencies() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("org.jenkins-ci.main");
+        analysis.setDetectedArtifactId("jenkins-war");
+        analysis.setDetectedVersion("2.566");
+        analysis.setJavaVersion(11);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        analysis.getResourceFiles().add("WEB-INF/lib/cli-2.566.jar");
+        analysis.getResourceFiles().add("WEB-INF/lib/remoting-3355.v388858a_47b_33.jar");
+
+        analysis.getDetectedDependencies().add(new MavenDependency("org.jenkins-ci.main",
+                "cli", "2.566", MavenDependency.Confidence.HIGH));
+        MavenDependency remoting = new MavenDependency("org.jenkins-ci.main",
+                "remoting", "3355.v388858a_47b_33", MavenDependency.Confidence.HIGH);
+        remoting.setScope("provided");
+        analysis.getDetectedDependencies().add(remoting);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<scope>system</scope>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/WEB-INF/lib/cli-2.566.jar</systemPath>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/WEB-INF/lib/remoting-3355.v388858a_47b_33.jar</systemPath>"));
+        assertFalse(pomXml.contains("<scope>provided</scope>"));
+    }
+
+    @Test
+    void omitsBundledByteExactDependencyWhenClassesAreAlreadyPresent() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(new File("dependency-track-bundled.jar"));
+        analysis.setDetectedGroupId("com.fasterxml.jackson.core");
+        analysis.setDetectedArtifactId("jackson-databind");
+        analysis.setDetectedVersion("2.21.1");
+        analysis.setJavaVersion(21);
+        analysis.getClassFiles().add("org/dependencytrack/resources/v1/ProjectResource.class");
+        analysis.getDetectedDependencies().add(new MavenDependency("org.dependencytrack",
+                "dependency-track", "4.14.2", MavenDependency.Confidence.HIGH));
+        analysis.getDetectedDependencies().add(new MavenDependency("com.example",
+                "external-helper", "1.0.0", MavenDependency.Confidence.HIGH));
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertFalse(pomXml.contains("<artifactId>dependency-track</artifactId>"));
+        assertTrue(pomXml.contains("<artifactId>external-helper</artifactId>"));
     }
 }
