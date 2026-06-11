@@ -3,6 +3,9 @@ package com.z0fsec.jar2mp.cli;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.z0fsec.jar2mp.core.ArtifactFidelityComparator;
+import com.z0fsec.jar2mp.model.ArtifactFidelityResult;
+
 import java.io.File;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -156,6 +159,35 @@ class CliRunnerTest {
         String csv = Files.readString(rawDir.resolve("artifact-fidelity-summary.csv"));
         assertTrue(csv.startsWith("exact_match,"));
         assertTrue(csv.contains("\ntrue,"));
+        String pomXml = Files.readString(output.resolve("sample").resolve("pom.xml"));
+        assertFalse(pomXml.contains("restore-byte-exact-artifact"));
+    }
+
+    @Test
+    void byteExactPackageMakesMavenPackageOutputByteExact() throws Exception {
+        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"),
+                "config.properties", "mode=raw-package\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--byte-exact-package",
+                "--no-decompile",
+                "--no-dependencies",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path projectDir = output.resolve("sample");
+        assertTrue(Files.exists(projectDir.resolve("target/raw-artifact/sample-1.0.jar")));
+        assertTrue(Files.readString(projectDir.resolve("pom.xml")).contains("restore-byte-exact-artifact"));
+        int packageExitCode = runMaven(projectDir, "package");
+        assertEquals(0, packageExitCode);
+        Path rebuilt = projectDir.resolve("target/sample-1.0.jar");
+        assertTrue(Files.exists(rebuilt));
+        ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(jar.toFile(), rebuilt.toFile());
+        assertTrue(fidelity.isExactMatch());
     }
 
     @Test
@@ -359,6 +391,7 @@ class CliRunnerTest {
         assertTrue(outputText.contains("--trace-args"));
         assertTrue(outputText.contains("--trace-timeout"));
         assertTrue(outputText.contains("--smoke-only"));
+        assertTrue(outputText.contains("--byte-exact-package"));
         assertTrue(outputText.contains("restoration-score.md"));
         assertTrue(outputText.contains("gap-summary.md"));
         assertTrue(outputText.contains("runtime-trace-report.md"));
@@ -451,6 +484,19 @@ class CliRunnerTest {
             out.closeEntry();
         }
         return jar;
+    }
+
+    private int runMaven(Path projectDir, String goal) throws Exception {
+        Process process = new ProcessBuilder("mvn", "-q", goal)
+                .directory(projectDir.toFile())
+                .redirectErrorStream(true)
+                .start();
+        try (java.io.InputStream in = process.getInputStream()) {
+            while (in.read() != -1) {
+                // Drain output so Maven cannot block on a full pipe.
+            }
+        }
+        return process.waitFor();
     }
 
     private Path createJar(String fileName, String classEntry, byte[] classBytes,

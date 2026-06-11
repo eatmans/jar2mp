@@ -74,6 +74,8 @@ Each sample is marked `PASS` when the overall score meets the sample threshold, 
 
 `STRICT_RELEASE_ASSETS=1` turns any remaining `GAP`, `RESTORE_FAILED`, or `DOWNLOAD_FAILED` row into a non-zero script exit. The default mode is exploratory and only fails when no sample reaches `PASS` or `PASS_WITH_WARNINGS`.
 
+Use `--byte-exact-package` for the strict byte-level restoration path. It preserves the raw artifact and wires the generated Maven project so `mvn package` emits a final JAR/WAR that is byte-identical to the input. Plain `--emit-raw-artifact` keeps the raw copy and reports exactness without changing the normal source-rebuild package output.
+
 ## Cached Ad-hoc Release Assets
 
 `scripts/regression/run-cached-adhoc-release-assets-regression.sh` replays the cached binary release assets under `target/adhoc-github-release-assets/assets/`. It does not download artifacts, so it is useful for refreshing stale ad-hoc reports after a source fix.

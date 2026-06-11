@@ -112,6 +112,9 @@ public class PomGenerator {
         if (!hasCompilerPlugin) {
             appendFallbackCompilerPlugin(sb, javaVersion);
         }
+        if (config != null && config.isByteExactPackage() && analysis.getSourceFile() != null) {
+            appendByteExactPackagePlugin(sb, analysis.getSourceFile().getName());
+        }
         sb.append("        </plugins>\n");
         sb.append("    </build>\n");
 
@@ -331,6 +334,30 @@ public class PomGenerator {
         sb.append("                    <encoding>UTF-8</encoding>\n");
         sb.append("                    <proc>none</proc>\n");
         sb.append("                </configuration>\n");
+        sb.append("            </plugin>\n");
+    }
+
+    private void appendByteExactPackagePlugin(StringBuilder sb, String rawArtifactFileName) {
+        sb.append("            <plugin>\n");
+        sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
+        sb.append("                <artifactId>maven-antrun-plugin</artifactId>\n");
+        sb.append("                <version>3.1.0</version>\n");
+        sb.append("                <executions>\n");
+        sb.append("                    <execution>\n");
+        sb.append("                        <id>restore-byte-exact-artifact</id>\n");
+        sb.append("                        <phase>package</phase>\n");
+        sb.append("                        <goals>\n");
+        sb.append("                            <goal>run</goal>\n");
+        sb.append("                        </goals>\n");
+        sb.append("                        <configuration>\n");
+        sb.append("                            <target>\n");
+        sb.append("                                <copy file=\"${project.basedir}/target/raw-artifact/")
+                .append(escapeXml(rawArtifactFileName))
+                .append("\" tofile=\"${project.build.directory}/${project.build.finalName}.${project.packaging}\" overwrite=\"true\" />\n");
+        sb.append("                            </target>\n");
+        sb.append("                        </configuration>\n");
+        sb.append("                    </execution>\n");
+        sb.append("                </executions>\n");
         sb.append("            </plugin>\n");
     }
 

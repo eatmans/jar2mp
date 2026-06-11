@@ -344,6 +344,10 @@ public class CliRunner {
                 case "--emit-raw-artifact":
                     options.getConfig().setEmitRawArtifact(true);
                     break;
+                case "--byte-exact-package":
+                    options.getConfig().setEmitRawArtifact(true);
+                    options.getConfig().setByteExactPackage(true);
+                    break;
                 case "--compare-artifact":
                     if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
                     options.setCompareArtifactFile(args[i]);
