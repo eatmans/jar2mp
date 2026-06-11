@@ -44,23 +44,21 @@ public class ZipRecordOrderRestorer {
         Map<String, Long> newOffsets = new LinkedHashMap<>();
         for (String name : original.entryOrder) {
             newOffsets.put(name, Long.valueOf(output.size()));
-            byte[] localRecord = rebuilt.localRecords.get(name).clone();
-            copyDosTimestamp(original.localRecords.get(name), 10, localRecord, 10);
-            copyExtraFieldIfSameLength(original.localRecords.get(name), localRecord, 26, 28, 30);
+            byte[] localRecord = selectRestoredLocalRecord(original, rebuilt, name);
             output.write(localRecord);
         }
 
         long centralDirectoryOffset = output.size();
         for (String name : original.entryOrder) {
-            byte[] centralRecord = rebuilt.centralRecords.get(name).clone();
-            copyDosTimestamp(original.centralRecords.get(name), 12, centralRecord, 12);
-            copyExtraFieldIfSameLength(original.centralRecords.get(name), centralRecord, 28, 30, 46);
+            byte[] centralRecord = selectRestoredCentralRecord(original, rebuilt, name);
             writeUInt32(centralRecord, 42, newOffsets.get(name).longValue());
             output.write(centralRecord);
         }
         long centralDirectorySize = output.size() - centralDirectoryOffset;
 
         byte[] eocd = rebuilt.endOfCentralDirectory.clone();
+        writeUInt16(eocd, 8, original.entryOrder.size());
+        writeUInt16(eocd, 10, original.entryOrder.size());
         writeUInt32(eocd, 12, centralDirectorySize);
         writeUInt32(eocd, 16, centralDirectoryOffset);
         output.write(eocd);
@@ -72,8 +70,16 @@ public class ZipRecordOrderRestorer {
     private void validateSameEntrySet(ZipLayout original, ZipLayout rebuilt) throws IOException {
         Set<String> originalNames = new HashSet<>(original.entryOrder);
         Set<String> rebuiltNames = new HashSet<>(rebuilt.entryOrder);
-        if (!originalNames.equals(rebuiltNames)) {
-            throw new IOException("Cannot restore ZIP entry order because entry sets differ.");
+        for (String name : originalNames) {
+            if (!rebuiltNames.contains(name) && !original.isEmptyDirectoryEntry(name)) {
+                throw new IOException("Cannot restore ZIP entry order because original entry is missing from rebuilt: "
+                        + name);
+            }
+        }
+        for (String name : rebuiltNames) {
+            if (!originalNames.contains(name) && !rebuilt.isEmptyDirectoryEntry(name)) {
+                throw new IOException("Cannot restore ZIP entry order because rebuilt has extra entry: " + name);
+            }
         }
     }
 
@@ -86,6 +92,26 @@ public class ZipRecordOrderRestorer {
         target[targetOffset + 1] = source[sourceOffset + 1];
         target[targetOffset + 2] = source[sourceOffset + 2];
         target[targetOffset + 3] = source[sourceOffset + 3];
+    }
+
+    private static byte[] selectRestoredLocalRecord(ZipLayout original, ZipLayout rebuilt, String name) {
+        if (!rebuilt.localRecords.containsKey(name)) {
+            return original.localRecords.get(name).clone();
+        }
+        byte[] localRecord = rebuilt.localRecords.get(name).clone();
+        copyDosTimestamp(original.localRecords.get(name), 10, localRecord, 10);
+        copyExtraFieldIfSameLength(original.localRecords.get(name), localRecord, 26, 28, 30);
+        return localRecord;
+    }
+
+    private static byte[] selectRestoredCentralRecord(ZipLayout original, ZipLayout rebuilt, String name) {
+        if (!rebuilt.centralRecords.containsKey(name)) {
+            return original.centralRecords.get(name).clone();
+        }
+        byte[] centralRecord = rebuilt.centralRecords.get(name).clone();
+        copyDosTimestamp(original.centralRecords.get(name), 12, centralRecord, 12);
+        copyExtraFieldIfSameLength(original.centralRecords.get(name), centralRecord, 28, 30, 46);
+        return centralRecord;
     }
 
     private static void copyExtraFieldIfSameLength(byte[] source, byte[] target, int nameLengthOffset,
@@ -110,6 +136,11 @@ public class ZipRecordOrderRestorer {
 
     private static int readUInt16(byte[] data, int offset) {
         return (data[offset] & 0xff) | ((data[offset + 1] & 0xff) << 8);
+    }
+
+    private static void writeUInt16(byte[] data, int offset, int value) {
+        data[offset] = (byte) (value & 0xff);
+        data[offset + 1] = (byte) ((value >>> 8) & 0xff);
     }
 
     private static void writeUInt32(byte[] data, int offset, long value) {
@@ -199,6 +230,14 @@ public class ZipRecordOrderRestorer {
                 }
                 localRecords.put(name, copy(bytes, (int) start, (int) end));
             }
+        }
+
+        private boolean isEmptyDirectoryEntry(String name) {
+            byte[] centralRecord = centralRecords.get(name);
+            return name.endsWith("/")
+                    && centralRecord != null
+                    && readUInt32(centralRecord, 20) == 0L
+                    && readUInt32(centralRecord, 24) == 0L;
         }
 
         private static int findEndOfCentralDirectory(byte[] data) throws IOException {

@@ -48,6 +48,21 @@ class ZipRecordOrderRestorerTest {
     }
 
     @Test
+    void restoresOriginalDirectoryEntrySetWhenOnlyEmptyDirectoriesDiffer() throws Exception {
+        TestEntry webInf = directory("WEB-INF/");
+        TestEntry webXml = entry("WEB-INF/web.xml", "<web-app/>");
+        TestEntry generatedMavenDir = directory("META-INF/maven/");
+        Path original = writeStoredZip("original.war", 0L, webInf, webXml);
+        Path rebuilt = writeStoredZip("rebuilt.war", 2000L, generatedMavenDir, webInf, webXml);
+
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+    }
+
+    @Test
     void rejectsArchivesWithDifferentEntrySets() throws Exception {
         Path original = writeStoredZip("original.jar", 0L, entry("first.txt", "one"));
         Path rebuilt = writeStoredZip("rebuilt.jar", 0L, entry("second.txt", "two"));
@@ -83,6 +98,10 @@ class ZipRecordOrderRestorerTest {
 
     private TestEntry entry(String name, String content) {
         return new TestEntry(name, content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private TestEntry directory(String name) {
+        return new TestEntry(name, new byte[0]);
     }
 
     private static class TestEntry {
