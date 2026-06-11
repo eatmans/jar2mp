@@ -308,6 +308,23 @@ class PomGeneratorTest {
     }
 
     @Test
+    void restoresOriginalResourceMetadataFromCleanSafeSourceDirectory() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getResourceFiles().add("META-INF/maven/com.example/demo/pom.xml");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<id>restore-original-resource-metadata</id>"));
+        assertTrue(pomXml.contains("${project.basedir}/src/main/resources"));
+        assertTrue(pomXml.contains("${project.build.outputDirectory}"));
+        assertTrue(pomXml.contains("preservelastmodified=\"true\""));
+    }
+
+    @Test
     void byteExactPackageAddsSkipPropertiesForStandaloneMavenPackage() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("com.example");
