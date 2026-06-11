@@ -100,6 +100,7 @@ Each sample is marked `PASS` only when:
 - jar2mp exits successfully.
 - `verification-report.md` reports `BUILD SUCCESS`, `Failure type: NONE`, and `Error count: 0`.
 - `target/raw-artifact/artifact-fidelity-summary.csv` reports `exact_match=true`.
+- The generated project runs `mvn package` successfully and the final packaged JAR/WAR reports `byte_exact_package_exact=true`.
 
 The script writes:
 

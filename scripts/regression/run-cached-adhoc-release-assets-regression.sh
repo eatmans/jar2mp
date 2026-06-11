@@ -10,6 +10,24 @@ JAR2MP_JAR="${JAR2MP_JAR:-${ROOT_DIR}/target/jar2mp-1.0-jar-with-dependencies.ja
 MVN="${MVN:-mvn}"
 BUILD_JAR2MP="${BUILD_JAR2MP:-1}"
 STRICT_CACHED_ADHOC_ASSETS="${STRICT_CACHED_ADHOC_ASSETS:-1}"
+RESTORED_PACKAGE_FLAGS=(
+  -q
+  -DskipTests
+  -Dmaven.test.skip=true
+  -Dcheckstyle.skip=true
+  -Dspring-javaformat.skip=true
+  -Dimpsort.skip=true
+  -Dformatter.skip=true
+  -Dspotless.check.skip=true
+  -Dspotless.apply.skip=true
+  -Dlicense.skip=true
+  -Drat.skip=true
+  -Denforcer.skip=true
+  -Djacoco.skip=true
+  -Dgit.commit.id.skip=true
+  -Dmaven.javadoc.skip=true
+  package
+)
 
 sample_names=()
 sample_assets=()
@@ -98,6 +116,16 @@ parse_raw_artifact_exact() {
   awk -F',' 'NR == 2 {print $1; exit}' "${csv}"
 }
 
+parse_artifact_summary_field() {
+  local csv="$1"
+  local column="$2"
+  local fallback="$3"
+  [[ -f "${csv}" ]] || { printf '%s' "${fallback}"; return; }
+  local value
+  value="$(awk -F',' -v column="${column}" 'NR == 2 { print $column; exit }' "${csv}" 2>/dev/null || true)"
+  printf '%s' "${value:-${fallback}}"
+}
+
 parse_decompile_failure_count() {
   local report="$1"
   if [[ ! -f "${report}" ]]; then
@@ -107,6 +135,25 @@ parse_decompile_failure_count() {
   else
     grep -c '^- Failed to decompile ' "${report}" || true
   fi
+}
+
+package_restored_project() {
+  local project_dir="$1"
+  local log_file="$2"
+  (cd "${project_dir}" && "${MVN}" "${RESTORED_PACKAGE_FLAGS[@]}") > "${log_file}" 2>&1
+}
+
+find_packaged_artifact() {
+  local project_dir="$1"
+  local original_artifact="$2"
+  local extension="${original_artifact##*.}"
+  find "${project_dir}/target" -maxdepth 1 -type f \
+    -name "*.${extension}" \
+    ! -name "*-sources.jar" \
+    ! -name "*-javadoc.jar" \
+    ! -name "original-*.jar" \
+    ! -name "original-*.war" \
+    | sort | head -n 1
 }
 
 write_sample_row() {
@@ -120,7 +167,9 @@ write_sample_row() {
   local compile_fallback_classes="$8"
   local decompile_failures="$9"
   local raw_artifact_exact="${10}"
-  local project_dir="${11}"
+  local byte_exact_package_status="${11}"
+  local byte_exact_package_exact="${12}"
+  local project_dir="${13}"
 
   {
     csv_field "${name}"; printf ','
@@ -134,12 +183,14 @@ write_sample_row() {
     csv_field "${compile_fallback_classes}"; printf ','
     csv_field "${decompile_failures}"; printf ','
     csv_field "${raw_artifact_exact}"; printf ','
+    csv_field "${byte_exact_package_status}"; printf ','
+    csv_field "${byte_exact_package_exact}"; printf ','
     csv_field "${project_dir:-missing}"; printf ','
     csv_field "${sample_notes[${index}]}"; printf '\n'
   } >> "${REPORT_DIR}/adhoc-github-release-assets-summary.csv"
 
   cat >> "${REPORT_DIR}/adhoc-github-release-assets-summary.md" <<MD
-| ${name} | ${run_status} | ${sample_assets[${index}]} | ${sample_types[${index}]} | ${exit_code} | ${verification_summary} | ${verification_failure_type} | ${verification_error_count} | ${compile_fallback_classes} | ${decompile_failures} | ${raw_artifact_exact} |
+| ${name} | ${run_status} | ${sample_assets[${index}]} | ${sample_types[${index}]} | ${exit_code} | ${verification_summary} | ${verification_failure_type} | ${verification_error_count} | ${compile_fallback_classes} | ${decompile_failures} | ${raw_artifact_exact} | ${byte_exact_package_status} | ${byte_exact_package_exact} |
 MD
 }
 
@@ -154,7 +205,7 @@ run_sample() {
   if [[ ! -s "${asset_path}" ]]; then
     log "Missing cached asset ${asset_path}"
     write_sample_row "${index}" "${name}" "MISSING_ASSET" "not-run" \
-      "not-run" "not-run" "not-run" "not-run" "not-run" "missing" "missing"
+      "not-run" "not-run" "not-run" "not-run" "not-run" "missing" "not-run" "missing" "missing"
     return
   fi
 
@@ -165,7 +216,7 @@ run_sample() {
   set +e
   java -jar "${JAR2MP_JAR}" \
     --verbose \
-    --emit-raw-artifact \
+    --byte-exact-package \
     --verify-build \
     --verify-goal compile \
     -f \
@@ -187,6 +238,8 @@ run_sample() {
   local compile_fallback_classes="missing"
   local decompile_failures="missing"
   local raw_artifact_exact="missing"
+  local byte_exact_package_status="not-run"
+  local byte_exact_package_exact="not-run"
   local run_status="RESTORE_FAILED"
 
   if [[ -n "${project_dir}" ]]; then
@@ -197,19 +250,45 @@ run_sample() {
     decompile_failures="$(parse_decompile_failure_count "${failures_report}")"
     raw_artifact_exact="$(parse_raw_artifact_exact "${raw_artifact_csv}")"
 
+    local packaged_artifact=""
+    if package_restored_project "${project_dir}" "${REPORT_DIR}/${name}.package.log"; then
+      byte_exact_package_status="PASS"
+      packaged_artifact="$(find_packaged_artifact "${project_dir}" "${asset_path}")"
+      if [[ -n "${packaged_artifact}" && -f "${packaged_artifact}" ]]; then
+        local compare_dir="${project_dir}/target/byte-exact-package-check"
+        if java -jar "${JAR2MP_JAR}" \
+          --compare-artifact "${packaged_artifact}" \
+          -q \
+          -o "${compare_dir}" \
+          "${asset_path}" > "${REPORT_DIR}/${name}.byte-exact-package.log" 2>&1; then
+          byte_exact_package_exact="$(parse_artifact_summary_field "${compare_dir}/artifact-fidelity-summary.csv" 1 "missing")"
+        else
+          byte_exact_package_exact="compare-failed"
+        fi
+      else
+        byte_exact_package_exact="package-missing"
+      fi
+    else
+      byte_exact_package_status="FAIL"
+      byte_exact_package_exact="package-failed"
+    fi
+
     run_status="VERIFY_FAILED"
     if [[ "${exit_code}" -eq 0 \
       && "${verification_summary}" == "BUILD SUCCESS" \
       && "${verification_failure_type}" == "NONE" \
       && "${verification_error_count}" == "0" \
-      && "${raw_artifact_exact}" == "true" ]]; then
+      && "${raw_artifact_exact}" == "true" \
+      && "${byte_exact_package_status}" == "PASS" \
+      && "${byte_exact_package_exact}" == "true" ]]; then
       run_status="PASS"
     fi
   fi
 
   write_sample_row "${index}" "${name}" "${run_status}" "${exit_code}" \
     "${verification_summary}" "${verification_failure_type}" "${verification_error_count}" \
-    "${compile_fallback_classes}" "${decompile_failures}" "${raw_artifact_exact}" "${project_dir:-missing}"
+    "${compile_fallback_classes}" "${decompile_failures}" "${raw_artifact_exact}" \
+    "${byte_exact_package_status}" "${byte_exact_package_exact}" "${project_dir:-missing}"
 }
 
 main() {
@@ -232,14 +311,14 @@ main() {
   write_file "${REPORT_DIR}/adhoc-github-release-assets-summary.md" <<'MD'
 # jar2mp Cached Ad-hoc GitHub Release Asset Regression Summary
 
-This matrix replays the cached binary assets under `target/adhoc-github-release-assets/assets/`. It does not download artifacts. `PASS` requires jar2mp exit code `0`, Maven verification `BUILD SUCCESS`, `Failure type: NONE`, `Error count: 0`, and raw artifact exact match `true`.
+This matrix replays the cached binary assets under `target/adhoc-github-release-assets/assets/`. It does not download artifacts. `PASS` requires jar2mp exit code `0`, Maven verification `BUILD SUCCESS`, `Failure type: NONE`, `Error count: 0`, raw artifact exact match `true`, and generated Maven `package` output exact match `true`.
 
-| Sample | Status | Asset | Artifact type | Exit code | Verification summary | Failure type | Error count | Compile fallback classes | Decompile failures | Raw exact |
-| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- |
+| Sample | Status | Asset | Artifact type | Exit code | Verification summary | Failure type | Error count | Compile fallback classes | Decompile failures | Raw exact | Byte-exact package | Byte-exact package exact |
+| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 MD
 
   write_file "${REPORT_DIR}/adhoc-github-release-assets-summary.csv" <<'CSV'
-sample,status,asset,artifact_type,exit_code,verification_summary,verification_failure_type,verification_error_count,compile_fallback_classes,decompile_failures,raw_artifact_exact,project_dir,note
+sample,status,asset,artifact_type,exit_code,verification_summary,verification_failure_type,verification_error_count,compile_fallback_classes,decompile_failures,raw_artifact_exact,byte_exact_package_status,byte_exact_package_exact,project_dir,note
 CSV
 
   local total="${#sample_names[@]}"
