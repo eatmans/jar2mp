@@ -51,3 +51,37 @@ The script writes:
 - restored jar2mp projects under `target/regression-samples/restored/`
 
 Do not commit the generated artifacts or reports. Commit the script and this documentation only.
+
+## Cached Ad-hoc Release Assets
+
+`scripts/regression/run-cached-adhoc-release-assets-regression.sh` replays the cached binary release assets under `target/adhoc-github-release-assets/assets/`. It does not download artifacts, so it is useful for refreshing stale ad-hoc reports after a source fix.
+
+Run:
+
+```bash
+./scripts/regression/run-cached-adhoc-release-assets-regression.sh
+```
+
+The fixed matrix expects these cached files:
+
+- `picocli-4.7.7.jar`
+- `picocli-codegen-4.7.7.jar`
+- `undertow-core-2.4.1.Final.jar`
+- `undertow-examples-2.4.1.Final.jar`
+- `jmx_prometheus_standalone-1.5.0.jar`
+- `opentelemetry-javaagent.jar`
+
+Each sample is marked `PASS` only when:
+
+- jar2mp exits successfully.
+- `verification-report.md` reports `BUILD SUCCESS`, `Failure type: NONE`, and `Error count: 0`.
+- `target/raw-artifact/artifact-fidelity-summary.csv` reports `exact_match=true`.
+
+The script writes:
+
+- `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.md`
+- `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.csv`
+- `target/adhoc-github-release-assets/report-current/*.cli.log`
+- restored jar2mp projects under `target/adhoc-github-release-assets/restored-current/`
+
+Set `STRICT_CACHED_ADHOC_ASSETS=0` to keep the script exploratory when some cached assets are missing or expected to fail. By default, any non-`PASS` sample exits non-zero.

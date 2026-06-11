@@ -8,6 +8,8 @@
 
 **Tech Stack:** Java 8-compatible production code, JUnit 5 tests, Maven, Bash regression scripts, ZIP/JAR APIs.
 
+**Progress sync (2026-06-11):** The artifact comparator, runtime launch classification, trace timeout classification, real-world regression columns, and current verification commands have landed. This plan being checked off means the evidence pipeline exists and passes the current compile/regression gates; it does not mean source-rebuilt artifacts are byte-identical.
+
 ---
 
 ### Task 1: Artifact Fidelity Comparator
@@ -18,7 +20,7 @@
 - Create: `src/main/java/com/z0fsec/jar2mp/core/ArtifactFidelityReportWriter.java`
 - Test: `src/test/java/com/z0fsec/jar2mp/core/ArtifactFidelityComparatorTest.java`
 
-- [ ] **Step 1: Write failing comparator tests**
+- [x] **Step 1: Write failing comparator tests**
 
 Add tests that create temporary ZIP/JAR files with:
 
@@ -54,7 +56,7 @@ reportsNestedLibraryVersionDrift()
 reportsManifestDifference()
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -64,7 +66,7 @@ mvn -q -Dtest=ArtifactFidelityComparatorTest test
 
 Expected: compilation fails because `ArtifactFidelityComparator` and `ArtifactFidelityResult` do not exist.
 
-- [ ] **Step 3: Implement result model**
+- [x] **Step 3: Implement result model**
 
 Create `ArtifactFidelityResult` with integer fields for:
 
@@ -94,7 +96,7 @@ sampleMissingEntries, sampleExtraEntries, sampleDifferentEntries
 
 Add `isExactMatch()` returning true only when `differentSha256`, `missingEntries`, and `extraEntries` are all zero.
 
-- [ ] **Step 4: Implement comparator**
+- [x] **Step 4: Implement comparator**
 
 Use `java.util.zip.ZipFile` or `java.util.jar.JarFile` to read non-directory entries, compute SHA-256 for each entry, classify entries using:
 
@@ -105,7 +107,7 @@ entry.endsWith(".jar") && (entry.startsWith("BOOT-INF/lib/") || entry.startsWith
 
 Treat all non-class, non-nested-lib entries as resources. Compare entry names exactly.
 
-- [ ] **Step 5: Implement Markdown/CSV report writer**
+- [x] **Step 5: Implement Markdown/CSV report writer**
 
 `ArtifactFidelityReportWriter.write(File outputDir, ArtifactFidelityResult result)` writes:
 
@@ -116,7 +118,7 @@ artifact-fidelity-summary.csv
 
 The Markdown must include exact-match status, entry counts, class diff counts, nested lib diff counts, manifest equality, and sample missing/extra/different entries.
 
-- [ ] **Step 6: Run focused and full tests**
+- [x] **Step 6: Run focused and full tests**
 
 Run:
 
@@ -127,7 +129,7 @@ mvn -q test
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/model/ArtifactFidelityResult.java \
@@ -148,7 +150,7 @@ git commit -m "feat: add artifact fidelity comparator"
 - Test: `src/test/java/com/z0fsec/jar2mp/core/RuntimeSmokeRunnerTest.java`
 - Test: `src/test/java/com/z0fsec/jar2mp/core/RuntimeTraceReportWriterTest.java`
 
-- [ ] **Step 1: Write failing planner tests**
+- [x] **Step 1: Write failing planner tests**
 
 Add tests named:
 
@@ -162,7 +164,7 @@ classifiesLibraryJarWithoutApplicationEntrypoint()
 
 Each test should build a minimal `JarAnalysisResult` with manifest and class/resource facts, call `new RuntimeLaunchPlanner().plan(file, analysis)`, and assert the expected enum value and reason.
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -172,7 +174,7 @@ mvn -q -Dtest=RuntimeLaunchPlannerTest test
 
 Expected: compilation fails because planner classes do not exist.
 
-- [ ] **Step 3: Implement launch plan model**
+- [x] **Step 3: Implement launch plan model**
 
 `RuntimeLaunchPlan` contains:
 
@@ -192,7 +194,7 @@ String reason;
 List<String> notes;
 ```
 
-- [ ] **Step 4: Implement planner**
+- [x] **Step 4: Implement planner**
 
 Rules:
 
@@ -206,7 +208,7 @@ no entrypoint and few/no application classes -> LIBRARY unsupported
 otherwise UNKNOWN unsupported
 ```
 
-- [ ] **Step 5: Wire planner into smoke runner**
+- [x] **Step 5: Wire planner into smoke runner**
 
 `RuntimeSmokeRunner.runSmoke` must ask the planner first. If unsupported, return a `SmokeRunResult` with:
 
@@ -218,7 +220,7 @@ supportStatus = plan.getSupportStatus().name()
 
 Supported plans continue to use current command construction.
 
-- [ ] **Step 6: Report launch classification**
+- [x] **Step 6: Report launch classification**
 
 Update `RuntimeTraceReportWriter` so `runtime-trace-report.md` includes:
 
@@ -228,7 +230,7 @@ Update `RuntimeTraceReportWriter` so `runtime-trace-report.md` includes:
 - Launch reason: `...`
 ```
 
-- [ ] **Step 7: Run focused and full tests**
+- [x] **Step 7: Run focused and full tests**
 
 Run:
 
@@ -239,7 +241,7 @@ mvn -q test
 
 Expected: all tests pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/model/RuntimeLaunchPlan.java \
@@ -260,7 +262,7 @@ git commit -m "feat: classify runtime launch support"
 - Test: `src/test/java/com/z0fsec/jar2mp/core/RuntimeSmokeRunnerTest.java`
 - Test: `src/test/java/com/z0fsec/jar2mp/core/RuntimeTraceReportWriterTest.java`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add a test proving timeout with at least one event is classified as trace-collected timeout:
 
@@ -276,7 +278,7 @@ Add a report writer test asserting the Markdown contains:
 - Run status: `TRACE_COLLECTED_TIMEOUT`
 ```
 
-- [ ] **Step 2: Run tests to verify RED**
+- [x] **Step 2: Run tests to verify RED**
 
 Run:
 
@@ -286,7 +288,7 @@ mvn -q -Dtest=RuntimeSmokeRunnerTest,RuntimeTraceReportWriterTest test
 
 Expected: tests fail because `runStatus` is not present.
 
-- [ ] **Step 3: Implement run status**
+- [x] **Step 3: Implement run status**
 
 Add `runStatus` to `SmokeRunResult` with values:
 
@@ -302,11 +304,11 @@ ERROR
 
 When a timeout occurs, read the trace file before final classification. If event count is greater than zero, use `TRACE_COLLECTED_TIMEOUT`; otherwise use `TIMEOUT_NO_EVENTS`.
 
-- [ ] **Step 4: Update report output**
+- [x] **Step 4: Update report output**
 
 Add run status to the run summary section. Keep existing exit code and failure message for compatibility.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -317,7 +319,7 @@ mvn -q test
 
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/main/java/com/z0fsec/jar2mp/core/RuntimeSmokeRunner.java \
@@ -334,7 +336,7 @@ git commit -m "fix: classify runtime trace timeouts"
 - Modify: `docs/github-realworld-regression.md`
 - Test: script execution
 
-- [ ] **Step 1: Add artifact fidelity summary generation**
+- [x] **Step 1: Add artifact fidelity summary generation**
 
 After each restored project is generated, package the restored project with the same skip flags used by `ProjectVerifier`:
 
@@ -344,7 +346,7 @@ mvn -q -DskipTests -Dmaven.test.skip=true -Dcheckstyle.skip=true -Dspring-javafo
 
 Then compare original and rebuilt artifact with the new comparator CLI entrypoint or a Java helper method exposed through the jar2mp CLI.
 
-- [ ] **Step 2: Add runtime probe classification columns**
+- [x] **Step 2: Add runtime probe classification columns**
 
 The summary CSV should keep compile gate columns and add:
 
@@ -352,11 +354,11 @@ The summary CSV should keep compile gate columns and add:
 runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes
 ```
 
-- [ ] **Step 3: Keep compile gate separate**
+- [x] **Step 3: Keep compile gate separate**
 
 The existing `status` column continues to mean compile gate PASS/FAIL only. Runtime and artifact fidelity are reported as evidence columns and should not fail the compile gate yet.
 
-- [ ] **Step 4: Update docs**
+- [x] **Step 4: Update docs**
 
 Document that:
 
@@ -364,7 +366,7 @@ Document that:
 - runtime support can be unsupported for library, thin JAR, and standard WAR samples
 - artifact fidelity is expected to show remaining diffs until raw-bytecode package mode exists
 
-- [ ] **Step 5: Run regression**
+- [x] **Step 5: Run regression**
 
 Run:
 
@@ -374,7 +376,7 @@ Run:
 
 Expected: 8 compile gate PASS rows, plus runtime/artifact columns populated.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/regression/run-github-realworld-regression.sh docs/github-realworld-regression.md
@@ -386,7 +388,7 @@ git commit -m "chore: report real-world fidelity evidence"
 **Files:**
 - No code edits unless verification exposes a bug.
 
-- [ ] **Step 1: Run diff check**
+- [x] **Step 1: Run diff check**
 
 ```bash
 git diff --check
@@ -394,7 +396,7 @@ git diff --check
 
 Expected: no whitespace errors.
 
-- [ ] **Step 2: Run unit tests**
+- [x] **Step 2: Run unit tests**
 
 ```bash
 mvn -q test
@@ -402,7 +404,7 @@ mvn -q test
 
 Expected: all tests pass.
 
-- [ ] **Step 3: Run local sample regression**
+- [x] **Step 3: Run local sample regression**
 
 ```bash
 ./scripts/regression/run-sample-regression.sh
@@ -410,7 +412,7 @@ Expected: all tests pass.
 
 Expected: all local samples PASS, or failures are documented with exact report paths.
 
-- [ ] **Step 4: Run GitHub real-world regression**
+- [x] **Step 4: Run GitHub real-world regression**
 
 ```bash
 ./scripts/regression/run-github-realworld-regression.sh
@@ -418,7 +420,7 @@ Expected: all local samples PASS, or failures are documented with exact report p
 
 Expected: compile gate remains `8/8 PASS`; runtime and artifact fidelity evidence columns are populated.
 
-- [ ] **Step 5: Summarize remaining gap**
+- [x] **Step 5: Summarize remaining gap**
 
 Use the generated summaries to report:
 

@@ -176,6 +176,14 @@ Options:
 
 汇总报告写入 `target/realworld-samples/report/github-realworld-summary.md` 和 `target/realworld-samples/report/github-realworld-summary.csv`。样本来源、固定 ref、阈值和已知非门禁候选见 `docs/github-realworld-regression.md`。
 
+对于已经下载到 `target/adhoc-github-release-assets/assets/` 的临时 GitHub Release 二进制样本，可以运行离线缓存矩阵来刷新当前源码的编译与 raw artifact 门禁结果：
+
+```bash
+./scripts/regression/run-cached-adhoc-release-assets-regression.sh
+```
+
+汇总报告写入 `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.md` 和 `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.csv`。固定缓存样本、PASS 规则和输出目录见 `docs/regression-samples.md`。
+
 能还原的主要内容：
 
 - Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标和部分构建元数据
