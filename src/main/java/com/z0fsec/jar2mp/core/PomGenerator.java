@@ -252,7 +252,7 @@ public class PomGenerator {
                     : plugin.getConfigurationXml();
             appendRawXml(sb, configurationXml, "                ");
         } else if (compilerPlugin) {
-            sb.append("                <configuration>\n");
+            sb.append("                <configuration combine.self=\"override\">\n");
             sb.append("                    <proc>none</proc>\n");
             sb.append("                </configuration>\n");
         }
@@ -273,8 +273,11 @@ public class PomGenerator {
         }
         String sanitized = xml.replaceAll("(?s)\\s*<arg>\\s*-Werror\\s*</arg>", "")
                 .replaceAll("(?s)\\s*<compilerArgument>\\s*-Werror\\s*</compilerArgument>", "")
+                .replaceAll("(?is)\\s*<arg>\\s*[^<]*error[-_ ]?prone[^<]*</arg>", "")
+                .replaceAll("(?is)\\s*<compilerArgument>\\s*[^<]*error[-_ ]?prone[^<]*</compilerArgument>", "")
                 .replaceAll("(?s)<failOnWarning>\\s*true\\s*</failOnWarning>",
                         "<failOnWarning>false</failOnWarning>");
+        sanitized = overrideCompilerConfigurationInheritance(sanitized);
         if (sanitized.matches("(?s).*<proc>.*?</proc>.*")) {
             return sanitized.replaceAll("(?s)<proc>.*?</proc>", "<proc>none</proc>");
         }
@@ -282,6 +285,11 @@ public class PomGenerator {
             return sanitized.replace("</configuration>", "  <proc>none</proc>\n</configuration>");
         }
         return sanitized;
+    }
+
+    private String overrideCompilerConfigurationInheritance(String xml) {
+        return xml.replaceAll("(?s)<configuration(?![^>]*\\bcombine\\.self\\s*=)([^>]*)>",
+                "<configuration combine.self=\"override\"$1>");
     }
 
     private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin) {
@@ -317,7 +325,7 @@ public class PomGenerator {
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>maven-compiler-plugin</artifactId>\n");
         sb.append("                <version>3.11.0</version>\n");
-        sb.append("                <configuration>\n");
+        sb.append("                <configuration combine.self=\"override\">\n");
         sb.append("                    <source>").append(javaVersion).append("</source>\n");
         sb.append("                    <target>").append(javaVersion).append("</target>\n");
         sb.append("                    <encoding>UTF-8</encoding>\n");

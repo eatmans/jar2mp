@@ -160,6 +160,7 @@ class PomGeneratorTest {
 
         assertFalse(pomXml.contains("<artifactId>groovy-maven-plugin</artifactId>"));
         assertTrue(pomXml.contains("<artifactId>maven-compiler-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<configuration combine.self=\"override\">"));
     }
 
     @Test
@@ -185,5 +186,33 @@ class PomGeneratorTest {
         assertFalse(pomXml.contains("<failOnWarning>true</failOnWarning>"));
         assertTrue(pomXml.contains("<arg>-Xlint:all</arg>"));
         assertTrue(pomXml.contains("<failOnWarning>false</failOnWarning>"));
+    }
+
+    @Test
+    void removesErrorProneCompilerPluginArgumentsFromRestoredPom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.google.googlejavaformat");
+        analysis.setDetectedArtifactId("google-java-format");
+        analysis.setDetectedVersion("1.35.0");
+        analysis.setJavaVersion(17);
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.setParentGroupId("com.google.googlejavaformat");
+        pomInfo.setParentArtifactId("google-java-format-parent");
+        pomInfo.setParentVersion("1.35.0");
+        BuildPluginInfo compilerPlugin = new BuildPluginInfo();
+        compilerPlugin.setGroupId("org.apache.maven.plugins");
+        compilerPlugin.setArtifactId("maven-compiler-plugin");
+        compilerPlugin.setVersion("3.9.0");
+        compilerPlugin.setConfigurationXml("<configuration><source>17</source><target>17</target><compilerArgs><arg>-Xplugin:ErrorProne</arg><arg>-Xlint:all</arg></compilerArgs></configuration>");
+        pomInfo.getBuildPlugins().add(compilerPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<configuration combine.self=\"override\">"));
+        assertFalse(pomXml.contains("-Xplugin:ErrorProne"));
+        assertTrue(pomXml.contains("<arg>-Xlint:all</arg>"));
+        assertTrue(pomXml.contains("<proc>none</proc>"));
     }
 }
