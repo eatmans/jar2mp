@@ -16,8 +16,12 @@ import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
+import java.util.zip.CRC32;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import javax.tools.ToolProvider;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -137,6 +141,28 @@ class CliRunnerTest {
         assertTrue(report.contains("# Artifact fidelity report"));
         assertTrue(report.contains("Exact match: false"));
         assertTrue(csv.contains("false,"));
+    }
+
+    @Test
+    void compareArtifactModeWritesArchiveOrderRestoredCandidate() throws Exception {
+        StoredEntry first = storedEntry("first.txt", "one");
+        StoredEntry second = storedEntry("second.txt", "two");
+        Path original = createStoredZip("original.jar", first, second);
+        Path rebuilt = createStoredZip("rebuilt.jar", second, first);
+        Path output = tempDir.resolve("compare-order");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--compare-artifact", rebuilt.toString(),
+                "-o", output.toString(),
+                original.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path restored = output.resolve("archive-order-restored").resolve("rebuilt.jar");
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+        String csv = Files.readString(output.resolve("archive-order-restored")
+                .resolve("artifact-fidelity-summary.csv"));
+        assertTrue(csv.contains("\ntrue,"));
     }
 
     @Test
@@ -613,6 +639,35 @@ class CliRunnerTest {
         return jar;
     }
 
+    private Path createStoredZip(String fileName, StoredEntry... entries) throws Exception {
+        Path jar = tempDir.resolve(fileName);
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(jar))) {
+            for (StoredEntry entry : entries) {
+                ZipEntry zipEntry = new ZipEntry(entry.name);
+                zipEntry.setMethod(ZipEntry.STORED);
+                zipEntry.setTime(0L);
+                zipEntry.setSize(entry.content.length);
+                zipEntry.setCompressedSize(entry.content.length);
+                zipEntry.setCrc(crc32(entry.content));
+                zipEntry.setExtra(new byte[0]);
+                out.putNextEntry(zipEntry);
+                out.write(entry.content);
+                out.closeEntry();
+            }
+        }
+        return jar;
+    }
+
+    private StoredEntry storedEntry(String name, String content) {
+        return new StoredEntry(name, content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private long crc32(byte[] content) {
+        CRC32 crc = new CRC32();
+        crc.update(content);
+        return crc.getValue();
+    }
+
     private byte[] minimalClassBytes(int majorVersion, String className) throws Exception {
         return minimalClassBytes(majorVersion, className, null);
     }
@@ -664,5 +719,15 @@ class CliRunnerTest {
             index += substring.length();
         }
         return count;
+    }
+
+    private static class StoredEntry {
+        private final String name;
+        private final byte[] content;
+
+        private StoredEntry(String name, byte[] content) {
+            this.name = name;
+            this.content = content;
+        }
     }
 }

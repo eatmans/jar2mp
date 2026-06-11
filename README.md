@@ -119,6 +119,7 @@ Options:
       --smoke-only                启用运行时追踪并跳过 Maven 验证
       --emit-raw-artifact         在 target/raw-artifact/ 生成原始归档的字节保真副本
       --byte-exact-package        让生成项目 mvn package 输出原始归档的字节级保真 artifact
+      --compare-artifact <file>   将输入原始归档与指定重建归档做字节保真度对比
   -f, --force                     覆盖已存在的输出目录
   -q, --quiet                     静默模式
       --verbose                   详细输出
@@ -151,6 +152,7 @@ Options:
 - `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证摘要
 - `verification-errors.md` - 启用 `--verify-build` 时解析出的逐文件编译错误明细
 - `decompile-failures.md` - 反编译失败条目和原始 class 退回位置
+- `artifact-fidelity-report.md` / `artifact-fidelity-summary.csv` - 启用 `--compare-artifact` 时的原始/重建 artifact 对比；如果内容一致但 ZIP entry 顺序不同，还会生成 `archive-order-restored/` 候选和对应保真报告
 - `target/byte-exact-package-check/artifact-fidelity-report.md` - 启用 `--byte-exact-package --verify-build` 且 package 生命周期运行时的最终产物保真报告
 
 当输入归档包含仅大小写不同的 class 路径时，jar2mp 不会把这些 class 展开到普通目录；它会生成 `target/compiler-fallback-classes.jar` 并在 `pom.xml` 中加入 system-scope 依赖，避免大小写不敏感文件系统破坏 Maven 编译类路径。

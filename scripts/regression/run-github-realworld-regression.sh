@@ -471,6 +471,7 @@ run_sample() {
   local artifact_archive_compressed_size_differences="not-run"
   local artifact_archive_extra_field_differences="not-run"
   local artifact_archive_comment_differences="not-run"
+  local artifact_archive_order_restored_exact="not-run"
   local raw_artifact_exact="not-run"
   local raw_artifact_diff_sha="not-run"
   local raw_artifact_missing="not-run"
@@ -549,6 +550,8 @@ run_sample() {
           artifact_archive_compressed_size_differences="$(parse_artifact_summary_field "${artifact_csv}" 38 "missing")"
           artifact_archive_extra_field_differences="$(parse_artifact_summary_field "${artifact_csv}" 39 "missing")"
           artifact_archive_comment_differences="$(parse_artifact_summary_field "${artifact_csv}" 40 "missing")"
+          artifact_archive_order_restored_exact="$(parse_artifact_summary_field \
+            "${project_dir}/archive-order-restored/artifact-fidelity-summary.csv" 1 "not-created")"
         else
           artifact_exact="compare-failed"
         fi
@@ -661,6 +664,7 @@ run_sample() {
     csv_field "${artifact_archive_compressed_size_differences}"; printf ','
     csv_field "${artifact_archive_extra_field_differences}"; printf ','
     csv_field "${artifact_archive_comment_differences}"; printf ','
+    csv_field "${artifact_archive_order_restored_exact}"; printf ','
     csv_field "${source_artifact_gate}"; printf ','
     csv_field "${raw_artifact_exact}"; printf ','
     csv_field "${raw_artifact_diff_sha}"; printf ','
@@ -679,7 +683,7 @@ run_sample() {
   } >> "${REPORT_DIR}/github-realworld-summary.csv"
 
   cat >> "${REPORT_DIR}/github-realworld-summary.md" <<MD
-| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${package_status} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${runtime_gate} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${artifact_content_entries_match} | ${artifact_archive_bytes_same} | ${artifact_archive_entry_order_same} | ${artifact_archive_metadata_diff_entries} | ${artifact_archive_timestamp_differences} | ${artifact_archive_compression_method_differences} | ${artifact_archive_compressed_size_differences} | ${artifact_archive_extra_field_differences} | ${artifact_archive_comment_differences} | ${source_artifact_gate} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${raw_artifact_gate} | ${byte_exact_verification_status} | ${byte_exact_verification_failure_type} | ${byte_exact_package_status} | ${byte_exact_package_exact} | ${byte_exact_package_gate} | ${threshold} |
+| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${package_status} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${runtime_gate} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${artifact_content_entries_match} | ${artifact_archive_bytes_same} | ${artifact_archive_entry_order_same} | ${artifact_archive_metadata_diff_entries} | ${artifact_archive_timestamp_differences} | ${artifact_archive_compression_method_differences} | ${artifact_archive_compressed_size_differences} | ${artifact_archive_extra_field_differences} | ${artifact_archive_comment_differences} | ${artifact_archive_order_restored_exact} | ${source_artifact_gate} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${raw_artifact_gate} | ${byte_exact_verification_status} | ${byte_exact_verification_failure_type} | ${byte_exact_package_status} | ${byte_exact_package_exact} | ${byte_exact_package_gate} | ${threshold} |
 MD
 }
 
@@ -693,15 +697,15 @@ main() {
   prepare_samples
 
   write_file "${REPORT_DIR}/github-realworld-summary.csv" <<'CSV'
-sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,package_status,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,runtime_gate,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,artifact_content_entries_match,artifact_archive_bytes_same,artifact_archive_entry_order_same,artifact_archive_metadata_diff_entries,artifact_archive_timestamp_differences,artifact_archive_compression_method_differences,artifact_archive_compressed_size_differences,artifact_archive_extra_field_differences,artifact_archive_comment_differences,source_artifact_gate,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,raw_artifact_gate,byte_exact_verification_status,byte_exact_verification_failure_type,byte_exact_package_status,byte_exact_package_exact,byte_exact_package_gate,threshold,java_home,note
+sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,package_status,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,runtime_gate,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,artifact_content_entries_match,artifact_archive_bytes_same,artifact_archive_entry_order_same,artifact_archive_metadata_diff_entries,artifact_archive_timestamp_differences,artifact_archive_compression_method_differences,artifact_archive_compressed_size_differences,artifact_archive_extra_field_differences,artifact_archive_comment_differences,artifact_archive_order_restored_exact,source_artifact_gate,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,raw_artifact_gate,byte_exact_verification_status,byte_exact_verification_failure_type,byte_exact_package_status,byte_exact_package_exact,byte_exact_package_gate,threshold,java_home,note
 CSV
   write_file "${REPORT_DIR}/github-realworld-summary.md" <<'MD'
 # jar2mp GitHub Real-World Regression Summary
 
 This is a compile/package-gate summary with runtime, source artifact, raw artifact, and byte-exact package evidence columns.
 
-| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Package | Runtime launch | Runtime support | Runtime status | Runtime events | Runtime gate | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Artifact content entries match | Artifact archive bytes same | Artifact archive order same | Artifact archive metadata diff entries | Artifact archive timestamp diffs | Artifact archive method diffs | Artifact archive compressed-size diffs | Artifact archive extra-field diffs | Artifact archive comment diffs | Source artifact gate | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Raw gate | Byte-exact verification | Byte-exact failure type | Byte-exact package | Byte-exact package exact | Byte-exact package gate | Threshold |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | ---: |
+| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Package | Runtime launch | Runtime support | Runtime status | Runtime events | Runtime gate | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Artifact content entries match | Artifact archive bytes same | Artifact archive order same | Artifact archive metadata diff entries | Artifact archive timestamp diffs | Artifact archive method diffs | Artifact archive compressed-size diffs | Artifact archive extra-field diffs | Artifact archive comment diffs | Artifact archive order-restored exact | Source artifact gate | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Raw gate | Byte-exact verification | Byte-exact failure type | Byte-exact package | Byte-exact package exact | Byte-exact package gate | Threshold |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | ---: |
 MD
 
   local i

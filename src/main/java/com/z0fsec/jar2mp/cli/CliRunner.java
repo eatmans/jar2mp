@@ -417,8 +417,12 @@ public class CliRunner {
                 ? new File(".")
                 : new File(options.getConfig().getOutputDir());
         try {
-            ArtifactFidelityResult result = new ArtifactFidelityComparator().compare(original, rebuilt);
-            new ArtifactFidelityReportWriter().write(outputDir, result);
+            ArtifactFidelityComparator comparator = new ArtifactFidelityComparator();
+            ArtifactFidelityReportWriter reportWriter = new ArtifactFidelityReportWriter();
+            ArtifactFidelityResult result = comparator.compare(original, rebuilt);
+            reportWriter.write(outputDir, result);
+            maybeWriteArchiveOrderRestoredCandidate(original, rebuilt, outputDir, result, comparator,
+                    reportWriter, options.isQuiet());
             if (!options.isQuiet()) {
                 System.out.println("Artifact fidelity exact match: " + result.isExactMatch());
                 System.out.println("Artifact fidelity report: "
@@ -430,6 +434,32 @@ public class CliRunner {
         } catch (IOException e) {
             System.err.println("Error: artifact fidelity compare failed: " + e.getMessage());
             return 2;
+        }
+    }
+
+    private void maybeWriteArchiveOrderRestoredCandidate(File original, File rebuilt, File outputDir,
+                                                         ArtifactFidelityResult result,
+                                                         ArtifactFidelityComparator comparator,
+                                                         ArtifactFidelityReportWriter reportWriter,
+                                                         boolean quiet) {
+        if (!result.isContentEntriesMatch()
+                || result.isArchiveBytesSame()
+                || result.isArchiveEntryOrderSame()) {
+            return;
+        }
+        File restoredDir = new File(outputDir, "archive-order-restored");
+        try {
+            File restored = new ZipRecordOrderRestorer().restore(original, rebuilt, restoredDir);
+            ArtifactFidelityResult restoredResult = comparator.compare(original, restored);
+            reportWriter.write(restoredDir, restoredResult);
+            if (!quiet) {
+                System.out.println("Archive-order restored artifact: " + restored.getAbsolutePath()
+                        + " (exact=" + restoredResult.isExactMatch() + ")");
+            }
+        } catch (IOException e) {
+            if (!quiet) {
+                System.err.println("Archive-order restoration skipped: " + e.getMessage());
+            }
         }
     }
 
