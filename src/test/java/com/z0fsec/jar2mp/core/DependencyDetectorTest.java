@@ -95,6 +95,48 @@ class DependencyDetectorTest {
     }
 
     @Test
+    void embeddedSpringBootThymeleafStarterSuppressesManagedTransitiveClassScanAdditions() throws Exception {
+        Path jarPath = tempDir.resolve("boot-thymeleaf.war");
+        try (JarOutputStream jar = new JarOutputStream(java.nio.file.Files.newOutputStream(jarPath))) {
+            addEntry(jar, "WEB-INF/classes/com/example/HomeController.class",
+                    classFileWithUtf8Constant(52, "org/thymeleaf/TemplateEngine"));
+            addEntry(jar, "WEB-INF/classes/com/example/Parser.class",
+                    classFileWithUtf8Constant(52, "org/attoparser/MarkupParser"));
+            addEntry(jar, "WEB-INF/classes/com/example/OgnlConfig.class",
+                    classFileWithUtf8Constant(52, "ognl/Ognl"));
+            addEntry(jar, "WEB-INF/classes/com/example/ProxyConfig.class",
+                    classFileWithUtf8Constant(52, "javassist/ClassPool"));
+        }
+
+        PackagePrefixDatabase packageDb = new PackagePrefixDatabase();
+        packageDb.load(new java.io.ByteArrayInputStream(
+                ("org.thymeleaf=org.thymeleaf:thymeleaf:3.1.2.RELEASE\n"
+                        + "org.attoparser=org.attoparser:attoparser:2.0.7.RELEASE\n"
+                        + "ognl=ognl:ognl:3.3.4\n"
+                        + "javassist=org.javassist:javassist:3.29.0-GA\n")
+                        .getBytes(StandardCharsets.UTF_8)));
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.setParentGroupId("org.springframework.boot");
+        pomInfo.setParentArtifactId("spring-boot-starter-parent");
+        pomInfo.setParentVersion("2.4.5");
+        pomInfo.getDependencies().add(new MavenDependency("org.springframework.boot",
+                "spring-boot-starter-thymeleaf", "unknown", MavenDependency.Confidence.HIGH));
+
+        DependencyDetector detector = new DependencyDetector(packageDb);
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            List<MavenDependency> dependencies = detector.detect(jarFile, null, pomInfo);
+
+            assertEquals(1, dependencies.size());
+            assertEquals("spring-boot-starter-thymeleaf", dependencies.get(0).getArtifactId());
+            assertFalse(dependencies.stream().anyMatch(dep -> "thymeleaf".equals(dep.getArtifactId())));
+            assertFalse(dependencies.stream().anyMatch(dep -> "attoparser".equals(dep.getArtifactId())));
+            assertFalse(dependencies.stream().anyMatch(dep -> "ognl".equals(dep.getArtifactId())));
+            assertFalse(dependencies.stream().anyMatch(dep -> "javassist".equals(dep.getArtifactId())));
+        }
+    }
+
+    @Test
     void manifestClasspathSkipsUnresolvableUnknownHints() throws Exception {
         Path jarPath = tempDir.resolve("security.jar");
         try (JarOutputStream jar = new JarOutputStream(java.nio.file.Files.newOutputStream(jarPath))) {
