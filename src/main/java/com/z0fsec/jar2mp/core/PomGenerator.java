@@ -52,6 +52,8 @@ public class PomGenerator {
         boolean originalSbomPresent = hasMetaInfPathPrefix(analysis, "META-INF/sbom/");
         String originalManifestPath = originalManifestPath(packaging,
                 originalManifestPresent && !isSpringBootExecutable(analysis));
+        String originalCreatedBy = originalCreatedBy(analysis,
+                originalManifestPresent && isSpringBootExecutable(analysis));
         boolean useOriginalWarLibraries = "war".equals(packaging)
                 && hasResourcePathPrefix(analysis, "WEB-INF/lib/")
                 && !isSpringBootExecutable(analysis);
@@ -142,8 +144,8 @@ public class PomGenerator {
                     hasArchiveDescriptorPlugin = true;
                 }
                 if (shouldAppendBuildPlugin(plugin, config != null && config.isByteExactPackage())) {
-                    appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalBuildInfoPresent,
-                            useOriginalWarLibraries);
+                    appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalCreatedBy,
+                            originalBuildInfoPresent, useOriginalWarLibraries);
                 }
             }
         }
@@ -151,7 +153,8 @@ public class PomGenerator {
             appendFallbackCompilerPlugin(sb, javaVersion);
         }
         if (!hasArchiveDescriptorPlugin) {
-            appendMavenDescriptorPlugin(sb, packaging, originalManifestPath, useOriginalWarLibraries);
+            appendMavenDescriptorPlugin(sb, packaging, originalManifestPath, originalCreatedBy,
+                    useOriginalWarLibraries);
         }
         if (byteExactArtifactFileName != null) {
             appendByteExactPackagePlugin(sb, byteExactArtifactFileName);
@@ -312,8 +315,8 @@ public class PomGenerator {
     }
 
     private void appendBuildPlugin(StringBuilder sb, BuildPluginInfo plugin, String packaging,
-                                   String originalManifestPath, boolean originalBuildInfoPresent,
-                                   boolean useOriginalWarLibraries) {
+                                   String originalManifestPath, String originalCreatedBy,
+                                   boolean originalBuildInfoPresent, boolean useOriginalWarLibraries) {
         sb.append("            <plugin>\n");
         if (plugin.getGroupId() != null) {
             appendElement(sb, "groupId", plugin.getGroupId(), "                ");
@@ -333,6 +336,7 @@ public class PomGenerator {
                 configurationXml = disableMavenDescriptor(configurationXml);
                 configurationXml = configureOriginalManifest(configurationXml, originalManifestPath,
                         "war".equals(packaging));
+                configurationXml = configureOriginalCreatedBy(configurationXml, originalCreatedBy);
                 if (useOriginalWarLibraries) {
                     configurationXml = configureOriginalWarLibraries(configurationXml);
                 }
@@ -343,8 +347,8 @@ public class PomGenerator {
             sb.append("                    <proc>none</proc>\n");
             sb.append("                </configuration>\n");
         } else if (archiveDescriptorPlugin) {
-            appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, useOriginalWarLibraries,
-                    "                ");
+            appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, originalCreatedBy,
+                    useOriginalWarLibraries, "                ");
         }
         if (!plugin.getExecutionsXml().isEmpty()) {
             sb.append("                <executions>\n");
@@ -442,19 +446,20 @@ public class PomGenerator {
     }
 
     private void appendMavenDescriptorPlugin(StringBuilder sb, String packaging, String originalManifestPath,
-                                             boolean useOriginalWarLibraries) {
+                                             String originalCreatedBy, boolean useOriginalWarLibraries) {
         boolean war = "war".equals(packaging);
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>").append(war ? "maven-war-plugin" : "maven-jar-plugin")
                 .append("</artifactId>\n");
-        appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, useOriginalWarLibraries,
-                "                ");
+        appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, originalCreatedBy,
+                useOriginalWarLibraries, "                ");
         sb.append("            </plugin>\n");
     }
 
     private void appendMavenDescriptorConfiguration(StringBuilder sb, String packaging,
-                                                    String originalManifestPath, boolean useOriginalWarLibraries,
+                                                    String originalManifestPath, String originalCreatedBy,
+                                                    boolean useOriginalWarLibraries,
                                                     String indent) {
         sb.append(indent).append("<configuration>\n");
         if ("war".equals(packaging)) {
@@ -466,6 +471,11 @@ public class PomGenerator {
             sb.append(indent).append("    </webResources>\n");
         }
         sb.append(indent).append("    <archive>\n");
+        if (originalCreatedBy != null) {
+            sb.append(indent).append("        <manifestEntries>\n");
+            appendElement(sb, "Created-By", originalCreatedBy, indent + "            ");
+            sb.append(indent).append("        </manifestEntries>\n");
+        }
         if (originalManifestPath != null) {
             if ("war".equals(packaging)) {
                 sb.append(indent).append("        <manifest>\n");
@@ -530,6 +540,38 @@ public class PomGenerator {
             return configurationXml.replace("</configuration>",
                     "  <archive>\n"
                             + "    " + manifestElement + "\n"
+                            + "  </archive>\n"
+                            + "</configuration>");
+        }
+        return configurationXml;
+    }
+
+    private String configureOriginalCreatedBy(String configurationXml, String originalCreatedBy) {
+        if (configurationXml == null || originalCreatedBy == null) {
+            return configurationXml;
+        }
+        String createdByElement = "<Created-By>" + escapeXml(originalCreatedBy) + "</Created-By>";
+        if (configurationXml.matches("(?s).*<Created-By>.*?</Created-By>.*")) {
+            return configurationXml.replaceAll("(?s)<Created-By>.*?</Created-By>",
+                    Matcher.quoteReplacement(createdByElement));
+        }
+        if (configurationXml.contains("</manifestEntries>")) {
+            return configurationXml.replace("</manifestEntries>",
+                    "  " + createdByElement + "\n</manifestEntries>");
+        }
+        if (configurationXml.contains("</archive>")) {
+            return configurationXml.replace("</archive>",
+                    "  <manifestEntries>\n"
+                            + "    " + createdByElement + "\n"
+                            + "  </manifestEntries>\n"
+                            + "</archive>");
+        }
+        if (configurationXml.contains("</configuration>")) {
+            return configurationXml.replace("</configuration>",
+                    "  <archive>\n"
+                            + "    <manifestEntries>\n"
+                            + "      " + createdByElement + "\n"
+                            + "    </manifestEntries>\n"
                             + "  </archive>\n"
                             + "</configuration>");
         }
@@ -658,6 +700,18 @@ public class PomGenerator {
         }
         String resourceRoot = "war".equals(packaging) ? "webapp" : "resources";
         return "${project.basedir}/src/main/" + resourceRoot + "/META-INF/MANIFEST.MF";
+    }
+
+    private String originalCreatedBy(JarAnalysisResult analysis, boolean originalManifestPresent) {
+        if (!originalManifestPresent || analysis == null || analysis.getManifestInfo() == null) {
+            return null;
+        }
+        String createdBy = analysis.getManifestInfo().getCreatedBy();
+        if (!hasKnownValue(createdBy)) {
+            return null;
+        }
+        String trimmed = createdBy.trim();
+        return trimmed.startsWith("Apache Maven ") ? trimmed : null;
     }
 
     private void appendByteExactPackagePlugin(StringBuilder sb, String rawArtifactFileName) {

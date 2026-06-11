@@ -192,6 +192,49 @@ class PomGeneratorTest {
     }
 
     @Test
+    void preservesSpringBootExecutableManifestCreatedByEntry() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.JarLauncher");
+        manifestInfo.setCreatedBy("Apache Maven 3.6.0");
+        manifestInfo.addEntry("Spring-Boot-Classes", "BOOT-INF/classes/");
+        analysis.setManifestInfo(manifestInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<manifestFile>"));
+        assertTrue(pomXml.contains("<manifestEntries>"));
+        assertTrue(pomXml.contains("<Created-By>Apache Maven 3.6.0</Created-By>"));
+    }
+
+    @Test
+    void doesNotOverrideSpringBootExecutableModernJarPluginCreatedByEntry() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.launch.JarLauncher");
+        manifestInfo.setCreatedBy("Maven JAR Plugin 3.4.2");
+        manifestInfo.addEntry("Spring-Boot-Classes", "BOOT-INF/classes/");
+        analysis.setManifestInfo(manifestInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<manifestEntries>"));
+        assertFalse(pomXml.contains("<Created-By>"));
+    }
+
+    @Test
     void replacesExistingManifestFileWithoutRegexExpansion() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setWar(false);
