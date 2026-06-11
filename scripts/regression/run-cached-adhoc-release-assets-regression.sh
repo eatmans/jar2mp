@@ -10,24 +10,6 @@ JAR2MP_JAR="${JAR2MP_JAR:-${ROOT_DIR}/target/jar2mp-1.0-jar-with-dependencies.ja
 MVN="${MVN:-mvn}"
 BUILD_JAR2MP="${BUILD_JAR2MP:-1}"
 STRICT_CACHED_ADHOC_ASSETS="${STRICT_CACHED_ADHOC_ASSETS:-1}"
-RESTORED_PACKAGE_FLAGS=(
-  -q
-  -DskipTests
-  -Dmaven.test.skip=true
-  -Dcheckstyle.skip=true
-  -Dspring-javaformat.skip=true
-  -Dimpsort.skip=true
-  -Dformatter.skip=true
-  -Dspotless.check.skip=true
-  -Dspotless.apply.skip=true
-  -Dlicense.skip=true
-  -Drat.skip=true
-  -Denforcer.skip=true
-  -Djacoco.skip=true
-  -Dgit.commit.id.skip=true
-  -Dmaven.javadoc.skip=true
-  package
-)
 
 sample_names=()
 sample_assets=()
@@ -140,7 +122,7 @@ parse_decompile_failure_count() {
 package_restored_project() {
   local project_dir="$1"
   local log_file="$2"
-  (cd "${project_dir}" && "${MVN}" "${RESTORED_PACKAGE_FLAGS[@]}") > "${log_file}" 2>&1
+  (cd "${project_dir}" && "${MVN}" -q package) > "${log_file}" 2>&1
 }
 
 find_packaged_artifact() {
