@@ -740,7 +740,7 @@ public class PomGenerator {
         sb.append("                        </goals>\n");
         sb.append("                        <configuration>\n");
         sb.append("                            <target>\n");
-        sb.append("                                <copy todir=\"${project.build.outputDirectory}\" overwrite=\"true\">\n");
+        sb.append("                                <copy todir=\"${project.build.outputDirectory}\" overwrite=\"true\" preservelastmodified=\"true\">\n");
         sb.append("                                    <fileset dir=\"${project.basedir}/src/main/original-classes\" />\n");
         sb.append("                                </copy>\n");
         sb.append("                            </target>\n");

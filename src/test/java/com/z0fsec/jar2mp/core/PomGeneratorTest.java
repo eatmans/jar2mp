@@ -304,6 +304,7 @@ class PomGeneratorTest {
         assertTrue(pomXml.contains("<phase>process-classes</phase>"));
         assertTrue(pomXml.contains("${project.basedir}/src/main/original-classes"));
         assertTrue(pomXml.contains("${project.build.outputDirectory}"));
+        assertTrue(pomXml.contains("preservelastmodified=\"true\""));
     }
 
     @Test

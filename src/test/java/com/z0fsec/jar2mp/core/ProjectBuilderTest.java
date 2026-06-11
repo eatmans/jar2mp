@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.stream.Stream;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -380,6 +381,29 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void preservesOriginalEntryTimestampsForCleanSafeClassAndResourceCopies() throws Exception {
+        long originalTime = 1_700_000_000_000L;
+        byte[] classBytes = minimalClassBytes(52);
+        Path jar = tempDir.resolve("timestamped.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "BOOT-INF/classes/demo/App.class", classBytes, originalTime);
+            addEntry(out, "BOOT-INF/classes/application.yml", "server:\n  port: 0\n", originalTime);
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("timestamped-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertEquals(FileTime.fromMillis(originalTime),
+                Files.getLastModifiedTime(outputDir.resolve("target/raw-classes/demo/App.class")));
+        assertEquals(FileTime.fromMillis(originalTime),
+                Files.getLastModifiedTime(outputDir.resolve("src/main/original-classes/demo/App.class")));
+        assertEquals(FileTime.fromMillis(originalTime),
+                Files.getLastModifiedTime(outputDir.resolve("src/main/resources/application.yml")));
+    }
+
+    @Test
     void storesCaseInsensitiveClassCollisionsInCompilerFallbackJar() throws Exception {
         byte[] upperBytes = TestClassCompiler.compile("demo.C", "package demo; public class C {}\n");
         byte[] lowerBytes = TestClassCompiler.compile("demo.c", "package demo; public class c {}\n");
@@ -493,8 +517,20 @@ class ProjectBuilderTest {
         addEntry(out, name, content.getBytes(StandardCharsets.UTF_8));
     }
 
+    private void addEntry(JarOutputStream out, String name, String content, long timeMillis) throws Exception {
+        addEntry(out, name, content.getBytes(StandardCharsets.UTF_8), timeMillis);
+    }
+
     private void addEntry(JarOutputStream out, String name, byte[] bytes) throws Exception {
-        out.putNextEntry(new JarEntry(name));
+        addEntry(out, name, bytes, -1L);
+    }
+
+    private void addEntry(JarOutputStream out, String name, byte[] bytes, long timeMillis) throws Exception {
+        JarEntry entry = new JarEntry(name);
+        if (timeMillis >= 0L) {
+            entry.setTime(timeMillis);
+        }
+        out.putNextEntry(entry);
         out.write(bytes);
         out.closeEntry();
     }

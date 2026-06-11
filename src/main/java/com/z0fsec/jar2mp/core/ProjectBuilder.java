@@ -5,6 +5,7 @@ import com.z0fsec.jar2mp.util.IoUtils;
 
 import java.io.*;
 import java.nio.file.*;
+import java.nio.file.attribute.FileTime;
 import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -134,7 +135,8 @@ public class ProjectBuilder {
                                     + "case-only distinct class paths as separate files.");
                     try (InputStream is = jf.getInputStream(entry)) {
                         retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
-                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, true);
+                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, true,
+                                entry.getTime());
                     }
                     if (finding.hasRetainedClassPath()) {
                         decompileFindings.add(finding);
@@ -160,7 +162,8 @@ public class ProjectBuilder {
                             "Decompiled source was skipped because the JVM class name cannot be emitted as Java source.");
                     try (InputStream is = jf.getInputStream(entry)) {
                         retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
-                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
+                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false,
+                                entry.getTime());
                     }
                     if (finding.hasRetainedClassPath()) {
                         decompileFindings.add(finding);
@@ -176,7 +179,8 @@ public class ProjectBuilder {
                                     + "classes for compile stability.");
                     try (InputStream is = jf.getInputStream(entry)) {
                         retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
-                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
+                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false,
+                                entry.getTime());
                     }
                     if (finding.hasRetainedClassPath()) {
                         decompileFindings.add(finding);
@@ -193,7 +197,8 @@ public class ProjectBuilder {
                                 "Decompiled source was skipped because Kotlin bytecode is not reliably emitted as "
                                         + "compilable Java source.");
                         retainRawClassForFallback(rawClassBytes, classPath, targetOriginalClasses,
-                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
+                                srcMainResources, outputDir, finding, compilerFallbackJarEntries, false,
+                                entry.getTime());
                         if (finding.hasRetainedClassPath()) {
                             decompileFindings.add(finding);
                         }
@@ -229,7 +234,8 @@ public class ProjectBuilder {
                                         + "members of the source type.");
                         try (InputStream is = jf.getInputStream(entry)) {
                             retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
-                                    srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
+                                    srcMainResources, outputDir, finding, compilerFallbackJarEntries, false,
+                                    entry.getTime());
                         }
                         if (finding.hasRetainedClassPath()) {
                             decompileFindings.add(finding);
@@ -249,6 +255,7 @@ public class ProjectBuilder {
                     if (!shouldDecompile()) {
                         IoUtils.ensureDirectory(outputFile.getParentFile());
                         Files.copy(is, outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                        preserveLastModified(outputFile.toPath(), entry);
                     } else {
                         byte[] bytes = readAllBytes(is);
                         String className = classPath.replace('/', '.').replace(".class", "");
@@ -275,7 +282,8 @@ public class ProjectBuilder {
                                         "Decompiled source was skipped because javac cannot resolve retained inner "
                                                 + "classes as members of the source type.");
                                 retainRawClassForFallback(bytes, classPath, targetOriginalClasses,
-                                        srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
+                                        srcMainResources, outputDir, finding, compilerFallbackJarEntries, false,
+                                        entry.getTime());
                                 if (finding.hasRetainedClassPath()) {
                                     decompileFindings.add(finding);
                                 }
@@ -286,7 +294,8 @@ public class ProjectBuilder {
                             decompileFindings.add(finding);
                         } else {
                             retainRawClassForFallback(bytes, classPath, targetOriginalClasses,
-                                    srcMainResources, outputDir, finding, compilerFallbackJarEntries, false);
+                                    srcMainResources, outputDir, finding, compilerFallbackJarEntries, false,
+                                    entry.getTime());
                             if (finding.hasRetainedClassPath()) {
                                 decompileFindings.add(finding);
                             }
@@ -481,6 +490,7 @@ public class ProjectBuilder {
         try (InputStream input = jarFile.getInputStream(entry)) {
             Files.copy(input, rawClassFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
         }
+        preserveLastModified(rawClassFile.toPath(), entry);
     }
 
     private byte[] readRawClassBytes(JarFile jarFile, JarEntry entry) throws IOException {
@@ -604,7 +614,7 @@ public class ProjectBuilder {
             finding.setFallbackReason("inner class is not emitted as standalone source");
             finding.setMessage("Inner or anonymous class was not confidently represented in the outer source.");
             retainRawClassForFallback(bytes, classPath, targetOriginalClasses, srcMainResources, outputDir, finding,
-                    compilerFallbackJarEntries, false);
+                    compilerFallbackJarEntries, false, entry.getTime());
             decompileFindings.add(finding);
         }
     }
@@ -616,7 +626,8 @@ public class ProjectBuilder {
                                            File outputDir,
                                            DecompileFinding finding,
                                            Map<String, byte[]> compilerFallbackJarEntries,
-                                           boolean compilerJarOnly) throws IOException {
+                                           boolean compilerJarOnly,
+                                           long originalTime) throws IOException {
         if (compilerJarOnly) {
             compilerFallbackJarEntries.put(classPath, bytes);
             finding.setRetainedClassPath("target/compiler-fallback-classes.jar!/" + classPath);
@@ -629,6 +640,7 @@ public class ProjectBuilder {
         if (retainedClassFile != null) {
             IoUtils.ensureDirectory(retainedClassFile.getParentFile());
             Files.write(retainedClassFile.toPath(), bytes);
+            preserveLastModified(retainedClassFile.toPath(), originalTime);
             finding.setRetainedClassPath(relativize(outputDir, retainedClassFile));
         }
 
@@ -636,6 +648,7 @@ public class ProjectBuilder {
         if (compilerFallbackClassFile != null) {
             IoUtils.ensureDirectory(compilerFallbackClassFile.getParentFile());
             Files.write(compilerFallbackClassFile.toPath(), bytes);
+            preserveLastModified(compilerFallbackClassFile.toPath(), originalTime);
             finding.setMessage(appendNote(finding.getMessage(),
                     "Raw class copied to `"
                             + relativize(outputDir, compilerFallbackClassFile)
@@ -785,6 +798,7 @@ public class ProjectBuilder {
         IoUtils.ensureDirectory(outputPath.getParent().toFile());
         try (InputStream is = jarFile.getInputStream(entry)) {
             Files.copy(is, outputPath, StandardCopyOption.REPLACE_EXISTING);
+            preserveLastModified(outputPath, entry);
         } catch (Exception e) {
             return CopyResult.failed("Copy failed: " + e.getMessage());
         }
@@ -830,6 +844,20 @@ public class ProjectBuilder {
             return addition;
         }
         return existing.trim() + " " + addition;
+    }
+
+    private void preserveLastModified(Path outputPath, JarEntry entry) throws IOException {
+        if (outputPath == null || entry == null || entry.getTime() < 0L) {
+            return;
+        }
+        preserveLastModified(outputPath, entry.getTime());
+    }
+
+    private void preserveLastModified(Path outputPath, long timeMillis) throws IOException {
+        if (outputPath == null || timeMillis < 0L) {
+            return;
+        }
+        Files.setLastModifiedTime(outputPath, FileTime.fromMillis(timeMillis));
     }
 
     private static class CopyResult {
