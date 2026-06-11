@@ -52,6 +52,9 @@ public class PomGenerator {
         boolean originalSbomPresent = hasMetaInfPathPrefix(analysis, "META-INF/sbom/");
         String originalManifestPath = originalManifestPath(packaging,
                 originalManifestPresent && !isSpringBootExecutable(analysis));
+        boolean useOriginalWarLibraries = "war".equals(packaging)
+                && hasResourcePathPrefix(analysis, "WEB-INF/lib/")
+                && !isSpringBootExecutable(analysis);
 
         // Properties
         int javaVersion = config.getJavaVersion() > 0 ? config.getJavaVersion() : analysis.getJavaVersion();
@@ -86,7 +89,7 @@ public class PomGenerator {
             sb.append("    <dependencyManagement>\n");
             sb.append("        <dependencies>\n");
             for (MavenDependency dep : embeddedPom.getDependencyManagement()) {
-                appendDependency(sb, dep, "            ");
+                appendDependency(sb, dep, "            ", false);
             }
             sb.append("        </dependencies>\n");
             sb.append("    </dependencyManagement>\n\n");
@@ -105,7 +108,7 @@ public class PomGenerator {
         if (!included.isEmpty()) {
             sb.append("    <dependencies>\n");
             for (MavenDependency dep : included) {
-                appendDependency(sb, dep, "        ");
+                appendDependency(sb, dep, "        ", useOriginalWarLibraries);
             }
             sb.append("    </dependencies>\n\n");
         }
@@ -139,7 +142,8 @@ public class PomGenerator {
                     hasArchiveDescriptorPlugin = true;
                 }
                 if (shouldAppendBuildPlugin(plugin, config != null && config.isByteExactPackage())) {
-                    appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalBuildInfoPresent);
+                    appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalBuildInfoPresent,
+                            useOriginalWarLibraries);
                 }
             }
         }
@@ -147,7 +151,7 @@ public class PomGenerator {
             appendFallbackCompilerPlugin(sb, javaVersion);
         }
         if (!hasArchiveDescriptorPlugin) {
-            appendMavenDescriptorPlugin(sb, packaging, originalManifestPath);
+            appendMavenDescriptorPlugin(sb, packaging, originalManifestPath, useOriginalWarLibraries);
         }
         if (byteExactArtifactFileName != null) {
             appendByteExactPackagePlugin(sb, byteExactArtifactFileName);
@@ -257,7 +261,8 @@ public class PomGenerator {
                 && projectVersion.toUpperCase().contains("SNAPSHOT");
     }
 
-    private void appendDependency(StringBuilder sb, MavenDependency dep, String indent) {
+    private void appendDependency(StringBuilder sb, MavenDependency dep, String indent,
+                                  boolean useOriginalWarLibraries) {
         sb.append(indent).append("<dependency>\n");
         appendElement(sb, "groupId", dep.getGroupId(), indent + "    ");
         appendElement(sb, "artifactId", dep.getArtifactId(), indent + "    ");
@@ -267,10 +272,22 @@ public class PomGenerator {
         if (dep.getType() != null && !"jar".equals(dep.getType())) {
             appendElement(sb, "type", dep.getType(), indent + "    ");
         }
-        if (dep.getScope() != null && !"compile".equals(dep.getScope())) {
-            appendElement(sb, "scope", dep.getScope(), indent + "    ");
+        String scope = dependencyScope(dep, useOriginalWarLibraries);
+        if (scope != null && !"compile".equals(scope)) {
+            appendElement(sb, "scope", scope, indent + "    ");
         }
         sb.append(indent).append("</dependency>\n");
+    }
+
+    private String dependencyScope(MavenDependency dep, boolean useOriginalWarLibraries) {
+        String scope = dep.getScope();
+        if (!useOriginalWarLibraries) {
+            return scope;
+        }
+        if (scope == null || "compile".equals(scope) || "runtime".equals(scope)) {
+            return "provided";
+        }
+        return scope;
     }
 
     private void appendRepositories(StringBuilder sb, String containerName, String entryName,
@@ -295,7 +312,8 @@ public class PomGenerator {
     }
 
     private void appendBuildPlugin(StringBuilder sb, BuildPluginInfo plugin, String packaging,
-                                   String originalManifestPath, boolean originalBuildInfoPresent) {
+                                   String originalManifestPath, boolean originalBuildInfoPresent,
+                                   boolean useOriginalWarLibraries) {
         sb.append("            <plugin>\n");
         if (plugin.getGroupId() != null) {
             appendElement(sb, "groupId", plugin.getGroupId(), "                ");
@@ -315,6 +333,9 @@ public class PomGenerator {
                 configurationXml = disableMavenDescriptor(configurationXml);
                 configurationXml = configureOriginalManifest(configurationXml, originalManifestPath,
                         "war".equals(packaging));
+                if (useOriginalWarLibraries) {
+                    configurationXml = configureOriginalWarLibraries(configurationXml);
+                }
             }
             appendRawXml(sb, configurationXml, "                ");
         } else if (compilerPlugin) {
@@ -322,7 +343,8 @@ public class PomGenerator {
             sb.append("                    <proc>none</proc>\n");
             sb.append("                </configuration>\n");
         } else if (archiveDescriptorPlugin) {
-            appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, "                ");
+            appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, useOriginalWarLibraries,
+                    "                ");
         }
         if (!plugin.getExecutionsXml().isEmpty()) {
             sb.append("                <executions>\n");
@@ -419,21 +441,29 @@ public class PomGenerator {
         sb.append("            </plugin>\n");
     }
 
-    private void appendMavenDescriptorPlugin(StringBuilder sb, String packaging, String originalManifestPath) {
+    private void appendMavenDescriptorPlugin(StringBuilder sb, String packaging, String originalManifestPath,
+                                             boolean useOriginalWarLibraries) {
         boolean war = "war".equals(packaging);
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>").append(war ? "maven-war-plugin" : "maven-jar-plugin")
                 .append("</artifactId>\n");
-        appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, "                ");
+        appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, useOriginalWarLibraries,
+                "                ");
         sb.append("            </plugin>\n");
     }
 
     private void appendMavenDescriptorConfiguration(StringBuilder sb, String packaging,
-                                                    String originalManifestPath, String indent) {
+                                                    String originalManifestPath, boolean useOriginalWarLibraries,
+                                                    String indent) {
         sb.append(indent).append("<configuration>\n");
         if ("war".equals(packaging)) {
             sb.append(indent).append("    <failOnMissingWebXml>false</failOnMissingWebXml>\n");
+        }
+        if (useOriginalWarLibraries) {
+            sb.append(indent).append("    <webResources>\n");
+            appendOriginalWarLibraryWebResource(sb, indent + "        ");
+            sb.append(indent).append("    </webResources>\n");
         }
         sb.append(indent).append("    <archive>\n");
         if (originalManifestPath != null) {
@@ -506,6 +536,39 @@ public class PomGenerator {
         return configurationXml;
     }
 
+    private String configureOriginalWarLibraries(String configurationXml) {
+        if (configurationXml == null
+                || configurationXml.contains("${project.basedir}/src/main/original-libs/WEB-INF/lib")) {
+            return configurationXml;
+        }
+        String webResource = originalWarLibraryWebResource("  ");
+        if (configurationXml.contains("</webResources>")) {
+            return configurationXml.replace("</webResources>", webResource + "</webResources>");
+        }
+        if (configurationXml.contains("</configuration>")) {
+            return configurationXml.replace("</configuration>",
+                    "  <webResources>\n"
+                            + webResource
+                            + "  </webResources>\n"
+                            + "</configuration>");
+        }
+        return configurationXml;
+    }
+
+    private void appendOriginalWarLibraryWebResource(StringBuilder sb, String indent) {
+        sb.append(originalWarLibraryWebResource(indent));
+    }
+
+    private String originalWarLibraryWebResource(String indent) {
+        return indent + "<resource>\n"
+                + indent + "    <directory>${project.basedir}/src/main/original-libs/WEB-INF/lib</directory>\n"
+                + indent + "    <targetPath>WEB-INF/lib</targetPath>\n"
+                + indent + "    <includes>\n"
+                + indent + "        <include>*.jar</include>\n"
+                + indent + "    </includes>\n"
+                + indent + "</resource>\n";
+    }
+
     private String disableDefaultManifestEntries(String configurationXml) {
         String defaultEntriesElement = "<addDefaultEntries>false</addDefaultEntries>";
         if (configurationXml.matches("(?s).*<addDefaultEntries>.*?</addDefaultEntries>.*")) {
@@ -570,6 +633,12 @@ public class PomGenerator {
         return analysis != null
                 && prefix != null
                 && analysis.getMetaInfFiles().stream().anyMatch(path -> path.startsWith(prefix));
+    }
+
+    private boolean hasResourcePathPrefix(JarAnalysisResult analysis, String prefix) {
+        return analysis != null
+                && prefix != null
+                && analysis.getResourceFiles().stream().anyMatch(path -> path.startsWith(prefix));
     }
 
     private String projectName(JarAnalysisResult analysis) {

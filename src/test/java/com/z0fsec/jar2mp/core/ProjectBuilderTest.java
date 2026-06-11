@@ -63,6 +63,8 @@ class ProjectBuilderTest {
         assertFalse(Files.exists(outputDir.resolve("src/main/webapp/WEB-INF/lib/embedded.jar")));
         assertEquals("library-bytes",
                 Files.readString(outputDir.resolve("target/original-libs/WEB-INF/lib/embedded.jar")));
+        assertEquals("library-bytes",
+                Files.readString(outputDir.resolve("src/main/original-libs/WEB-INF/lib/embedded.jar")));
         String runbook = Files.readString(outputDir.resolve("RUNBOOK.md"));
         assertTrue(runbook.contains("target/original-libs/WEB-INF/lib/embedded.jar"));
         assertTrue(runbook.contains("not added to the generated Maven classpath"));

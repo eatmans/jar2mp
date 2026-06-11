@@ -236,6 +236,7 @@ Options:
 │       ├── main/
 │       │   ├── java/          ← 反编译后的 .java 文件（保留包结构）
 │       │   ├── resources/     ← 非类文件资源 + META-INF/services
+│       │   ├── original-libs/  ← 普通 WAR clean package 时回填原始 WEB-INF/lib
 │       │   └── webapp/        ← WAR 根资源与 WEB-INF 相关资源
 │       └── test/
 │           ├── java/

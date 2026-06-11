@@ -62,6 +62,7 @@ public class ProjectBuilder {
         File targetOriginalClasses = new File(outputDir, "target/original-classes");
         File targetRawClasses = new File(outputDir, "target/raw-classes");
         File targetOriginalLibs = new File(outputDir, "target/original-libs");
+        File srcMainOriginalLibs = new File(outputDir, "src/main/original-libs");
         File compilerFallbackJar = new File(outputDir, "target/compiler-fallback-classes.jar");
         File srcTestJava = new File(outputDir, "src/test/java");
         File srcTestResources = new File(outputDir, "src/test/resources");
@@ -326,6 +327,10 @@ public class ProjectBuilder {
                     if (isNestedLibrary(resourcePath)) {
                         CopyResult copyResult = copyJarEntry(jf, resourcePath, targetOriginalLibs,
                                 resourcePath, copiedResourceOutputs, false);
+                        if (copyResult.isCopied() && analysis.isWar() && resourcePath.startsWith(WEB_LIB_PREFIX)) {
+                            copyJarEntry(jf, resourcePath, srcMainOriginalLibs, resourcePath,
+                                    copiedResourceOutputs, false);
+                        }
                         recordResourceCopyResult(analysis, resourcePath, copyResult, true);
                         continue;
                     }

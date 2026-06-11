@@ -118,6 +118,26 @@ class PomGeneratorTest {
     }
 
     @Test
+    void regularWarPackagesOriginalNestedLibrariesFromCleanSafeSourceDirectory() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getResourceFiles().add("WEB-INF/lib/original-lib-1.0.0.jar");
+        analysis.getDetectedDependencies().add(new MavenDependency(
+                "com.example", "original-lib", "1.0.0", MavenDependency.Confidence.HIGH));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<scope>provided</scope>"));
+        assertTrue(pomXml.contains(
+                "<directory>${project.basedir}/src/main/original-libs/WEB-INF/lib</directory>"));
+        assertTrue(pomXml.contains("<targetPath>WEB-INF/lib</targetPath>"));
+    }
+
+    @Test
     void usesOriginalJarManifestWhenPresent() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setWar(false);
