@@ -151,6 +151,7 @@ Options:
 - `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证摘要
 - `verification-errors.md` - 启用 `--verify-build` 时解析出的逐文件编译错误明细
 - `decompile-failures.md` - 反编译失败条目和原始 class 退回位置
+- `target/byte-exact-package-check/artifact-fidelity-report.md` - 启用 `--byte-exact-package --verify-build` 且 package 生命周期运行时的最终产物保真报告
 
 当输入归档包含仅大小写不同的 class 路径时，jar2mp 不会把这些 class 展开到普通目录；它会生成 `target/compiler-fallback-classes.jar` 并在 `pom.xml` 中加入 system-scope 依赖，避免大小写不敏感文件系统破坏 Maven 编译类路径。
 
@@ -188,7 +189,7 @@ Options:
 
 汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven package 验证、raw artifact exact 与 byte-exact package 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警或源码分数未满分。
 
-严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、加入 package 阶段覆盖步骤、写入常见测试/质量插件的 skip properties，并省略会改写 package 产物的 shade/assembly/repackage 插件，使恢复项目执行 `mvn package` 后的最终 JAR/WAR 与原始归档字节级一致。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`；显式 `--verify-goal` 仍可覆盖。普通 `--emit-raw-artifact` 只保留原始副本，不改变 `mvn package` 的源码重构产物，便于继续观察 source rebuild fidelity 差异。
+严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、加入 package 阶段覆盖步骤、写入常见测试/质量插件的 skip properties，并省略会改写 package 产物的 shade/assembly/repackage 插件，使恢复项目执行 `mvn package` 后的最终 JAR/WAR 与原始归档字节级一致。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。普通 `--emit-raw-artifact` 只保留原始副本，不改变 `mvn package` 的源码重构产物，便于继续观察 source rebuild fidelity 差异。
 
 对于已经下载到 `target/adhoc-github-release-assets/assets/` 的临时 GitHub Release 二进制样本，可以运行离线缓存矩阵来刷新当前源码的编译、raw artifact 与 byte-exact package 门禁结果：
 
@@ -226,9 +227,10 @@ Options:
 │   ├── RUNBOOK.md
 │   ├── verification-report.md
 │   ├── verification-errors.md
-│   └── decompile-failures.md
+│   ├── decompile-failures.md
 │   ├── target/
 │   │   ├── original-classes/   ← 反编译失败时保留的原始 class
+│   │   ├── byte-exact-package-check/  ← byte-exact package 保真报告
 │   │   └── compiler-fallback-classes.jar  ← 大小写冲突 class 的编译 fallback jar
 │   └── src/
 │       ├── main/

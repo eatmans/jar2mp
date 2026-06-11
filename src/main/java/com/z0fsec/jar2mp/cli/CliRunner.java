@@ -175,6 +175,21 @@ public class CliRunner {
                             failedCount++;
                             continue;
                         }
+                        if (config.isByteExactPackage() && runsPackagePhase(config.getVerifyGoal())) {
+                            ArtifactFidelityResult packageFidelity = verifyByteExactPackage(
+                                    jarFile,
+                                    outputDir,
+                                    artifactFidelityComparator,
+                                    artifactFidelityReportWriter);
+                            if (!options.isQuiet()) {
+                                System.out.println("  字节级 package 保真: exact="
+                                        + packageFidelity.isExactMatch());
+                            }
+                            if (!packageFidelity.isExactMatch()) {
+                                failedCount++;
+                                continue;
+                            }
+                        }
                     }
 
                     if (!options.isQuiet()) {
@@ -542,6 +557,67 @@ public class CliRunner {
         return verification.getExitCode() != 0 || !"NONE".equals(verification.getFailureType());
     }
 
+    private boolean runsPackagePhase(String goal) {
+        String effectiveGoal = goal == null || goal.trim().isEmpty() ? "compile" : goal.trim();
+        for (String part : effectiveGoal.split("\\s+")) {
+            if ("package".equals(part)
+                    || "verify".equals(part)
+                    || "install".equals(part)
+                    || "deploy".equals(part)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private ArtifactFidelityResult verifyByteExactPackage(File originalArtifact,
+                                                          File outputDir,
+                                                          ArtifactFidelityComparator comparator,
+                                                          ArtifactFidelityReportWriter reportWriter) throws IOException {
+        File packagedArtifact = findPackagedArtifact(outputDir, originalArtifact);
+        if (packagedArtifact == null) {
+            throw new IOException("byte-exact package artifact not found under "
+                    + new File(outputDir, "target").getAbsolutePath());
+        }
+        ArtifactFidelityResult fidelity = comparator.compare(originalArtifact, packagedArtifact);
+        File reportDir = new File(new File(outputDir, "target"), "byte-exact-package-check");
+        reportWriter.write(reportDir, fidelity);
+        return fidelity;
+    }
+
+    private File findPackagedArtifact(File outputDir, File originalArtifact) {
+        File targetDir = new File(outputDir, "target");
+        if (!targetDir.isDirectory()) {
+            return null;
+        }
+        String extension = artifactExtension(originalArtifact);
+        File[] candidates = targetDir.listFiles(file -> file.isFile()
+                && file.getName().toLowerCase(Locale.ROOT).endsWith("." + extension)
+                && !isNonPrimaryArtifact(file.getName()));
+        if (candidates == null || candidates.length == 0) {
+            return null;
+        }
+        Arrays.sort(candidates, Comparator.comparing(File::getName));
+        return candidates[0];
+    }
+
+    private String artifactExtension(File artifact) {
+        String name = artifact == null ? "" : artifact.getName();
+        int index = name.lastIndexOf('.');
+        if (index < 0 || index == name.length() - 1) {
+            return "jar";
+        }
+        return name.substring(index + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private boolean isNonPrimaryArtifact(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith("-sources.jar")
+                || lower.endsWith("-javadoc.jar")
+                || lower.equals("compiler-fallback-classes.jar")
+                || lower.startsWith("original-");
+    }
+
     private Path resolveTraceFile(ProjectConfig config, File outputDir) {
         String configured = config.getTraceFile();
         if (configured != null && !configured.trim().isEmpty()) {
@@ -644,6 +720,12 @@ public class CliRunner {
         if (includeVerification && config.isVerifyBuild()) {
             System.out.println("    " + new File(outputDir, "verification-report.md").getAbsolutePath());
             System.out.println("    " + new File(outputDir, "verification-errors.md").getAbsolutePath());
+        }
+        File byteExactPackageReport = new File(outputDir, "target/byte-exact-package-check/artifact-fidelity-report.md");
+        if (byteExactPackageReport.isFile()) {
+            System.out.println("    " + byteExactPackageReport.getAbsolutePath());
+            System.out.println("    " + new File(outputDir,
+                    "target/byte-exact-package-check/artifact-fidelity-summary.csv").getAbsolutePath());
         }
     }
 

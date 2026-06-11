@@ -81,7 +81,7 @@ public class CliOptions {
         System.out.println("  启用 --trace-runtime 后额外生成 runtime-trace-report.md。");
         System.out.println("  启用 --emit-raw-artifact 后额外生成 target/raw-artifact/artifact-fidelity-summary.csv。");
         System.out.println("  启用 --byte-exact-package 后，mvn package 的最终产物会被 raw artifact 覆盖为字节级一致。");
-        System.out.println("  --byte-exact-package 与 --verify-build 一起使用时默认验证 package；显式 --verify-goal 可覆盖。");
+        System.out.println("  --byte-exact-package 与 --verify-build 一起使用时默认验证 package，并生成 target/byte-exact-package-check/ 保真报告；显式 --verify-goal 可覆盖。");
         System.out.println("  启用 --compare-artifact 后额外生成 artifact-fidelity-report.md 和 artifact-fidelity-summary.csv。");
         System.out.println();
         System.out.println("Examples:");

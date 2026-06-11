@@ -240,6 +240,30 @@ class CliRunnerTest {
     }
 
     @Test
+    void byteExactPackageVerifyBuildWritesExactPackageReport() throws Exception {
+        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"),
+                "config.properties", "mode=verify-package-exact\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--byte-exact-package",
+                "--no-decompile",
+                "--no-dependencies",
+                "--verify-build",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path fidelityDir = output.resolve("sample").resolve("target/byte-exact-package-check");
+        assertTrue(Files.exists(fidelityDir.resolve("artifact-fidelity-report.md")));
+        String csv = Files.readString(fidelityDir.resolve("artifact-fidelity-summary.csv"));
+        assertTrue(csv.startsWith("exact_match,"));
+        assertTrue(csv.contains("\ntrue,"));
+    }
+
+    @Test
     void explicitVerifyGoalOverridesByteExactPackageDefault() throws Exception {
         Path jar = createJar("sample-1.0.jar", "com/example/App.class",
                 minimalClassBytes(52, "com/example/App"),
@@ -259,6 +283,8 @@ class CliRunnerTest {
         assertEquals(0, exitCode);
         String report = Files.readString(output.resolve("sample").resolve("verification-report.md"));
         assertTrue(report.contains("validate"));
+        assertFalse(Files.exists(output.resolve("sample")
+                .resolve("target/byte-exact-package-check/artifact-fidelity-summary.csv")));
     }
 
     @Test
@@ -463,6 +489,7 @@ class CliRunnerTest {
         assertTrue(outputText.contains("--trace-timeout"));
         assertTrue(outputText.contains("--smoke-only"));
         assertTrue(outputText.contains("--byte-exact-package"));
+        assertTrue(outputText.contains("target/byte-exact-package-check"));
         assertTrue(outputText.contains("restoration-score.md"));
         assertTrue(outputText.contains("gap-summary.md"));
         assertTrue(outputText.contains("runtime-trace-report.md"));
