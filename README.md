@@ -178,7 +178,7 @@ Options:
 ./scripts/regression/run-github-realworld-regression.sh
 ```
 
-汇总报告写入 `target/realworld-samples/report/github-realworld-summary.md` 和 `target/realworld-samples/report/github-realworld-summary.csv`。样本来源、固定 ref、阈值和已知非门禁候选见 `docs/github-realworld-regression.md`。
+汇总报告写入 `target/realworld-samples/report/github-realworld-summary.md` 和 `target/realworld-samples/report/github-realworld-summary.csv`。realworld 矩阵会分别记录 source rebuild artifact fidelity、raw artifact exact 和 byte-exact package 门禁；样本来源、固定 ref、阈值和已知非门禁候选见 `docs/github-realworld-regression.md`。
 
 也可以运行下载型 GitHub Release 二进制样本矩阵，脚本会下载固定 release asset 并验证还原项目的编译门禁与 raw artifact 保真：
 

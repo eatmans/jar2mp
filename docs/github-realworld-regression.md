@@ -1,6 +1,6 @@
 # GitHub Real-World Regression Set
 
-`scripts/regression/run-github-realworld-regression.sh` downloads real Java projects from GitHub, builds their published artifact shape, runs jar2mp, and writes a compile-gate summary with runtime and artifact-fidelity evidence. Outputs live under `target/realworld-samples/` and are not committed.
+`scripts/regression/run-github-realworld-regression.sh` downloads real Java projects from GitHub, builds their published artifact shape, runs jar2mp, and writes a compile/package-gate summary with runtime, source artifact-fidelity, raw artifact, and byte-exact package evidence. Outputs live under `target/realworld-samples/` and are not committed.
 
 jar2mp uses multi-engine decompiler arbitration for these samples. CFR and JD-Core run in-process, JADX participates when the `jadx` command is available on `PATH` or `JADX_BIN`, and Fernflower remains as an additional fallback engine. JD-GUI itself is an interactive GUI; JD-Core is the automated engine from the same Java Decompiler family.
 
@@ -40,16 +40,18 @@ Each pass-gate sample is marked `PASS` only when:
 - `decompile-failures.md` reports zero failed decompilations.
 - The restored project can be packaged with the regression skip flags.
 - The raw preserved artifact under `target/raw-artifact/` compares as exact.
+- A separate `--byte-exact-package --verify-build` restoration reports `BUILD SUCCESS`, `Failure type: NONE`, and its final packaged JAR/WAR compares as exact.
 - Supported runtime launches either exit cleanly or collect startup trace events before timeout.
 
 Runtime and artifact evidence are reported as separate gate columns. Long-running web applications that collect trace events but do not exit before the timeout are marked `PASS_WITH_WARNINGS` with runtime gate `WARN_STARTED_TIMEOUT`; rebuilt source-package byte differences are also warning-level evidence, not proof of byte-identical source recompilation. Library JARs, thin JARs without a runnable manifest, and standard WARs can report `UNSUPPORTED` launch support with runtime gate `SKIPPED_UNSUPPORTED`.
 
-The script now records two artifact-fidelity tracks:
+The script now records three artifact-fidelity tracks:
 
 - `artifact_*` columns compare the original artifact with the Maven package produced from the restored source project. These are expected to remain imperfect until source recompilation can reproduce compiler output and packaging metadata.
 - `raw_artifact_*` columns compare the original artifact with `target/raw-artifact/<original-name>`, a byte-for-byte preserved copy emitted by `--emit-raw-artifact`. These columns prove jar2mp can retain an exact raw artifact alongside the source restoration without claiming that the source rebuild is byte-identical.
+- `byte_exact_*` columns run a separate `--byte-exact-package --verify-build` restoration and compare its final Maven `package` output against the original artifact. This is the strict package-level byte equality gate.
 
-For strict byte-level package restoration, run jar2mp with `--byte-exact-package`. That mode implies `--emit-raw-artifact`, uses the original artifact base name as Maven `finalName`, adds common test and quality plugin skip properties, omits package-transforming shade/assembly/repackage plugins, and wires the generated Maven `package` phase to overwrite the final JAR/WAR with the preserved raw artifact. When combined with `--verify-build`, its default verification goal is `package` unless `--verify-goal` is set explicitly. Keep this separate from source-rebuild fidelity: `--byte-exact-package` proves the restored Maven project can emit an exact artifact, while the default `artifact_*` comparison remains useful for measuring how close recompilation from decompiled sources is.
+For strict byte-level package restoration, run jar2mp with `--byte-exact-package`. That mode implies `--emit-raw-artifact`, uses the original artifact base name as Maven `finalName`, adds common test and quality plugin skip properties, omits package-transforming shade/assembly/repackage plugins, and wires the generated Maven `package` phase to overwrite the final JAR/WAR with the preserved raw artifact. When combined with `--verify-build`, its default verification goal is `package` unless `--verify-goal` is set explicitly. The realworld script runs this mode separately from the normal source-rebuild package check so `byte_exact_*` proves strict package-level restoration while `artifact_*` continues to measure how close recompilation from decompiled sources is.
 
 After jar2mp verification, the script still packages the restored project with skip flags for tests, checkstyle, formatting, license, enforcer, jacoco, git metadata, and javadocs. It compares that rebuilt artifact separately from the raw artifact. Source-package artifact exact match is non-gating; raw artifact exactness is evidence that a 1:1 preservation path exists.
 
@@ -76,8 +78,11 @@ The script writes:
 - `target/realworld-samples/report/*.cli.log`
 - `target/realworld-samples/report/*.package.log`
 - `target/realworld-samples/report/*.artifact-fidelity.log`
+- `target/realworld-samples/report/*.byte-exact.cli.log`
+- `target/realworld-samples/report/*.byte-exact-package.log`
 - downloaded repositories under `target/realworld-samples/repos/`
 - restored jar2mp projects under `target/realworld-samples/restored/`
+- byte-exact restored jar2mp projects under `target/realworld-samples/restored/<sample>-byte-exact/`
 - per-project raw artifact fidelity under `target/realworld-samples/restored/<sample>/<artifactId>/target/raw-artifact/`
 
 Do not commit generated artifacts or reports. Commit the script and this documentation only.
