@@ -71,6 +71,31 @@ class ProjectVerifierTest {
     }
 
     @Test
+    void continuesRawClassFallbackPastTwentyCompilerRounds() throws Exception {
+        Path projectDir = createProjectWithMaxCompilerErrors(1);
+        for (int i = 0; i < 21; i++) {
+            String className = String.format("demo.Broken%02d", i);
+            Path sourceFile = projectDir.resolve("src/main/java/demo/Broken" + String.format("%02d", i) + ".java");
+            Files.write(sourceFile,
+                    ("package demo;\npublic class Broken" + String.format("%02d", i)
+                            + " { public void broken() { missingSymbol; } }\n")
+                            .getBytes(StandardCharsets.UTF_8));
+            compileRawClass(projectDir.resolve("target/raw-classes"),
+                    className,
+                    "package demo;\npublic class Broken" + String.format("%02d", i)
+                            + " { public String run() { return \"ok\"; } }\n");
+        }
+
+        VerificationResult result = new ProjectVerifier().verify(projectDir.toFile(), "compile");
+
+        assertEquals(0, result.getExitCode());
+        assertEquals("NONE", result.getFailureType());
+        assertEquals(21, result.getCompileFallbackClassPaths().size());
+        assertFalse(Files.exists(projectDir.resolve("src/main/java/demo/Broken20.java")));
+        assertTrue(Files.exists(projectDir.resolve("src/main/resources/demo/Broken20.class")));
+    }
+
+    @Test
     void writesVerificationReport() throws Exception {
         Path projectDir = createProject("public class App { public String run() { return \"ok\"; } }");
 
@@ -99,6 +124,14 @@ class ProjectVerifierTest {
         Files.write(projectDir.resolve("pom.xml"), pomXml().getBytes(StandardCharsets.UTF_8));
         Files.write(sourceDir.resolve("App.java"),
                 ("package demo;\n" + javaSource + "\n").getBytes(StandardCharsets.UTF_8));
+        return projectDir;
+    }
+
+    private Path createProjectWithMaxCompilerErrors(int maxErrors) throws Exception {
+        Path projectDir = tempDir.resolve("project-" + System.nanoTime());
+        Files.createDirectories(projectDir.resolve("src/main/java/demo"));
+        Files.write(projectDir.resolve("pom.xml"),
+                pomXmlWithMaxCompilerErrors(maxErrors).getBytes(StandardCharsets.UTF_8));
         return projectDir;
     }
 
@@ -141,6 +174,37 @@ class ProjectVerifierTest {
                 "    <maven.compiler.source>8</maven.compiler.source>\n" +
                 "    <maven.compiler.target>8</maven.compiler.target>\n" +
                 "  </properties>\n" +
+                "</project>\n";
+    }
+
+    private String pomXmlWithMaxCompilerErrors(int maxErrors) {
+        return "<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\n" +
+                "         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n" +
+                "         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 " +
+                "https://maven.apache.org/xsd/maven-4.0.0.xsd\">\n" +
+                "  <modelVersion>4.0.0</modelVersion>\n" +
+                "  <groupId>demo</groupId>\n" +
+                "  <artifactId>verified-project</artifactId>\n" +
+                "  <version>1.0.0</version>\n" +
+                "  <properties>\n" +
+                "    <maven.compiler.source>8</maven.compiler.source>\n" +
+                "    <maven.compiler.target>8</maven.compiler.target>\n" +
+                "  </properties>\n" +
+                "  <build>\n" +
+                "    <plugins>\n" +
+                "      <plugin>\n" +
+                "        <groupId>org.apache.maven.plugins</groupId>\n" +
+                "        <artifactId>maven-compiler-plugin</artifactId>\n" +
+                "        <version>3.11.0</version>\n" +
+                "        <configuration>\n" +
+                "          <compilerArgs>\n" +
+                "            <arg>-Xmaxerrs</arg>\n" +
+                "            <arg>" + maxErrors + "</arg>\n" +
+                "          </compilerArgs>\n" +
+                "        </configuration>\n" +
+                "      </plugin>\n" +
+                "    </plugins>\n" +
+                "  </build>\n" +
                 "</project>\n";
     }
 }

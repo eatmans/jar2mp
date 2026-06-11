@@ -24,7 +24,7 @@ public class ProjectVerifier {
 
     private static final int MAX_CAPTURE_BYTES = 20 * 1024;
     private static final long TIMEOUT_SECONDS = 120;
-    private static final int MAX_COMPILE_FALLBACK_ROUNDS = 20;
+    private static final int MAX_COMPILE_FALLBACK_ROUNDS = 100;
     private final VerificationErrorParser errorParser = new VerificationErrorParser();
 
     public VerificationResult verify(File projectDir, String goal) {
