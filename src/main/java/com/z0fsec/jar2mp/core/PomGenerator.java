@@ -124,6 +124,7 @@ public class PomGenerator {
         if (config != null && config.isByteExactPackage() && analysis.getSourceFile() != null) {
             byteExactArtifactFileName = analysis.getSourceFile().getName();
         }
+        boolean useOriginalClassOverlay = analysis != null && !analysis.getClassFiles().isEmpty();
 
         // Build section
         sb.append("    <build>\n");
@@ -156,8 +157,8 @@ public class PomGenerator {
             appendMavenDescriptorPlugin(sb, packaging, originalManifestPath, originalCreatedBy,
                     useOriginalWarLibraries);
         }
-        if (byteExactArtifactFileName != null) {
-            appendByteExactPackagePlugin(sb, byteExactArtifactFileName);
+        if (useOriginalClassOverlay || byteExactArtifactFileName != null) {
+            appendAntrunPlugin(sb, useOriginalClassOverlay, byteExactArtifactFileName);
         }
         sb.append("        </plugins>\n");
         sb.append("    </build>\n");
@@ -714,12 +715,40 @@ public class PomGenerator {
         return trimmed.startsWith("Apache Maven ") ? trimmed : null;
     }
 
-    private void appendByteExactPackagePlugin(StringBuilder sb, String rawArtifactFileName) {
+    private void appendAntrunPlugin(StringBuilder sb, boolean useOriginalClassOverlay, String rawArtifactFileName) {
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>maven-antrun-plugin</artifactId>\n");
         sb.append("                <version>3.1.0</version>\n");
         sb.append("                <executions>\n");
+        if (useOriginalClassOverlay) {
+            appendOriginalClassOverlayExecution(sb);
+        }
+        if (rawArtifactFileName != null) {
+            appendByteExactArtifactExecution(sb, rawArtifactFileName);
+        }
+        sb.append("                </executions>\n");
+        sb.append("            </plugin>\n");
+    }
+
+    private void appendOriginalClassOverlayExecution(StringBuilder sb) {
+        sb.append("                    <execution>\n");
+        sb.append("                        <id>restore-original-class-bytes</id>\n");
+        sb.append("                        <phase>process-classes</phase>\n");
+        sb.append("                        <goals>\n");
+        sb.append("                            <goal>run</goal>\n");
+        sb.append("                        </goals>\n");
+        sb.append("                        <configuration>\n");
+        sb.append("                            <target>\n");
+        sb.append("                                <copy todir=\"${project.build.outputDirectory}\" overwrite=\"true\">\n");
+        sb.append("                                    <fileset dir=\"${project.basedir}/src/main/original-classes\" />\n");
+        sb.append("                                </copy>\n");
+        sb.append("                            </target>\n");
+        sb.append("                        </configuration>\n");
+        sb.append("                    </execution>\n");
+    }
+
+    private void appendByteExactArtifactExecution(StringBuilder sb, String rawArtifactFileName) {
         sb.append("                    <execution>\n");
         sb.append("                        <id>restore-byte-exact-artifact</id>\n");
         sb.append("                        <phase>package</phase>\n");
@@ -734,8 +763,6 @@ public class PomGenerator {
         sb.append("                            </target>\n");
         sb.append("                        </configuration>\n");
         sb.append("                    </execution>\n");
-        sb.append("                </executions>\n");
-        sb.append("            </plugin>\n");
     }
 
     private String artifactBaseName(String fileName) {

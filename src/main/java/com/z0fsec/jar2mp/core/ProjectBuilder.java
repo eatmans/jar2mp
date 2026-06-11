@@ -61,6 +61,7 @@ public class ProjectBuilder {
         File srcMainWebapp = new File(outputDir, "src/main/webapp");
         File targetOriginalClasses = new File(outputDir, "target/original-classes");
         File targetRawClasses = new File(outputDir, "target/raw-classes");
+        File srcMainOriginalClasses = new File(outputDir, "src/main/original-classes");
         File targetOriginalLibs = new File(outputDir, "target/original-libs");
         File srcMainOriginalLibs = new File(outputDir, "src/main/original-libs");
         File compilerFallbackJar = new File(outputDir, "target/compiler-fallback-classes.jar");
@@ -142,6 +143,7 @@ public class ProjectBuilder {
                 }
 
                 cacheRawClass(jf, entry, classPath, targetRawClasses);
+                cacheRawClass(jf, entry, classPath, srcMainOriginalClasses);
 
                 // Skip inner classes as standalone source files, but retain them
                 // when the outer source does not visibly cover the named type.

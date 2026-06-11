@@ -189,7 +189,7 @@ Options:
 
 汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven package 验证、raw artifact exact 与 byte-exact package 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警或源码分数未满分。
 
-严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、加入 package 阶段覆盖步骤、写入常见测试/质量插件的 skip properties，并省略会改写 package 产物的 shade/assembly/repackage 插件，使恢复项目执行 `mvn package` 后的最终 JAR/WAR 与原始归档字节级一致。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。普通 `--emit-raw-artifact` 只保留原始副本，不改变 `mvn package` 的源码重构产物，便于继续观察 source rebuild fidelity 差异。
+严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、加入 package 阶段覆盖步骤、写入常见测试/质量插件的 skip properties，并省略会改写 package 产物的 shade/assembly/repackage 插件，使恢复项目执行 `mvn package` 后的最终 JAR/WAR 与原始归档字节级一致。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。普通 `--emit-raw-artifact` 只保留原始副本，不改变 `mvn package` 的源码重构产物；普通源码重构包会在 `process-classes` 阶段回填原始 class bytes，用于隔离剩余 ZIP 容器层差异。
 
 对于已经下载到 `target/adhoc-github-release-assets/assets/` 的临时 GitHub Release 二进制样本，可以运行离线缓存矩阵来刷新当前源码的编译、raw artifact 与 byte-exact package 门禁结果：
 
@@ -201,7 +201,7 @@ Options:
 
 能还原的主要内容：
 
-- Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标、原始 `META-INF/maven/**` metadata、原始 manifest、build-info/SBOM 等可保留构建元数据
+- Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标、原始 class bytes、原始 `META-INF/maven/**` metadata、原始 manifest、build-info/SBOM 等可保留构建元数据
 
 不能保证完全还原的内容：
 
@@ -236,6 +236,7 @@ Options:
 │       ├── main/
 │       │   ├── java/          ← 反编译后的 .java 文件（保留包结构）
 │       │   ├── resources/     ← 非类文件资源 + META-INF/services
+│       │   ├── original-classes/ ← clean package 时回填原始 class bytes
 │       │   ├── original-libs/  ← 普通 WAR clean package 时回填原始 WEB-INF/lib
 │       │   └── webapp/        ← WAR 根资源与 WEB-INF 相关资源
 │       └── test/

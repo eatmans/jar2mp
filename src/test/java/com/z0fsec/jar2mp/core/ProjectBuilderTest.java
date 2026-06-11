@@ -369,6 +369,10 @@ class ProjectBuilderTest {
         Path compilerFallbackClass = outputDir.resolve("src/main/resources/demo/Outer$Inner.class");
         assertArrayEquals(outerBytes, Files.readAllBytes(outputDir.resolve("target/raw-classes/demo/Outer.class")));
         assertArrayEquals(innerBytes, Files.readAllBytes(outputDir.resolve("target/raw-classes/demo/Outer$Inner.class")));
+        assertArrayEquals(outerBytes,
+                Files.readAllBytes(outputDir.resolve("src/main/original-classes/demo/Outer.class")));
+        assertArrayEquals(innerBytes,
+                Files.readAllBytes(outputDir.resolve("src/main/original-classes/demo/Outer$Inner.class")));
         assertArrayEquals(innerBytes, Files.readAllBytes(retainedClass));
         assertArrayEquals(innerBytes, Files.readAllBytes(compilerFallbackClass));
         assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))

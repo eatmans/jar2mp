@@ -290,6 +290,23 @@ class PomGeneratorTest {
     }
 
     @Test
+    void packagesOriginalClassBytesFromCleanSafeSourceDirectory() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getClassFiles().add("com/example/App.class");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<id>restore-original-class-bytes</id>"));
+        assertTrue(pomXml.contains("<phase>process-classes</phase>"));
+        assertTrue(pomXml.contains("${project.basedir}/src/main/original-classes"));
+        assertTrue(pomXml.contains("${project.build.outputDirectory}"));
+    }
+
+    @Test
     void byteExactPackageAddsSkipPropertiesForStandaloneMavenPackage() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("com.example");
