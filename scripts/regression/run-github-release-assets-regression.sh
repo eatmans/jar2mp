@@ -245,7 +245,9 @@ write_sample_row() {
   local runtime_gate="${16}"
   local raw_artifact_exact="${17}"
   local raw_artifact_gate="${18}"
-  local project_dir="${19}"
+  local byte_exact_package_status="${19}"
+  local byte_exact_package_exact="${20}"
+  local project_dir="${21}"
 
   {
     csv_field "${name}"; printf ','
@@ -270,13 +272,15 @@ write_sample_row() {
     csv_field "${runtime_gate}"; printf ','
     csv_field "${raw_artifact_exact}"; printf ','
     csv_field "${raw_artifact_gate}"; printf ','
+    csv_field "${byte_exact_package_status}"; printf ','
+    csv_field "${byte_exact_package_exact}"; printf ','
     csv_field "${sample_thresholds[${index}]}"; printf ','
     csv_field "${project_dir:-missing}"; printf ','
     csv_field "${sample_notes[${index}]}"; printf '\n'
   } >> "${REPORT_DIR}/github-release-assets-summary.csv"
 
   cat >> "${REPORT_DIR}/github-release-assets-summary.md" <<MD
-| ${name} | ${status} | ${sample_repos[${index}]} | [release](${sample_release_urls[${index}]}) | ${sample_asset_names[${index}]} | ${sample_asset_sizes[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${runtime_gate} | ${raw_artifact_gate} | ${sample_thresholds[${index}]} |
+| ${name} | ${status} | ${sample_repos[${index}]} | [release](${sample_release_urls[${index}]}) | ${sample_asset_names[${index}]} | ${sample_asset_sizes[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${runtime_gate} | ${raw_artifact_gate} | ${byte_exact_package_status} | ${byte_exact_package_exact} | ${sample_thresholds[${index}]} |
 MD
 }
 
@@ -383,6 +387,20 @@ classify_raw_gate() {
   fi
 }
 
+find_packaged_artifact() {
+  local project_dir="$1"
+  local original_artifact="$2"
+  local extension="${original_artifact##*.}"
+  find "${project_dir}/target" -maxdepth 1 -type f \
+    -name "*.${extension}" \
+    ! -name "*-sources.jar" \
+    ! -name "*-javadoc.jar" \
+    ! -name "compiler-fallback-classes.jar" \
+    ! -name "original-*.jar" \
+    ! -name "original-*.war" \
+    | sort | head -n 1
+}
+
 run_sample() {
   local index="$1"
   local name="${sample_names[${index}]}"
@@ -398,13 +416,13 @@ run_sample() {
   if ! asset_path="$(download_asset "${asset_url}" "${asset_name}")"; then
     write_sample_row "${index}" "${name}" "DOWNLOAD_FAILED" "download-failed" \
       "0" "0" "0" "0" "0" "not-run" "not-run" "not-run" \
-      "not-run" "not-run" "not-run" "not-run" "missing" "not-run" "missing"
+      "not-run" "not-run" "not-run" "not-run" "missing" "not-run" "not-run" "missing" "missing"
     return
   fi
   rm -rf "${output_base}"
   mkdir -p "${output_base}"
 
-  local args=(--verbose --emit-raw-artifact --verify-build --verify-goal compile -f -o "${output_base}")
+  local args=(--verbose --byte-exact-package --verify-build -f -o "${output_base}")
   if [[ "${trace_mode}" == "trace" ]]; then
     args+=(--trace-runtime --trace-timeout "${JAVA_TRACE_TIMEOUT}")
     if [[ -n "${trace_args}" ]]; then
@@ -440,6 +458,8 @@ run_sample() {
   local runtime_gate="not-run"
   local raw_artifact_exact="missing"
   local raw_artifact_gate="missing"
+  local byte_exact_package_status="not-run"
+  local byte_exact_package_exact="not-run"
   local status="RESTORE_FAILED"
 
   if [[ -n "${project_dir}" && -f "${score_report}" ]]; then
@@ -458,12 +478,36 @@ run_sample() {
     runtime_gate="$(classify_runtime_gate "${trace_mode}" "${runtime_launch_support}" "${runtime_run_status}" "${runtime_events}")"
     raw_artifact_gate="$(classify_raw_gate "${raw_artifact_exact}")"
 
+    if [[ "${exit_code}" -eq 0 ]]; then
+      local packaged_artifact
+      packaged_artifact="$(find_packaged_artifact "${project_dir}" "${asset_path}")"
+      if [[ -n "${packaged_artifact}" && -f "${packaged_artifact}" ]]; then
+        local compare_dir="${project_dir}/target/byte-exact-package-check"
+        if java -jar "${JAR2MP_JAR}" \
+          --compare-artifact "${packaged_artifact}" \
+          -q \
+          -o "${compare_dir}" \
+          "${asset_path}" > "${REPORT_DIR}/${name}.byte-exact-package.log" 2>&1; then
+          byte_exact_package_status="PASS"
+          byte_exact_package_exact="$(parse_artifact_summary_field "${compare_dir}/artifact-fidelity-summary.csv" 1 "missing")"
+        else
+          byte_exact_package_status="FAIL"
+          byte_exact_package_exact="compare-failed"
+        fi
+      else
+        byte_exact_package_status="FAIL"
+        byte_exact_package_exact="package-missing"
+      fi
+    fi
+
     status="GAP"
     if [[ "${exit_code}" -eq 0 \
       && "${overall:-0}" -ge "${threshold}" \
       && "${verification_status}" == "BUILD SUCCESS" \
       && "${verification_failure_type}" == "NONE" \
       && "${raw_artifact_gate}" == "PASS_EXACT" \
+      && "${byte_exact_package_status}" == "PASS" \
+      && "${byte_exact_package_exact}" == "true" \
       && "${runtime_gate}" != FAIL_* ]]; then
       status="PASS"
       if [[ "${source_score:-0}" -lt 100 \
@@ -480,7 +524,8 @@ run_sample() {
     "${overall}" "${source_score}" "${resource_score}" "${runtime_score}" "${verification_score}" \
     "${verification_status}" "${verification_failure_type}" "${decompile_failures}" \
     "${runtime_launch_support}" "${runtime_run_status}" "${runtime_events}" "${runtime_gate}" \
-    "${raw_artifact_exact}" "${raw_artifact_gate}" "${project_dir:-missing}"
+    "${raw_artifact_exact}" "${raw_artifact_gate}" \
+    "${byte_exact_package_status}" "${byte_exact_package_exact}" "${project_dir:-missing}"
 }
 
 main() {
@@ -497,12 +542,12 @@ main() {
 
 This matrix downloads prebuilt JAR/WAR assets from GitHub Releases. It is exploratory by default: set `STRICT_RELEASE_ASSETS=1` to fail the script when any sample is not `PASS` or `PASS_WITH_WARNINGS`.
 
-| Sample | Status | Repo | Release | Asset | Size MB | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Runtime gate | Raw gate | Threshold |
-| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | ---: |
+| Sample | Status | Repo | Release | Asset | Size MB | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Runtime gate | Raw gate | Byte-exact package | Byte-exact package exact | Threshold |
+| --- | --- | --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | --- | ---: |
 MD
 
   write_file "${REPORT_DIR}/github-release-assets-summary.csv" <<'CSV'
-sample,status,repo,release_url,asset,size_mb,artifact_type,exit_code,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,runtime_support,runtime_status,runtime_events,runtime_gate,raw_artifact_exact,raw_gate,threshold,project_dir,note
+sample,status,repo,release_url,asset,size_mb,artifact_type,exit_code,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,runtime_support,runtime_status,runtime_events,runtime_gate,raw_artifact_exact,raw_gate,byte_exact_package_status,byte_exact_package_exact,threshold,project_dir,note
 CSV
 
   local total="${#sample_names[@]}"

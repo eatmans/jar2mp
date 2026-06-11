@@ -54,7 +54,7 @@ Do not commit the generated artifacts or reports. Commit the script and this doc
 
 ## GitHub Release Assets
 
-`scripts/regression/run-github-release-assets-regression.sh` downloads fixed GitHub Release JAR/WAR assets and restores them with Maven compile verification, runtime tracing where safe, and raw artifact preservation enabled.
+`scripts/regression/run-github-release-assets-regression.sh` downloads fixed GitHub Release JAR/WAR assets and restores them with Maven package verification, runtime tracing where safe, raw artifact preservation, and byte-exact package verification enabled.
 
 Run:
 
@@ -70,11 +70,11 @@ The script writes:
 - downloaded release assets under `target/release-assets-samples/assets/`
 - restored jar2mp projects under `target/release-assets-samples/restored/`
 
-Each sample is marked `PASS` when the overall score meets the sample threshold, Maven verification reports `BUILD SUCCESS` with `Failure type: NONE`, raw artifact preservation reports `exact_match=true`, and runtime evidence does not fail. A sample is marked `PASS_WITH_WARNINGS` when those gates pass but there are non-gating warnings such as raw-class fallback, decompile-failure records, runtime skip/warn status, or source/resource buckets below `100`.
+Each sample is marked `PASS` when the overall score meets the sample threshold, Maven package verification reports `BUILD SUCCESS` with `Failure type: NONE`, raw artifact preservation reports `exact_match=true`, byte-exact package comparison reports `byte_exact_package_exact=true`, and runtime evidence does not fail. A sample is marked `PASS_WITH_WARNINGS` when those gates pass but there are non-gating warnings such as raw-class fallback, decompile-failure records, runtime skip/warn status, or source/resource buckets below `100`.
 
 `STRICT_RELEASE_ASSETS=1` turns any remaining `GAP`, `RESTORE_FAILED`, or `DOWNLOAD_FAILED` row into a non-zero script exit. The default mode is exploratory and only fails when no sample reaches `PASS` or `PASS_WITH_WARNINGS`.
 
-Use `--byte-exact-package` for the strict byte-level restoration path. It preserves the raw artifact, adds skip properties for common test and quality plugins, and wires the generated Maven project so `mvn package` emits a final JAR/WAR that is byte-identical to the input. When combined with `--verify-build`, its default verification goal is `package` unless `--verify-goal` is set explicitly. Plain `--emit-raw-artifact` keeps the raw copy and reports exactness without changing the normal source-rebuild package output.
+Use `--byte-exact-package` for the strict byte-level restoration path. It preserves the raw artifact, uses the original artifact base name as Maven `finalName`, adds skip properties for common test and quality plugins, omits package-transforming shade/assembly/repackage plugins, and wires the generated Maven project so `mvn package` emits a final JAR/WAR that is byte-identical to the input. When combined with `--verify-build`, its default verification goal is `package` unless `--verify-goal` is set explicitly. Plain `--emit-raw-artifact` keeps the raw copy and reports exactness without changing the normal source-rebuild package output.
 
 ## Cached Ad-hoc Release Assets
 

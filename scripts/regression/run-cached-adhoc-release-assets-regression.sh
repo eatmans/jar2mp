@@ -133,6 +133,7 @@ find_packaged_artifact() {
     -name "*.${extension}" \
     ! -name "*-sources.jar" \
     ! -name "*-javadoc.jar" \
+    ! -name "compiler-fallback-classes.jar" \
     ! -name "original-*.jar" \
     ! -name "original-*.war" \
     | sort | head -n 1

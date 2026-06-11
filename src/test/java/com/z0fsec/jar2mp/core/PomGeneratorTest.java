@@ -7,6 +7,8 @@ import com.z0fsec.jar2mp.model.PomInfo;
 import com.z0fsec.jar2mp.model.ProjectConfig;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -85,6 +87,47 @@ class PomGeneratorTest {
         assertTrue(pomXml.contains("<checkstyle.skip>true</checkstyle.skip>"));
         assertTrue(pomXml.contains("<enforcer.skip>true</enforcer.skip>"));
         assertTrue(pomXml.contains("<maven.javadoc.skip>true</maven.javadoc.skip>"));
+    }
+
+    @Test
+    void byteExactPackageUsesOriginalArtifactBaseNameAsFinalName() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.setSourceFile(new File("demo-1.0.0-all.jar"));
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertTrue(pomXml.contains("<finalName>demo-1.0.0-all</finalName>"));
+    }
+
+    @Test
+    void byteExactPackageOmitsPackageTransformingPlugins() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.setSourceFile(new File("demo-1.0.0-all.jar"));
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo shadePlugin = new BuildPluginInfo();
+        shadePlugin.setGroupId("org.apache.maven.plugins");
+        shadePlugin.setArtifactId("maven-shade-plugin");
+        shadePlugin.setVersion("3.2.4");
+        shadePlugin.getExecutionsXml().add("<execution><phase>package</phase><goals><goal>shade</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(shadePlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertFalse(pomXml.contains("<artifactId>maven-shade-plugin</artifactId>"));
+        assertTrue(pomXml.contains("restore-byte-exact-artifact"));
     }
 
     @Test

@@ -98,8 +98,18 @@ public class PomGenerator {
             appendRepositories(sb, "pluginRepositories", "pluginRepository", embeddedPom.getPluginRepositories());
         }
 
+        String byteExactArtifactFileName = null;
+        if (config != null && config.isByteExactPackage() && analysis.getSourceFile() != null) {
+            byteExactArtifactFileName = analysis.getSourceFile().getName();
+        }
+
         // Build section
         sb.append("    <build>\n");
+        if (byteExactArtifactFileName != null) {
+            sb.append("        <finalName>")
+                    .append(escapeXml(artifactBaseName(byteExactArtifactFileName)))
+                    .append("</finalName>\n");
+        }
         sb.append("        <plugins>\n");
         boolean hasCompilerPlugin = false;
         if (embeddedPom != null) {
@@ -107,7 +117,7 @@ public class PomGenerator {
                 if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
                     hasCompilerPlugin = true;
                 }
-                if (shouldAppendBuildPlugin(plugin)) {
+                if (shouldAppendBuildPlugin(plugin, config != null && config.isByteExactPackage())) {
                     appendBuildPlugin(sb, plugin);
                 }
             }
@@ -115,8 +125,8 @@ public class PomGenerator {
         if (!hasCompilerPlugin) {
             appendFallbackCompilerPlugin(sb, javaVersion);
         }
-        if (config != null && config.isByteExactPackage() && analysis.getSourceFile() != null) {
-            appendByteExactPackagePlugin(sb, analysis.getSourceFile().getName());
+        if (byteExactArtifactFileName != null) {
+            appendByteExactPackagePlugin(sb, byteExactArtifactFileName);
         }
         sb.append("        </plugins>\n");
         sb.append("    </build>\n");
@@ -316,8 +326,11 @@ public class PomGenerator {
                 "<configuration combine.self=\"override\"$1>");
     }
 
-    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin) {
+    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin, boolean byteExactPackage) {
         if (plugin == null || plugin.getArtifactId() == null) {
+            return false;
+        }
+        if (byteExactPackage && isPackageTransformingPlugin(plugin.getArtifactId())) {
             return false;
         }
         if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
@@ -329,6 +342,12 @@ public class PomGenerator {
             }
         }
         return true;
+    }
+
+    private boolean isPackageTransformingPlugin(String artifactId) {
+        return "maven-shade-plugin".equals(artifactId)
+                || "maven-assembly-plugin".equals(artifactId)
+                || "spring-boot-maven-plugin".equals(artifactId);
     }
 
     private boolean runsBeforeCompile(String executionXml) {
@@ -380,6 +399,17 @@ public class PomGenerator {
         sb.append("                    </execution>\n");
         sb.append("                </executions>\n");
         sb.append("            </plugin>\n");
+    }
+
+    private String artifactBaseName(String fileName) {
+        if (fileName == null) {
+            return "";
+        }
+        int extensionIndex = fileName.lastIndexOf('.');
+        if (extensionIndex <= 0) {
+            return fileName;
+        }
+        return fileName.substring(0, extensionIndex);
     }
 
     private boolean hasKnownValue(String value) {
