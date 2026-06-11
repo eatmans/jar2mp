@@ -177,7 +177,12 @@ public class ZipRecordOrderRestorer {
     }
 
     private static boolean usesOriginalPayload(String name) {
-        return MANIFEST_ENTRY.equals(name);
+        return MANIFEST_ENTRY.equals(name) || isModuleInfoEntry(name);
+    }
+
+    private static boolean isModuleInfoEntry(String name) {
+        return "module-info.class".equals(name)
+                || (name != null && name.endsWith("/module-info.class"));
     }
 
     private static void copyExtraFieldIfSameLength(byte[] source, byte[] target, int nameLengthOffset,

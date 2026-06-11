@@ -245,6 +245,29 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void preservesModuleInfoClassAsOriginalClassBytes() throws Exception {
+        byte[] moduleInfoBytes = minimalClassBytes(53);
+        Path jar = tempDir.resolve("multi-release-module-info.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "com/example/App.class", minimalClassBytes(52));
+            addEntry(out, "META-INF/versions/9/module-info.class", moduleInfoBytes);
+        }
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("multi-release-module-info-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>",
+                outputDir.toFile(), null);
+
+        assertArrayEquals(moduleInfoBytes, Files.readAllBytes(outputDir.resolve(
+                "target/raw-classes/META-INF/versions/9/module-info.class")));
+        assertArrayEquals(moduleInfoBytes, Files.readAllBytes(outputDir.resolve(
+                "src/main/original-classes/META-INF/versions/9/module-info.class")));
+        assertFalse(Files.exists(outputDir.resolve(
+                "src/main/java/META-INF/versions/9/module-info.java")));
+    }
+
+    @Test
     void usesContextDecompilerSourceThatPreservesNamedInnerClasses() throws Exception {
         Path jar = compileJar("demo.Outer",
                 "package demo;\n"

@@ -12,6 +12,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -191,8 +193,12 @@ class CliRunnerTest {
 
     @Test
     void byteExactPackageKeepsRawArtifactAuxiliaryWithoutPomRawCopy() throws Exception {
-        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
-                minimalClassBytes(52, "com/example/App"),
+        byte[] manifestBytes = ("Manifest-Version: 1.0\r\n"
+                + "Created-By: Maven JAR Plugin 3.4.2\r\n"
+                + "Build-Jdk-Spec: 21\r\n"
+                + "\r\n").getBytes(StandardCharsets.UTF_8);
+        Path jar = createJarWithRawManifest("sample-1.0.jar", manifestBytes,
+                "com/example/App.class", compiledClassBytes("com/example/App"),
                 "config.properties", "mode=raw-package\n".getBytes(StandardCharsets.UTF_8));
         Path output = tempDir.resolve("out");
 
@@ -207,9 +213,19 @@ class CliRunnerTest {
         assertEquals(0, exitCode);
         Path projectDir = output.resolve("sample");
         assertTrue(Files.exists(projectDir.resolve("target/raw-artifact/sample-1.0.jar")));
+        assertTrue(Files.exists(projectDir.resolve(".jar2mp/byte-exact/raw-artifact/sample-1.0.jar")));
         String pomXml = Files.readString(projectDir.resolve("pom.xml"));
         assertTrue(pomXml.contains("<finalName>sample-1.0</finalName>"));
         assertFalse(pomXml.contains("restore-byte-exact-artifact"));
+        assertTrue(pomXml.contains("restore-byte-exact-package-records"));
+        assertTrue(pomXml.contains(".jar2mp/byte-exact/raw-artifact/sample-1.0.jar"));
+        assertTrue(Files.exists(projectDir.resolve(".jar2mp/byte-exact/ByteExactPackageRestorer.java")));
+
+        int packageExitCode = runMaven(projectDir, "clean package");
+        assertEquals(0, packageExitCode);
+        Path rebuilt = projectDir.resolve("target/sample-1.0.jar");
+        ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(jar.toFile(), rebuilt.toFile());
+        assertTrue(fidelity.isExactMatch());
     }
 
     @Test
@@ -669,7 +685,15 @@ class CliRunnerTest {
     }
 
     private int runMaven(Path projectDir, String goal) throws Exception {
-        Process process = new ProcessBuilder("mvn", "-q", goal)
+        List<String> command = new ArrayList<>();
+        command.add("mvn");
+        command.add("-q");
+        for (String part : goal.trim().split("\\s+")) {
+            if (!part.isEmpty()) {
+                command.add(part);
+            }
+        }
+        Process process = new ProcessBuilder(command)
                 .directory(projectDir.toFile())
                 .redirectErrorStream(true)
                 .start();

@@ -8,14 +8,29 @@ import java.nio.file.StandardCopyOption;
 public class RawArtifactPackager {
 
     public File preserve(File originalArtifact, File projectDir) throws IOException {
-        if (originalArtifact == null || !originalArtifact.isFile()) {
-            throw new IOException("Original artifact not found: " + describe(originalArtifact));
-        }
+        requireProjectDir(projectDir);
+        return preserveInto(originalArtifact, new File(new File(projectDir, "target"), "raw-artifact"));
+    }
+
+    public File preserveByteExactReference(File originalArtifact, File projectDir) throws IOException {
+        requireProjectDir(projectDir);
+        return preserveInto(originalArtifact, new File(projectDir, ".jar2mp/byte-exact/raw-artifact"));
+    }
+
+    private void requireProjectDir(File projectDir) throws IOException {
         if (projectDir == null) {
             throw new IOException("Project output directory is required.");
         }
+    }
 
-        File rawDir = new File(new File(projectDir, "target"), "raw-artifact");
+    private File preserveInto(File originalArtifact, File rawDir) throws IOException {
+        if (originalArtifact == null || !originalArtifact.isFile()) {
+            throw new IOException("Original artifact not found: " + describe(originalArtifact));
+        }
+        if (rawDir == null) {
+            throw new IOException("Raw artifact directory is required.");
+        }
+
         Files.createDirectories(rawDir.toPath());
 
         File preserved = new File(rawDir, originalArtifact.getName());

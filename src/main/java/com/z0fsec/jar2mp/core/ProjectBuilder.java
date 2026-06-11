@@ -32,6 +32,7 @@ public class ProjectBuilder {
     private final SourcePostProcessor sourcePostProcessor;
     private final GapSummaryWriter gapSummaryWriter;
     private final CfrJarDecompiler cfrJarDecompiler;
+    private final StandaloneByteExactPackageHelperWriter byteExactPackageHelperWriter;
 
     public interface ProgressCallback {
         void onProgress(String message, int percent);
@@ -47,6 +48,7 @@ public class ProjectBuilder {
         this.sourcePostProcessor = new SourcePostProcessor();
         this.gapSummaryWriter = new GapSummaryWriter();
         this.cfrJarDecompiler = new CfrJarDecompiler();
+        this.byteExactPackageHelperWriter = new StandaloneByteExactPackageHelperWriter();
     }
 
     public void build(File jarFile, JarAnalysisResult analysis, String pomXml,
@@ -109,7 +111,16 @@ public class ProjectBuilder {
                 int lastSlash = fileName.lastIndexOf('/');
                 if (lastSlash >= 0) fileName = fileName.substring(lastSlash + 1);
 
+                // Resolve the raw entry name in JAR (may be under BOOT-INF/classes/ or WEB-INF/classes/)
+                String rawEntryPath = analysis.getClassPathMapping().get(classPath);
+                if (rawEntryPath == null) rawEntryPath = classPath;
+
+                JarEntry entry = jf.getJarEntry(rawEntryPath);
+                if (entry == null) continue;
+
                 if (shouldDecompile() && "module-info.class".equals(fileName)) {
+                    cacheRawClass(jf, entry, classPath, targetRawClasses);
+                    cacheRawClass(jf, entry, classPath, srcMainOriginalClasses);
                     if (callback != null) callback.onProgress("Skipping module-info.class", percent);
                     continue;
                 }
@@ -119,13 +130,6 @@ public class ProjectBuilder {
                 // Check if already decompiled (shouldn't happen for non-inner, but safety check)
                 if (decompiledOuterClasses.contains(classPath)) continue;
                 decompiledOuterClasses.add(classPath);
-
-                // Resolve the raw entry name in JAR (may be under BOOT-INF/classes/ or WEB-INF/classes/)
-                String rawEntryPath = analysis.getClassPathMapping().get(classPath);
-                if (rawEntryPath == null) rawEntryPath = classPath;
-
-                JarEntry entry = jf.getJarEntry(rawEntryPath);
-                if (entry == null) continue;
 
                 if (shouldDecompile() && caseInsensitiveClassCollisions.contains(classPath)) {
                     DecompileFinding finding = rawClassFallbackFinding(
@@ -372,6 +376,9 @@ public class ProjectBuilder {
             restorationReportWriter.writeResourceInventory(outputDir, analysis);
             restorationReportWriter.writeRunbook(outputDir, analysis);
             restorationReportWriter.writeDecompileFailures(outputDir, analysis);
+            if (config != null && config.isByteExactPackage()) {
+                byteExactPackageHelperWriter.write(outputDir);
+            }
 
             RestorationScore restorationScore = restorationScorer.score(
                     analysis,

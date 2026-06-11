@@ -77,6 +77,23 @@ class ZipRecordOrderRestorerTest {
     }
 
     @Test
+    void restoresOriginalModuleInfoPayload() throws Exception {
+        TestEntry manifest = entry("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n\r\n");
+        TestEntry originalModule = entry("META-INF/versions/9/module-info.class",
+                new byte[]{0x01, 0x02, 0x03});
+        TestEntry rebuiltModule = entry("META-INF/versions/9/module-info.class",
+                new byte[]{0x01, 0x02, 0x03, 0x04});
+        Path original = writeStoredZip("original.jar", 0L, manifest, originalModule);
+        Path rebuilt = writeStoredZip("rebuilt.jar", 2000L, manifest, rebuiltModule);
+
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+    }
+
+    @Test
     void rejectsArchivesWithDifferentEntrySets() throws Exception {
         Path original = writeStoredZip("original.jar", 0L, entry("first.txt", "one"));
         Path rebuilt = writeStoredZip("rebuilt.jar", 0L, entry("second.txt", "two"));
@@ -114,6 +131,10 @@ class ZipRecordOrderRestorerTest {
 
     private TestEntry entry(String name, String content) {
         return new TestEntry(name, content.getBytes(StandardCharsets.UTF_8), ZipEntry.STORED);
+    }
+
+    private TestEntry entry(String name, byte[] content) {
+        return new TestEntry(name, content, ZipEntry.STORED);
     }
 
     private TestEntry directory(String name) {

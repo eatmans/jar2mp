@@ -383,6 +383,8 @@ class PomGeneratorTest {
         assertTrue(pomXml.contains("<artifactId>maven-shade-plugin</artifactId>"));
         assertTrue(pomXml.contains("<goal>shade</goal>"));
         assertFalse(pomXml.contains("restore-byte-exact-artifact"));
+        assertTrue(pomXml.contains("restore-byte-exact-package-records"));
+        assertTrue(pomXml.contains(".jar2mp/byte-exact/raw-artifact/demo-1.0.0-all.jar"));
         assertTrue(pomXml.contains("<finalName>demo-1.0.0-all</finalName>"));
     }
 

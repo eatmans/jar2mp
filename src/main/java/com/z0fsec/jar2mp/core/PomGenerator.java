@@ -158,8 +158,9 @@ public class PomGenerator {
             appendMavenDescriptorPlugin(sb, packaging, originalManifestPath, originalCreatedBy,
                     useOriginalWarLibraries);
         }
-        if (useOriginalClassOverlay || useOriginalResourceOverlay) {
-            appendAntrunPlugin(sb, useOriginalClassOverlay, useOriginalResourceOverlay);
+        if (useOriginalClassOverlay || useOriginalResourceOverlay || byteExactArtifactFileName != null) {
+            appendAntrunPlugin(sb, useOriginalClassOverlay, useOriginalResourceOverlay,
+                    byteExactArtifactFileName);
         }
         sb.append("        </plugins>\n");
         sb.append("    </build>\n");
@@ -705,7 +706,7 @@ public class PomGenerator {
     }
 
     private void appendAntrunPlugin(StringBuilder sb, boolean useOriginalClassOverlay,
-                                    boolean useOriginalResourceOverlay) {
+                                    boolean useOriginalResourceOverlay, String rawArtifactFileName) {
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>maven-antrun-plugin</artifactId>\n");
@@ -716,6 +717,9 @@ public class PomGenerator {
         }
         if (useOriginalResourceOverlay) {
             appendOriginalResourceOverlayExecution(sb);
+        }
+        if (rawArtifactFileName != null) {
+            appendByteExactPackageRestoreExecution(sb, rawArtifactFileName);
         }
         sb.append("                </executions>\n");
         sb.append("            </plugin>\n");
@@ -750,6 +754,33 @@ public class PomGenerator {
         sb.append("                                <copy todir=\"${project.build.outputDirectory}\" overwrite=\"true\" preservelastmodified=\"true\">\n");
         sb.append("                                    <fileset dir=\"${project.basedir}/src/main/resources\" />\n");
         sb.append("                                </copy>\n");
+        sb.append("                            </target>\n");
+        sb.append("                        </configuration>\n");
+        sb.append("                    </execution>\n");
+    }
+
+    private void appendByteExactPackageRestoreExecution(StringBuilder sb, String rawArtifactFileName) {
+        sb.append("                    <execution>\n");
+        sb.append("                        <id>restore-byte-exact-package-records</id>\n");
+        sb.append("                        <phase>package</phase>\n");
+        sb.append("                        <goals>\n");
+        sb.append("                            <goal>run</goal>\n");
+        sb.append("                        </goals>\n");
+        sb.append("                        <configuration>\n");
+        sb.append("                            <target>\n");
+        sb.append("                                <mkdir dir=\"${project.build.directory}/byte-exact-package-helper-classes\" />\n");
+        sb.append("                                <javac srcdir=\"${project.basedir}/.jar2mp/byte-exact\" destdir=\"${project.build.directory}/byte-exact-package-helper-classes\" includeantruntime=\"false\" source=\"${maven.compiler.source}\" target=\"${maven.compiler.target}\" />\n");
+        sb.append("                                <mkdir dir=\"${project.build.directory}/byte-exact-package-restored\" />\n");
+        sb.append("                                <java classname=\"ByteExactPackageRestorer\" fork=\"true\" failonerror=\"true\">\n");
+        sb.append("                                    <classpath>\n");
+        sb.append("                                        <pathelement location=\"${project.build.directory}/byte-exact-package-helper-classes\" />\n");
+        sb.append("                                    </classpath>\n");
+        sb.append("                                    <arg value=\"${project.basedir}/.jar2mp/byte-exact/raw-artifact/")
+                .append(escapeXml(rawArtifactFileName))
+                .append("\" />\n");
+        sb.append("                                    <arg value=\"${project.build.directory}/${project.build.finalName}.${project.packaging}\" />\n");
+        sb.append("                                    <arg value=\"${project.build.directory}/byte-exact-package-restored/${project.build.finalName}.${project.packaging}\" />\n");
+        sb.append("                                </java>\n");
         sb.append("                            </target>\n");
         sb.append("                        </configuration>\n");
         sb.append("                    </execution>\n");

@@ -129,6 +129,9 @@ public class CliRunner {
 
                     if (config.isEmitRawArtifact()) {
                         File preservedArtifact = rawArtifactPackager.preserve(jarFile, outputDir);
+                        if (config.isByteExactPackage()) {
+                            rawArtifactPackager.preserveByteExactReference(jarFile, outputDir);
+                        }
                         File rawArtifactDir = preservedArtifact.getParentFile();
                         ArtifactFidelityResult rawFidelity = artifactFidelityComparator.compare(jarFile, preservedArtifact);
                         artifactFidelityReportWriter.write(rawArtifactDir, rawFidelity);
