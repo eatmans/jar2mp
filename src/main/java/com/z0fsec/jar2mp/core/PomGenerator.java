@@ -53,6 +53,9 @@ public class PomGenerator {
         if (!properties.containsKey("project.build.sourceEncoding")) {
             properties.put("project.build.sourceEncoding", "UTF-8");
         }
+        if (config != null && config.isByteExactPackage()) {
+            addByteExactPackageSkipProperties(properties);
+        }
 
         sb.append("    <properties>\n");
         for (Map.Entry<String, String> property : properties.entrySet()) {
@@ -174,6 +177,24 @@ public class PomGenerator {
 
     private boolean sameValue(String left, String right) {
         return left != null && right != null && left.trim().equals(right.trim());
+    }
+
+    private void addByteExactPackageSkipProperties(Map<String, String> properties) {
+        properties.put("skipTests", "true");
+        properties.put("maven.test.skip", "true");
+        properties.put("checkstyle.skip", "true");
+        properties.put("spring-javaformat.skip", "true");
+        properties.put("impsort.skip", "true");
+        properties.put("formatter.skip", "true");
+        properties.put("spotless.check.skip", "true");
+        properties.put("spotless.apply.skip", "true");
+        properties.put("license.skip", "true");
+        properties.put("rat.skip", "true");
+        properties.put("enforcer.skip", "true");
+        properties.put("jacoco.skip", "true");
+        properties.put("git.commit.id.skip", "true");
+        properties.put("maven.javadoc.skip", "true");
+        properties.put("maven.source.skip", "true");
     }
 
     private boolean canRenderDependency(MavenDependency dep, boolean managedVersionAvailable,

@@ -188,7 +188,7 @@ Options:
 
 汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven 编译与 raw artifact exact 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警或源码分数未满分。
 
-严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，并在生成的 `pom.xml` 中加入 package 阶段覆盖步骤，使恢复项目执行 `mvn package` 后的最终 JAR/WAR 与原始归档字节级一致。普通 `--emit-raw-artifact` 只保留原始副本，不改变 `mvn package` 的源码重构产物，便于继续观察 source rebuild fidelity 差异。
+严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中加入 package 阶段覆盖步骤，并写入常见测试/质量插件的 skip properties，使恢复项目执行 `mvn package` 后的最终 JAR/WAR 与原始归档字节级一致。普通 `--emit-raw-artifact` 只保留原始副本，不改变 `mvn package` 的源码重构产物，便于继续观察 source rebuild fidelity 差异。
 
 对于已经下载到 `target/adhoc-github-release-assets/assets/` 的临时 GitHub Release 二进制样本，可以运行离线缓存矩阵来刷新当前源码的编译、raw artifact 与 byte-exact package 门禁结果：
 

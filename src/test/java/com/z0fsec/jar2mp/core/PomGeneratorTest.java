@@ -69,6 +69,25 @@ class PomGeneratorTest {
     }
 
     @Test
+    void byteExactPackageAddsSkipPropertiesForStandaloneMavenPackage() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertTrue(pomXml.contains("<skipTests>true</skipTests>"));
+        assertTrue(pomXml.contains("<maven.test.skip>true</maven.test.skip>"));
+        assertTrue(pomXml.contains("<checkstyle.skip>true</checkstyle.skip>"));
+        assertTrue(pomXml.contains("<enforcer.skip>true</enforcer.skip>"));
+        assertTrue(pomXml.contains("<maven.javadoc.skip>true</maven.javadoc.skip>"));
+    }
+
+    @Test
     void sanitizesManifestDerivedMavenCoordinates() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("Remko Popma");
