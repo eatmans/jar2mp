@@ -419,9 +419,6 @@ public class ProjectBuilder {
         }
 
         String upperPath = metaPath.toUpperCase(Locale.ROOT);
-        if ("META-INF/MANIFEST.MF".equals(upperPath)) {
-            return false;
-        }
         if ("META-INF/SERVICES/JAVA.NIO.FILE.SPI.FILESYSTEMPROVIDER".equals(upperPath)) {
             return false;
         }

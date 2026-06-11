@@ -206,6 +206,26 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void preservesOriginalManifestForPackageFidelity() throws Exception {
+        Path jar = tempDir.resolve("manifest-sample.jar");
+        String manifest = "Manifest-Version: 1.0\r\nImplementation-Title: original\r\n\r\n";
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "com/example/App.class", minimalClassBytes(52));
+            addEntry(out, "META-INF/MANIFEST.MF", manifest);
+        }
+
+        JarAnalysisResult analysis = new JarAnalyzer(
+                new com.z0fsec.jar2mp.db.PackagePrefixDatabase()).analyze(jar.toFile(), null);
+        ProjectConfig config = new ProjectConfig();
+        config.setDecompile(false);
+        Path outputDir = tempDir.resolve("manifest-out");
+
+        new ProjectBuilder(config).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertEquals(manifest, Files.readString(outputDir.resolve("src/main/resources/META-INF/MANIFEST.MF")));
+    }
+
+    @Test
     void writesPackageInfoSourceAsPackageDeclaration() throws Exception {
         Path jar = tempDir.resolve("package-info.jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {

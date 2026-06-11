@@ -2,6 +2,7 @@ package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.BuildPluginInfo;
+import com.z0fsec.jar2mp.model.ManifestInfo;
 import com.z0fsec.jar2mp.model.MavenDependency;
 import com.z0fsec.jar2mp.model.PomInfo;
 import com.z0fsec.jar2mp.model.ProjectConfig;
@@ -58,6 +59,22 @@ class PomGeneratorTest {
     }
 
     @Test
+    void usesManifestImplementationTitleAsProjectName() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("spring-petclinic");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(17);
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setImplementationTitle("petclinic");
+        analysis.setManifestInfo(manifestInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<name>petclinic</name>"));
+    }
+
+    @Test
     void disablesAnnotationProcessingForRestoredCompilePom() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("com.example");
@@ -98,6 +115,115 @@ class PomGeneratorTest {
 
         assertTrue(pomXml.contains("<artifactId>maven-war-plugin</artifactId>"));
         assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));
+    }
+
+    @Test
+    void usesOriginalJarManifestWhenPresent() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains(
+                "<manifestFile>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</manifestFile>"));
+        assertFalse(pomXml.contains("<addDefaultEntries>false</addDefaultEntries>"));
+    }
+
+    @Test
+    void usesOriginalWarManifestWhenPresent() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains(
+                "<manifestFile>${project.basedir}/src/main/webapp/META-INF/MANIFEST.MF</manifestFile>"));
+        assertTrue(pomXml.contains("<addDefaultEntries>false</addDefaultEntries>"));
+    }
+
+    @Test
+    void doesNotOverrideSpringBootExecutableManifest() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(17);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.launch.JarLauncher");
+        manifestInfo.addEntry("Spring-Boot-Classes", "BOOT-INF/classes/");
+        analysis.setManifestInfo(manifestInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<manifestFile>"));
+        assertTrue(pomXml.contains("<artifactId>maven-jar-plugin</artifactId>"));
+    }
+
+    @Test
+    void replacesExistingManifestFileWithoutRegexExpansion() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo jarPlugin = new BuildPluginInfo();
+        jarPlugin.setGroupId("org.apache.maven.plugins");
+        jarPlugin.setArtifactId("maven-jar-plugin");
+        jarPlugin.setConfigurationXml(
+                "<configuration><archive><manifestFile>old/MANIFEST.MF</manifestFile></archive></configuration>");
+        pomInfo.getBuildPlugins().add(jarPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains(
+                "<manifestFile>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</manifestFile>"));
+        assertFalse(pomXml.contains("old/MANIFEST.MF"));
+    }
+
+    @Test
+    void preservesOriginalGeneratedMetadataResourcesWhenPresent() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(17);
+        analysis.getMetaInfFiles().add("META-INF/build-info.properties");
+        analysis.getMetaInfFiles().add("META-INF/sbom/application.cdx.json");
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo bootPlugin = new BuildPluginInfo();
+        bootPlugin.setGroupId("org.springframework.boot");
+        bootPlugin.setArtifactId("spring-boot-maven-plugin");
+        bootPlugin.getExecutionsXml().add(
+                "<execution><goals><goal>build-info</goal><goal>repackage</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(bootPlugin);
+        BuildPluginInfo cyclonedxPlugin = new BuildPluginInfo();
+        cyclonedxPlugin.setGroupId("org.cyclonedx");
+        cyclonedxPlugin.setArtifactId("cyclonedx-maven-plugin");
+        pomInfo.getBuildPlugins().add(cyclonedxPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<spring-boot.build-info.skip>true</spring-boot.build-info.skip>"));
+        assertTrue(pomXml.contains("<cyclonedx.skip>true</cyclonedx.skip>"));
+        assertFalse(pomXml.contains("<goal>build-info</goal>"));
+        assertTrue(pomXml.contains("<goal>repackage</goal>"));
     }
 
     @Test

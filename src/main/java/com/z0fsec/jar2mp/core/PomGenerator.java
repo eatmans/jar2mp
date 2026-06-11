@@ -5,6 +5,7 @@ import com.z0fsec.jar2mp.model.*;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 
 public class PomGenerator {
 
@@ -30,6 +31,10 @@ public class PomGenerator {
         sb.append("    <groupId>").append(escapeXml(groupId)).append("</groupId>\n");
         sb.append("    <artifactId>").append(escapeXml(artifactId)).append("</artifactId>\n");
         sb.append("    <version>").append(escapeXml(version)).append("</version>\n");
+        String projectName = projectName(analysis);
+        if (projectName != null) {
+            sb.append("    <name>").append(escapeXml(projectName)).append("</name>\n");
+        }
 
         // Packaging
         String packaging = config.getPackaging();
@@ -41,6 +46,12 @@ public class PomGenerator {
         }
 
         sb.append("\n");
+
+        boolean originalManifestPresent = hasMetaInfFile(analysis, "META-INF/MANIFEST.MF");
+        boolean originalBuildInfoPresent = hasMetaInfFile(analysis, "META-INF/build-info.properties");
+        boolean originalSbomPresent = hasMetaInfPathPrefix(analysis, "META-INF/sbom/");
+        String originalManifestPath = originalManifestPath(packaging,
+                originalManifestPresent && !isSpringBootExecutable(analysis));
 
         // Properties
         int javaVersion = config.getJavaVersion() > 0 ? config.getJavaVersion() : analysis.getJavaVersion();
@@ -55,6 +66,12 @@ public class PomGenerator {
         }
         if (config != null && config.isByteExactPackage()) {
             addByteExactPackageSkipProperties(properties);
+        }
+        if (originalBuildInfoPresent) {
+            properties.put("spring-boot.build-info.skip", "true");
+        }
+        if (originalSbomPresent) {
+            properties.put("cyclonedx.skip", "true");
         }
 
         sb.append("    <properties>\n");
@@ -122,7 +139,7 @@ public class PomGenerator {
                     hasArchiveDescriptorPlugin = true;
                 }
                 if (shouldAppendBuildPlugin(plugin, config != null && config.isByteExactPackage())) {
-                    appendBuildPlugin(sb, plugin, packaging);
+                    appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalBuildInfoPresent);
                 }
             }
         }
@@ -130,7 +147,7 @@ public class PomGenerator {
             appendFallbackCompilerPlugin(sb, javaVersion);
         }
         if (!hasArchiveDescriptorPlugin) {
-            appendMavenDescriptorPlugin(sb, packaging);
+            appendMavenDescriptorPlugin(sb, packaging, originalManifestPath);
         }
         if (byteExactArtifactFileName != null) {
             appendByteExactPackagePlugin(sb, byteExactArtifactFileName);
@@ -277,7 +294,8 @@ public class PomGenerator {
         sb.append("    </").append(containerName).append(">\n\n");
     }
 
-    private void appendBuildPlugin(StringBuilder sb, BuildPluginInfo plugin, String packaging) {
+    private void appendBuildPlugin(StringBuilder sb, BuildPluginInfo plugin, String packaging,
+                                   String originalManifestPath, boolean originalBuildInfoPresent) {
         sb.append("            <plugin>\n");
         if (plugin.getGroupId() != null) {
             appendElement(sb, "groupId", plugin.getGroupId(), "                ");
@@ -295,6 +313,8 @@ public class PomGenerator {
             }
             if (archiveDescriptorPlugin) {
                 configurationXml = disableMavenDescriptor(configurationXml);
+                configurationXml = configureOriginalManifest(configurationXml, originalManifestPath,
+                        "war".equals(packaging));
             }
             appendRawXml(sb, configurationXml, "                ");
         } else if (compilerPlugin) {
@@ -302,13 +322,21 @@ public class PomGenerator {
             sb.append("                    <proc>none</proc>\n");
             sb.append("                </configuration>\n");
         } else if (archiveDescriptorPlugin) {
-            appendMavenDescriptorConfiguration(sb, packaging, "                ");
+            appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, "                ");
         }
         if (!plugin.getExecutionsXml().isEmpty()) {
             sb.append("                <executions>\n");
             for (String executionXml : plugin.getExecutionsXml()) {
-                appendRawXml(sb, compilerPlugin ? sanitizeCompilerConfiguration(executionXml) : executionXml,
-                        "                    ");
+                String normalizedExecutionXml = executionXml;
+                if (compilerPlugin) {
+                    normalizedExecutionXml = sanitizeCompilerConfiguration(normalizedExecutionXml);
+                }
+                if (originalBuildInfoPresent && isSpringBootPlugin(plugin.getArtifactId())) {
+                    normalizedExecutionXml = removeBuildInfoGoal(normalizedExecutionXml);
+                }
+                if (hasAnyGoal(normalizedExecutionXml)) {
+                    appendRawXml(sb, normalizedExecutionXml, "                    ");
+                }
             }
             sb.append("                </executions>\n");
         }
@@ -391,22 +419,33 @@ public class PomGenerator {
         sb.append("            </plugin>\n");
     }
 
-    private void appendMavenDescriptorPlugin(StringBuilder sb, String packaging) {
+    private void appendMavenDescriptorPlugin(StringBuilder sb, String packaging, String originalManifestPath) {
         boolean war = "war".equals(packaging);
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>").append(war ? "maven-war-plugin" : "maven-jar-plugin")
                 .append("</artifactId>\n");
-        appendMavenDescriptorConfiguration(sb, packaging, "                ");
+        appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, "                ");
         sb.append("            </plugin>\n");
     }
 
-    private void appendMavenDescriptorConfiguration(StringBuilder sb, String packaging, String indent) {
+    private void appendMavenDescriptorConfiguration(StringBuilder sb, String packaging,
+                                                    String originalManifestPath, String indent) {
         sb.append(indent).append("<configuration>\n");
         if ("war".equals(packaging)) {
             sb.append(indent).append("    <failOnMissingWebXml>false</failOnMissingWebXml>\n");
         }
         sb.append(indent).append("    <archive>\n");
+        if (originalManifestPath != null) {
+            if ("war".equals(packaging)) {
+                sb.append(indent).append("        <manifest>\n");
+                sb.append(indent).append("            <addDefaultEntries>false</addDefaultEntries>\n");
+                sb.append(indent).append("        </manifest>\n");
+            }
+            sb.append(indent).append("        <manifestFile>")
+                    .append(escapeXml(originalManifestPath))
+                    .append("</manifestFile>\n");
+        }
         sb.append(indent).append("        <addMavenDescriptor>false</addMavenDescriptor>\n");
         sb.append(indent).append("    </archive>\n");
         sb.append(indent).append("</configuration>\n");
@@ -439,6 +478,117 @@ public class PomGenerator {
                             + "</configuration>");
         }
         return configurationXml;
+    }
+
+    private String configureOriginalManifest(String configurationXml, String originalManifestPath,
+                                             boolean disableDefaultEntries) {
+        if (configurationXml == null || originalManifestPath == null) {
+            return configurationXml;
+        }
+        if (disableDefaultEntries) {
+            configurationXml = disableDefaultManifestEntries(configurationXml);
+        }
+        String manifestElement = "<manifestFile>" + escapeXml(originalManifestPath) + "</manifestFile>";
+        if (configurationXml.matches("(?s).*<manifestFile>.*?</manifestFile>.*")) {
+            return configurationXml.replaceAll("(?s)<manifestFile>.*?</manifestFile>",
+                    Matcher.quoteReplacement(manifestElement));
+        }
+        if (configurationXml.contains("</archive>")) {
+            return configurationXml.replace("</archive>", "  " + manifestElement + "\n</archive>");
+        }
+        if (configurationXml.contains("</configuration>")) {
+            return configurationXml.replace("</configuration>",
+                    "  <archive>\n"
+                            + "    " + manifestElement + "\n"
+                            + "  </archive>\n"
+                            + "</configuration>");
+        }
+        return configurationXml;
+    }
+
+    private String disableDefaultManifestEntries(String configurationXml) {
+        String defaultEntriesElement = "<addDefaultEntries>false</addDefaultEntries>";
+        if (configurationXml.matches("(?s).*<addDefaultEntries>.*?</addDefaultEntries>.*")) {
+            return configurationXml.replaceAll("(?s)<addDefaultEntries>.*?</addDefaultEntries>",
+                    defaultEntriesElement);
+        }
+        if (configurationXml.contains("</manifest>")) {
+            return configurationXml.replace("</manifest>", "  " + defaultEntriesElement + "\n</manifest>");
+        }
+        if (configurationXml.contains("</archive>")) {
+            return configurationXml.replace("</archive>",
+                    "  <manifest>\n"
+                            + "    " + defaultEntriesElement + "\n"
+                            + "  </manifest>\n"
+                            + "</archive>");
+        }
+        if (configurationXml.contains("</configuration>")) {
+            return configurationXml.replace("</configuration>",
+                    "  <archive>\n"
+                            + "    <manifest>\n"
+                            + "      " + defaultEntriesElement + "\n"
+                            + "    </manifest>\n"
+                            + "  </archive>\n"
+                            + "</configuration>");
+        }
+        return configurationXml;
+    }
+
+    private String removeBuildInfoGoal(String executionXml) {
+        if (executionXml == null) {
+            return null;
+        }
+        return executionXml.replaceAll("(?s)\\s*<goal>\\s*build-info\\s*</goal>", "");
+    }
+
+    private boolean hasAnyGoal(String executionXml) {
+        return executionXml != null && executionXml.matches("(?s).*<goal>\\s*[^<]+\\s*</goal>.*");
+    }
+
+    private boolean isSpringBootPlugin(String artifactId) {
+        return "spring-boot-maven-plugin".equals(artifactId);
+    }
+
+    private boolean isSpringBootExecutable(JarAnalysisResult analysis) {
+        if (analysis == null || analysis.getManifestInfo() == null) {
+            return false;
+        }
+        ManifestInfo manifestInfo = analysis.getManifestInfo();
+        String mainClass = manifestInfo.getMainClass();
+        return (mainClass != null && mainClass.startsWith("org.springframework.boot.loader."))
+                || manifestInfo.getAllEntries().containsKey("Spring-Boot-Classes")
+                || manifestInfo.getAllEntries().containsKey("Spring-Boot-Lib");
+    }
+
+    private boolean hasMetaInfFile(JarAnalysisResult analysis, String path) {
+        return analysis != null
+                && path != null
+                && analysis.getMetaInfFiles().stream().anyMatch(path::equals);
+    }
+
+    private boolean hasMetaInfPathPrefix(JarAnalysisResult analysis, String prefix) {
+        return analysis != null
+                && prefix != null
+                && analysis.getMetaInfFiles().stream().anyMatch(path -> path.startsWith(prefix));
+    }
+
+    private String projectName(JarAnalysisResult analysis) {
+        if (analysis == null || analysis.getManifestInfo() == null) {
+            return null;
+        }
+        String implementationTitle = analysis.getManifestInfo().getImplementationTitle();
+        if (!hasKnownValue(implementationTitle)) {
+            return null;
+        }
+        return implementationTitle.trim();
+    }
+
+    private String originalManifestPath(String packaging, boolean originalManifestPresent) {
+        if (!originalManifestPresent) {
+            return null;
+        }
+        String resourceRoot = "war".equals(packaging) ? "webapp" : "resources";
+        return "${project.basedir}/src/main/" + resourceRoot + "/META-INF/MANIFEST.MF";
     }
 
     private void appendByteExactPackagePlugin(StringBuilder sb, String rawArtifactFileName) {
