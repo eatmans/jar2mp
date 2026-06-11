@@ -23,6 +23,7 @@ public class ArtifactFidelityReportWriter {
         report.append("# Artifact fidelity report\n\n");
         report.append("- Exact match: ").append(result.isExactMatch()).append("\n");
         report.append("- Archive bytes same: ").append(result.isArchiveBytesSame()).append("\n");
+        report.append("- Archive entry order same: ").append(result.isArchiveEntryOrderSame()).append("\n");
         report.append("- Entry content match: ").append(result.isContentEntriesMatch()).append("\n");
         report.append("- Manifest same: ").append(result.isManifestSame()).append("\n\n");
         report.append("| Metric | Original | Rebuilt | Common | Same | Different | Missing | Extra |\n");
@@ -49,6 +50,7 @@ public class ArtifactFidelityReportWriter {
         appendSamples(report, "Missing Entries", result.getSampleMissingEntries());
         appendSamples(report, "Extra Entries", result.getSampleExtraEntries());
         appendSamples(report, "Different Entries", result.getSampleDifferentEntries());
+        appendArchiveMetadata(report, result);
         appendDifferenceBuckets(report, result);
         return report.toString();
     }
@@ -63,6 +65,20 @@ public class ArtifactFidelityReportWriter {
             report.append("- `").append(sample).append("`\n");
         }
         report.append("\n");
+    }
+
+    private void appendArchiveMetadata(StringBuilder report, ArtifactFidelityResult result) {
+        report.append("## Archive metadata drift\n\n");
+        report.append("| Metric | Value |\n");
+        report.append("| --- | ---: |\n");
+        report.append("| archive metadata | ").append(result.getArchiveMetadataDiffEntries()).append(" |\n");
+        report.append("| timestamps | ").append(result.getArchiveTimestampDifferences()).append(" |\n");
+        report.append("| compression methods | ").append(result.getArchiveCompressionMethodDifferences()).append(" |\n");
+        report.append("| compressed sizes | ").append(result.getArchiveCompressedSizeDifferences()).append(" |\n");
+        report.append("| extra fields | ").append(result.getArchiveExtraFieldDifferences()).append(" |\n");
+        report.append("| comments | ").append(result.getArchiveCommentDifferences()).append(" |\n\n");
+        appendSamples(report, "Archive Metadata Difference Examples",
+                result.getSampleArchiveMetadataDifferences());
     }
 
     private void appendDifferenceBuckets(StringBuilder report, ArtifactFidelityResult result) {
@@ -117,7 +133,10 @@ public class ArtifactFidelityReportWriter {
         csv.append("original_classes,rebuilt_classes,common_classes,same_class_bytes,different_class_bytes,");
         csv.append("original_nested_libs,rebuilt_nested_libs,common_nested_libs,same_nested_libs,different_nested_libs,missing_nested_libs,extra_nested_libs,manifest_same,");
         csv.append("bucket_manifest,bucket_class_bytecode,bucket_nested_library,bucket_maven_metadata,bucket_service_metadata,bucket_boot_index,bucket_signature_metadata,bucket_resource_entry,");
-        csv.append("content_entries_match,archive_bytes_same,original_archive_sha256,rebuilt_archive_sha256\n");
+        csv.append("content_entries_match,archive_bytes_same,original_archive_sha256,rebuilt_archive_sha256,");
+        csv.append("archive_entry_order_same,archive_metadata_diff_entries,archive_timestamp_differences,");
+        csv.append("archive_compression_method_differences,archive_compressed_size_differences,");
+        csv.append("archive_extra_field_differences,archive_comment_differences\n");
         csv.append(result.isExactMatch()).append(',')
                 .append(result.getOriginalEntryTotal()).append(',')
                 .append(result.getRebuiltEntryTotal()).append(',')
@@ -149,7 +168,21 @@ public class ArtifactFidelityReportWriter {
                 .append(',')
                 .append(nullToEmpty(result.getOriginalArchiveSha256()))
                 .append(',')
-                .append(nullToEmpty(result.getRebuiltArchiveSha256()));
+                .append(nullToEmpty(result.getRebuiltArchiveSha256()))
+                .append(',')
+                .append(result.isArchiveEntryOrderSame())
+                .append(',')
+                .append(result.getArchiveMetadataDiffEntries())
+                .append(',')
+                .append(result.getArchiveTimestampDifferences())
+                .append(',')
+                .append(result.getArchiveCompressionMethodDifferences())
+                .append(',')
+                .append(result.getArchiveCompressedSizeDifferences())
+                .append(',')
+                .append(result.getArchiveExtraFieldDifferences())
+                .append(',')
+                .append(result.getArchiveCommentDifferences());
         csv.append('\n');
         return csv.toString();
     }

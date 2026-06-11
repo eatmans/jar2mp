@@ -9,11 +9,13 @@ import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -27,11 +29,16 @@ public class ArtifactFidelityComparator {
         String rebuiltArchiveSha256 = sha256(rebuilt);
         Map<String, EntryFingerprint> originalEntries = readEntries(original);
         Map<String, EntryFingerprint> rebuiltEntries = readEntries(rebuilt);
+        Map<String, ArchiveEntryMetadata> originalArchiveEntries = readArchiveEntries(original);
+        Map<String, ArchiveEntryMetadata> rebuiltArchiveEntries = readArchiveEntries(rebuilt);
 
         ArtifactFidelityResult result = new ArtifactFidelityResult();
         result.setOriginalArchiveSha256(originalArchiveSha256);
         result.setRebuiltArchiveSha256(rebuiltArchiveSha256);
         result.setArchiveBytesSame(originalArchiveSha256.equals(rebuiltArchiveSha256));
+        result.setArchiveEntryOrderSame(new ArrayList<>(originalArchiveEntries.keySet())
+                .equals(new ArrayList<>(rebuiltArchiveEntries.keySet())));
+        populateArchiveMetadataDiffs(result, originalArchiveEntries, rebuiltArchiveEntries);
         populateTotals(result, originalEntries, true);
         populateTotals(result, rebuiltEntries, false);
 
@@ -118,6 +125,46 @@ public class ArtifactFidelityComparator {
         return result;
     }
 
+    private void populateArchiveMetadataDiffs(ArtifactFidelityResult result,
+                                              Map<String, ArchiveEntryMetadata> originalEntries,
+                                              Map<String, ArchiveEntryMetadata> rebuiltEntries) {
+        for (Map.Entry<String, ArchiveEntryMetadata> entry : originalEntries.entrySet()) {
+            ArchiveEntryMetadata rebuilt = rebuiltEntries.get(entry.getKey());
+            if (rebuilt == null) {
+                continue;
+            }
+
+            ArchiveEntryMetadata original = entry.getValue();
+            boolean different = false;
+            if (original.time != rebuilt.time) {
+                result.setArchiveTimestampDifferences(result.getArchiveTimestampDifferences() + 1);
+                different = true;
+            }
+            if (original.method != rebuilt.method) {
+                result.setArchiveCompressionMethodDifferences(
+                        result.getArchiveCompressionMethodDifferences() + 1);
+                different = true;
+            }
+            if (original.compressedSize != rebuilt.compressedSize) {
+                result.setArchiveCompressedSizeDifferences(
+                        result.getArchiveCompressedSizeDifferences() + 1);
+                different = true;
+            }
+            if (!Arrays.equals(original.extra, rebuilt.extra)) {
+                result.setArchiveExtraFieldDifferences(result.getArchiveExtraFieldDifferences() + 1);
+                different = true;
+            }
+            if (!Objects.equals(original.comment, rebuilt.comment)) {
+                result.setArchiveCommentDifferences(result.getArchiveCommentDifferences() + 1);
+                different = true;
+            }
+            if (different) {
+                result.setArchiveMetadataDiffEntries(result.getArchiveMetadataDiffEntries() + 1);
+                result.recordArchiveMetadataDifference(entry.getKey());
+            }
+        }
+    }
+
     private void populateTotals(ArtifactFidelityResult result, Map<String, EntryFingerprint> entries,
                                 boolean original) {
         int classes = 0;
@@ -156,6 +203,18 @@ public class ArtifactFidelityComparator {
                     continue;
                 }
                 entries.put(entry.getName(), new EntryFingerprint(sha256(readAllBytes(jarFile, entry))));
+            }
+        }
+        return entries;
+    }
+
+    private Map<String, ArchiveEntryMetadata> readArchiveEntries(File file) throws IOException {
+        Map<String, ArchiveEntryMetadata> entries = new LinkedHashMap<>();
+        try (JarFile jarFile = new JarFile(file)) {
+            Enumeration<JarEntry> jarEntries = jarFile.entries();
+            while (jarEntries.hasMoreElements()) {
+                JarEntry entry = jarEntries.nextElement();
+                entries.put(entry.getName(), new ArchiveEntryMetadata(entry));
             }
         }
         return entries;
@@ -292,6 +351,23 @@ public class ArtifactFidelityComparator {
 
         private String getSha256() {
             return sha256;
+        }
+    }
+
+    private static class ArchiveEntryMetadata {
+        private final long time;
+        private final int method;
+        private final long compressedSize;
+        private final byte[] extra;
+        private final String comment;
+
+        private ArchiveEntryMetadata(JarEntry entry) {
+            this.time = entry.getTime();
+            this.method = entry.getMethod();
+            this.compressedSize = entry.getCompressedSize();
+            byte[] sourceExtra = entry.getExtra();
+            this.extra = sourceExtra == null ? new byte[0] : Arrays.copyOf(sourceExtra, sourceExtra.length);
+            this.comment = entry.getComment();
         }
     }
 }

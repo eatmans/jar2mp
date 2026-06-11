@@ -44,11 +44,19 @@ public class ArtifactFidelityResult {
     private boolean manifestRebuiltPresent;
     private boolean manifestSame;
     private boolean archiveBytesSame;
+    private boolean archiveEntryOrderSame;
+    private int archiveMetadataDiffEntries;
+    private int archiveTimestampDifferences;
+    private int archiveCompressionMethodDifferences;
+    private int archiveCompressedSizeDifferences;
+    private int archiveExtraFieldDifferences;
+    private int archiveCommentDifferences;
     private String originalArchiveSha256;
     private String rebuiltArchiveSha256;
     private final List<String> sampleMissingEntries = new ArrayList<>();
     private final List<String> sampleExtraEntries = new ArrayList<>();
     private final List<String> sampleDifferentEntries = new ArrayList<>();
+    private final List<String> sampleArchiveMetadataDifferences = new ArrayList<>();
     private final Map<DifferenceBucket, DifferenceBucketSummary> bucketSummaries =
             new EnumMap<>(DifferenceBucket.class);
 
@@ -116,6 +124,20 @@ public class ArtifactFidelityResult {
     public void setManifestSame(boolean manifestSame) { this.manifestSame = manifestSame; }
     public boolean isArchiveBytesSame() { return archiveBytesSame; }
     public void setArchiveBytesSame(boolean archiveBytesSame) { this.archiveBytesSame = archiveBytesSame; }
+    public boolean isArchiveEntryOrderSame() { return archiveEntryOrderSame; }
+    public void setArchiveEntryOrderSame(boolean archiveEntryOrderSame) { this.archiveEntryOrderSame = archiveEntryOrderSame; }
+    public int getArchiveMetadataDiffEntries() { return archiveMetadataDiffEntries; }
+    public void setArchiveMetadataDiffEntries(int archiveMetadataDiffEntries) { this.archiveMetadataDiffEntries = archiveMetadataDiffEntries; }
+    public int getArchiveTimestampDifferences() { return archiveTimestampDifferences; }
+    public void setArchiveTimestampDifferences(int archiveTimestampDifferences) { this.archiveTimestampDifferences = archiveTimestampDifferences; }
+    public int getArchiveCompressionMethodDifferences() { return archiveCompressionMethodDifferences; }
+    public void setArchiveCompressionMethodDifferences(int archiveCompressionMethodDifferences) { this.archiveCompressionMethodDifferences = archiveCompressionMethodDifferences; }
+    public int getArchiveCompressedSizeDifferences() { return archiveCompressedSizeDifferences; }
+    public void setArchiveCompressedSizeDifferences(int archiveCompressedSizeDifferences) { this.archiveCompressedSizeDifferences = archiveCompressedSizeDifferences; }
+    public int getArchiveExtraFieldDifferences() { return archiveExtraFieldDifferences; }
+    public void setArchiveExtraFieldDifferences(int archiveExtraFieldDifferences) { this.archiveExtraFieldDifferences = archiveExtraFieldDifferences; }
+    public int getArchiveCommentDifferences() { return archiveCommentDifferences; }
+    public void setArchiveCommentDifferences(int archiveCommentDifferences) { this.archiveCommentDifferences = archiveCommentDifferences; }
     public String getOriginalArchiveSha256() { return originalArchiveSha256; }
     public void setOriginalArchiveSha256(String originalArchiveSha256) { this.originalArchiveSha256 = originalArchiveSha256; }
     public String getRebuiltArchiveSha256() { return rebuiltArchiveSha256; }
@@ -123,6 +145,7 @@ public class ArtifactFidelityResult {
     public List<String> getSampleMissingEntries() { return sampleMissingEntries; }
     public List<String> getSampleExtraEntries() { return sampleExtraEntries; }
     public List<String> getSampleDifferentEntries() { return sampleDifferentEntries; }
+    public List<String> getSampleArchiveMetadataDifferences() { return sampleArchiveMetadataDifferences; }
 
     public void recordMissing(DifferenceBucket bucket, String path) {
         getBucketSummary(bucket).recordMissing(path);
@@ -134,6 +157,10 @@ public class ArtifactFidelityResult {
 
     public void recordDifferent(DifferenceBucket bucket, String path) {
         getBucketSummary(bucket).recordDifferent(path);
+    }
+
+    public void recordArchiveMetadataDifference(String path) {
+        addSample(sampleArchiveMetadataDifferences, path);
     }
 
     public DifferenceBucketSummary getBucketSummary(DifferenceBucket bucket) {
@@ -152,6 +179,12 @@ public class ArtifactFidelityResult {
             summaries.add(getBucketSummary(bucket));
         }
         return summaries;
+    }
+
+    private void addSample(List<String> samples, String path) {
+        if (path != null && samples.size() < SAMPLE_LIMIT && !samples.contains(path)) {
+            samples.add(path);
+        }
     }
 
     public static class DifferenceBucketSummary {

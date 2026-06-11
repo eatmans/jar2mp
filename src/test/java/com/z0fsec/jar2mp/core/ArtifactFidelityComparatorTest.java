@@ -104,6 +104,33 @@ class ArtifactFidelityComparatorTest {
         assertEquals(0, result.getDifferentSha256());
         assertEquals(0, result.getMissingEntries());
         assertEquals(0, result.getExtraEntries());
+        assertTrue(result.isArchiveEntryOrderSame());
+        assertEquals(2, result.getArchiveTimestampDifferences());
+        assertEquals(0, result.getArchiveCompressionMethodDifferences());
+        assertEquals(0, result.getArchiveCompressedSizeDifferences());
+        assertEquals(2, result.getArchiveExtraFieldDifferences());
+        assertEquals(2, result.getArchiveMetadataDiffEntries());
+    }
+
+    @Test
+    void reportsArchiveEntryOrderDriftSeparatelyFromContentMatch() throws Exception {
+        Path original = tempDir.resolve("original.jar");
+        Path rebuilt = tempDir.resolve("rebuilt.jar");
+        writeJar(original,
+                entry("first.txt", "same"),
+                entry("second.txt", "same"));
+        writeJar(rebuilt,
+                entry("second.txt", "same"),
+                entry("first.txt", "same"));
+
+        ArtifactFidelityResult result = new ArtifactFidelityComparator()
+                .compare(original.toFile(), rebuilt.toFile());
+
+        assertFalse(result.isExactMatch());
+        assertTrue(result.isContentEntriesMatch());
+        assertFalse(result.isArchiveEntryOrderSame());
+        assertEquals(0, result.getArchiveTimestampDifferences());
+        assertEquals(2, result.getArchiveMetadataDiffEntries());
     }
 
     @Test
@@ -166,6 +193,8 @@ class ArtifactFidelityComparatorTest {
         assertTrue(markdown.contains("- Exact match: false"));
         assertTrue(markdown.contains("- Archive bytes same: false"));
         assertTrue(markdown.contains("- Entry content match: false"));
+        assertTrue(markdown.contains("- Archive entry order same: true"));
+        assertTrue(markdown.contains("| archive metadata |"));
         assertTrue(markdown.contains("## Difference buckets"));
         assertTrue(markdown.contains("| Bucket | Missing | Extra | Different | Total | Examples |"));
         assertTrue(markdown.contains("| CLASS_BYTECODE | 0 | 0 | 1 | 1 | `com/example/App.class` |"));
@@ -181,6 +210,11 @@ class ArtifactFidelityComparatorTest {
         assertEquals("0", values[indexOf(headers, "bucket_resource_entry")]);
         assertEquals("false", values[indexOf(headers, "content_entries_match")]);
         assertEquals("false", values[indexOf(headers, "archive_bytes_same")]);
+        assertEquals("true", values[indexOf(headers, "archive_entry_order_same")]);
+        assertEquals(String.valueOf(result.getArchiveMetadataDiffEntries()),
+                values[indexOf(headers, "archive_metadata_diff_entries")]);
+        assertEquals(String.valueOf(result.getArchiveTimestampDifferences()),
+                values[indexOf(headers, "archive_timestamp_differences")]);
     }
 
     @Test
