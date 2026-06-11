@@ -586,6 +586,20 @@ class PomGeneratorTest {
         moditectPlugin.getExecutionsXml().add("<execution><goals><goal>add-module-info</goal></goals></execution>");
         pomInfo.getBuildPlugins().add(moditectPlugin);
 
+        BuildPluginInfo plexusMetadataPlugin = new BuildPluginInfo();
+        plexusMetadataPlugin.setGroupId("org.codehaus.plexus");
+        plexusMetadataPlugin.setArtifactId("plexus-component-metadata");
+        plexusMetadataPlugin.getExecutionsXml().add(
+                "<execution><goals><goal>generate-metadata</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(plexusMetadataPlugin);
+
+        BuildPluginInfo execPlugin = new BuildPluginInfo();
+        execPlugin.setGroupId("org.codehaus.mojo");
+        execPlugin.setArtifactId("exec-maven-plugin");
+        execPlugin.getExecutionsXml().add("<execution><phase>process-classes</phase>"
+                + "<goals><goal>java</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(execPlugin);
+
         BuildPluginInfo jarPlugin = new BuildPluginInfo();
         jarPlugin.setGroupId("org.apache.maven.plugins");
         jarPlugin.setArtifactId("maven-jar-plugin");
@@ -603,6 +617,8 @@ class PomGeneratorTest {
         assertFalse(pomXml.contains("<artifactId>antlr4-maven-plugin</artifactId>"));
         assertFalse(pomXml.contains("<artifactId>replacer</artifactId>"));
         assertFalse(pomXml.contains("<artifactId>moditect-maven-plugin</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>plexus-component-metadata</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>exec-maven-plugin</artifactId>"));
         assertFalse(pomXml.contains("${maven-jar-plugin.version}"));
         assertTrue(pomXml.contains("<artifactId>maven-jar-plugin</artifactId>"));
         assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));

@@ -495,7 +495,9 @@ public class PomGenerator {
                 || "json-schema-validator".equals(artifactId)
                 || "antlr4-maven-plugin".equals(artifactId)
                 || "replacer".equals(artifactId)
-                || "moditect-maven-plugin".equals(artifactId);
+                || "moditect-maven-plugin".equals(artifactId)
+                || "plexus-component-metadata".equals(artifactId)
+                || "exec-maven-plugin".equals(artifactId);
     }
 
     private boolean isPackageTransformingPlugin(String artifactId) {
