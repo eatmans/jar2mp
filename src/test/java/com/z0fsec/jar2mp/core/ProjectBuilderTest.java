@@ -181,6 +181,31 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void preservesOriginalMavenMetadataResources() throws Exception {
+        Path jar = tempDir.resolve("sample.jar");
+        String pomXml = "<project><modelVersion>4.0.0</modelVersion></project>\n";
+        String pomProperties = "groupId=com.example\nartifactId=sample\nversion=1.0.0\n";
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addEntry(out, "com/example/App.class", minimalClassBytes(52));
+            addEntry(out, "META-INF/maven/com.example/sample/pom.xml", pomXml);
+            addEntry(out, "META-INF/maven/com.example/sample/pom.properties", pomProperties);
+        }
+
+        JarAnalysisResult analysis = new JarAnalyzer(
+                new com.z0fsec.jar2mp.db.PackagePrefixDatabase()).analyze(jar.toFile(), null);
+        ProjectConfig config = new ProjectConfig();
+        config.setDecompile(false);
+        Path outputDir = tempDir.resolve("maven-metadata-out");
+
+        new ProjectBuilder(config).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertEquals(pomXml, Files.readString(outputDir.resolve(
+                "src/main/resources/META-INF/maven/com.example/sample/pom.xml")));
+        assertEquals(pomProperties, Files.readString(outputDir.resolve(
+                "src/main/resources/META-INF/maven/com.example/sample/pom.properties")));
+    }
+
+    @Test
     void writesPackageInfoSourceAsPackageDeclaration() throws Exception {
         Path jar = tempDir.resolve("package-info.jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {

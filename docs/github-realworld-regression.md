@@ -47,7 +47,7 @@ Runtime and artifact evidence are reported as separate gate columns. Long-runnin
 
 The script now records three artifact-fidelity tracks:
 
-- `artifact_*` columns compare the original artifact with the Maven package produced from the restored source project. These are expected to remain imperfect until source recompilation can reproduce compiler output and packaging metadata.
+- `artifact_*` columns compare the original artifact with the Maven package produced from the restored source project. jar2mp preserves original `META-INF/maven/**` metadata and disables generated Maven descriptors so this track can isolate remaining compiler, manifest, resource, or packaging metadata drift.
 - `raw_artifact_*` columns compare the original artifact with `target/raw-artifact/<original-name>`, a byte-for-byte preserved copy emitted by `--emit-raw-artifact`. These columns prove jar2mp can retain an exact raw artifact alongside the source restoration without claiming that the source rebuild is byte-identical.
 - `byte_exact_*` columns run a separate `--byte-exact-package --verify-build` restoration and compare its final Maven `package` output against the original artifact. This is the strict package-level byte equality gate.
 

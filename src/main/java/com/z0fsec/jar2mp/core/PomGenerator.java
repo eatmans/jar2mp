@@ -112,18 +112,25 @@ public class PomGenerator {
         }
         sb.append("        <plugins>\n");
         boolean hasCompilerPlugin = false;
+        boolean hasArchiveDescriptorPlugin = false;
         if (embeddedPom != null) {
             for (BuildPluginInfo plugin : embeddedPom.getBuildPlugins()) {
                 if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
                     hasCompilerPlugin = true;
                 }
+                if (isArchiveDescriptorPlugin(plugin.getArtifactId(), packaging)) {
+                    hasArchiveDescriptorPlugin = true;
+                }
                 if (shouldAppendBuildPlugin(plugin, config != null && config.isByteExactPackage())) {
-                    appendBuildPlugin(sb, plugin);
+                    appendBuildPlugin(sb, plugin, packaging);
                 }
             }
         }
         if (!hasCompilerPlugin) {
             appendFallbackCompilerPlugin(sb, javaVersion);
+        }
+        if (!hasArchiveDescriptorPlugin) {
+            appendMavenDescriptorPlugin(sb, packaging);
         }
         if (byteExactArtifactFileName != null) {
             appendByteExactPackagePlugin(sb, byteExactArtifactFileName);
@@ -270,7 +277,7 @@ public class PomGenerator {
         sb.append("    </").append(containerName).append(">\n\n");
     }
 
-    private void appendBuildPlugin(StringBuilder sb, BuildPluginInfo plugin) {
+    private void appendBuildPlugin(StringBuilder sb, BuildPluginInfo plugin, String packaging) {
         sb.append("            <plugin>\n");
         if (plugin.getGroupId() != null) {
             appendElement(sb, "groupId", plugin.getGroupId(), "                ");
@@ -280,15 +287,22 @@ public class PomGenerator {
             appendElement(sb, "version", plugin.getVersion(), "                ");
         }
         boolean compilerPlugin = "maven-compiler-plugin".equals(plugin.getArtifactId());
+        boolean archiveDescriptorPlugin = isArchiveDescriptorPlugin(plugin.getArtifactId(), packaging);
         if (plugin.getConfigurationXml() != null) {
-            String configurationXml = compilerPlugin
-                    ? sanitizeCompilerConfiguration(plugin.getConfigurationXml())
-                    : plugin.getConfigurationXml();
+            String configurationXml = plugin.getConfigurationXml();
+            if (compilerPlugin) {
+                configurationXml = sanitizeCompilerConfiguration(configurationXml);
+            }
+            if (archiveDescriptorPlugin) {
+                configurationXml = disableMavenDescriptor(configurationXml);
+            }
             appendRawXml(sb, configurationXml, "                ");
         } else if (compilerPlugin) {
             sb.append("                <configuration combine.self=\"override\">\n");
             sb.append("                    <proc>none</proc>\n");
             sb.append("                </configuration>\n");
+        } else if (archiveDescriptorPlugin) {
+            appendMavenDescriptorConfiguration(sb, packaging, "                ");
         }
         if (!plugin.getExecutionsXml().isEmpty()) {
             sb.append("                <executions>\n");
@@ -375,6 +389,56 @@ public class PomGenerator {
         sb.append("                    <proc>none</proc>\n");
         sb.append("                </configuration>\n");
         sb.append("            </plugin>\n");
+    }
+
+    private void appendMavenDescriptorPlugin(StringBuilder sb, String packaging) {
+        boolean war = "war".equals(packaging);
+        sb.append("            <plugin>\n");
+        sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
+        sb.append("                <artifactId>").append(war ? "maven-war-plugin" : "maven-jar-plugin")
+                .append("</artifactId>\n");
+        appendMavenDescriptorConfiguration(sb, packaging, "                ");
+        sb.append("            </plugin>\n");
+    }
+
+    private void appendMavenDescriptorConfiguration(StringBuilder sb, String packaging, String indent) {
+        sb.append(indent).append("<configuration>\n");
+        if ("war".equals(packaging)) {
+            sb.append(indent).append("    <failOnMissingWebXml>false</failOnMissingWebXml>\n");
+        }
+        sb.append(indent).append("    <archive>\n");
+        sb.append(indent).append("        <addMavenDescriptor>false</addMavenDescriptor>\n");
+        sb.append(indent).append("    </archive>\n");
+        sb.append(indent).append("</configuration>\n");
+    }
+
+    private boolean isArchiveDescriptorPlugin(String artifactId, String packaging) {
+        if ("war".equals(packaging)) {
+            return "maven-war-plugin".equals(artifactId);
+        }
+        return "maven-jar-plugin".equals(artifactId);
+    }
+
+    private String disableMavenDescriptor(String configurationXml) {
+        if (configurationXml == null) {
+            return null;
+        }
+        if (configurationXml.matches("(?s).*<addMavenDescriptor>.*?</addMavenDescriptor>.*")) {
+            return configurationXml.replaceAll("(?s)<addMavenDescriptor>.*?</addMavenDescriptor>",
+                    "<addMavenDescriptor>false</addMavenDescriptor>");
+        }
+        if (configurationXml.contains("</archive>")) {
+            return configurationXml.replace("</archive>",
+                    "  <addMavenDescriptor>false</addMavenDescriptor>\n</archive>");
+        }
+        if (configurationXml.contains("</configuration>")) {
+            return configurationXml.replace("</configuration>",
+                    "  <archive>\n"
+                            + "    <addMavenDescriptor>false</addMavenDescriptor>\n"
+                            + "  </archive>\n"
+                            + "</configuration>");
+        }
+        return configurationXml;
     }
 
     private void appendByteExactPackagePlugin(StringBuilder sb, String rawArtifactFileName) {

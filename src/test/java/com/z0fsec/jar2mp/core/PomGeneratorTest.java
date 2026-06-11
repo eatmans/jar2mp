@@ -71,6 +71,36 @@ class PomGeneratorTest {
     }
 
     @Test
+    void disablesGeneratedMavenDescriptorForJarPackages() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<artifactId>maven-jar-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));
+    }
+
+    @Test
+    void disablesGeneratedMavenDescriptorForWarPackages() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<artifactId>maven-war-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));
+    }
+
+    @Test
     void byteExactPackageAddsSkipPropertiesForStandaloneMavenPackage() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("com.example");

@@ -201,7 +201,7 @@ Options:
 
 能还原的主要内容：
 
-- Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标和部分构建元数据
+- Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标、原始 `META-INF/maven/**` metadata 和部分构建元数据
 
 不能保证完全还原的内容：
 
