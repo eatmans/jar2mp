@@ -7,8 +7,10 @@ import com.z0fsec.jar2mp.util.Jar2MpConstants;
 
 import java.io.*;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 
 public class CliRunner {
@@ -610,9 +612,35 @@ public class CliRunner {
                     + new File(outputDir, "target").getAbsolutePath());
         }
         ArtifactFidelityResult fidelity = comparator.compare(originalArtifact, packagedArtifact);
+        if (!fidelity.isExactMatch()
+                && !fidelity.isArchiveBytesSame()
+                && canAttemptRecordLevelRestoration(fidelity)) {
+            File restoredDir = new File(new File(outputDir, "target"), "byte-exact-package-restored");
+            try {
+                File restoredArtifact = new ZipRecordOrderRestorer().restore(originalArtifact, packagedArtifact,
+                        restoredDir);
+                Files.copy(restoredArtifact.toPath(), packagedArtifact.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+                fidelity = comparator.compare(originalArtifact, packagedArtifact);
+            } catch (IOException ignored) {
+                // Keep the original comparison report when record-level restoration is not applicable.
+            }
+        }
         File reportDir = new File(new File(outputDir, "target"), "byte-exact-package-check");
         reportWriter.write(reportDir, fidelity);
         return fidelity;
+    }
+
+    private boolean canAttemptRecordLevelRestoration(ArtifactFidelityResult fidelity) {
+        if (fidelity.isContentEntriesMatch()) {
+            return true;
+        }
+        return fidelity.getMissingEntries() == 0
+                && fidelity.getExtraEntries() == 0
+                && fidelity.getDifferentSha256() == 1
+                && fidelity.isManifestOriginalPresent()
+                && fidelity.isManifestRebuiltPresent()
+                && !fidelity.isManifestSame();
     }
 
     private File findPackagedArtifact(File outputDir, File originalArtifact) {

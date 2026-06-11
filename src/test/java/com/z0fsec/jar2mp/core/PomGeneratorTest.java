@@ -151,7 +151,7 @@ class PomGeneratorTest {
 
         assertTrue(pomXml.contains(
                 "<manifestFile>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</manifestFile>"));
-        assertFalse(pomXml.contains("<addDefaultEntries>false</addDefaultEntries>"));
+        assertTrue(pomXml.contains("<addDefaultEntries>false</addDefaultEntries>"));
     }
 
     @Test
@@ -360,7 +360,7 @@ class PomGeneratorTest {
     }
 
     @Test
-    void byteExactPackageOmitsPackageTransformingPlugins() {
+    void byteExactPackageKeepsPackageTransformingPluginsForSourceRebuild() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("com.example");
         analysis.setDetectedArtifactId("demo");
@@ -380,8 +380,10 @@ class PomGeneratorTest {
 
         String pomXml = new PomGenerator().generate(analysis, config);
 
-        assertFalse(pomXml.contains("<artifactId>maven-shade-plugin</artifactId>"));
-        assertTrue(pomXml.contains("restore-byte-exact-artifact"));
+        assertTrue(pomXml.contains("<artifactId>maven-shade-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<goal>shade</goal>"));
+        assertFalse(pomXml.contains("restore-byte-exact-artifact"));
+        assertTrue(pomXml.contains("<finalName>demo-1.0.0-all</finalName>"));
     }
 
     @Test

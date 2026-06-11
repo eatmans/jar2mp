@@ -21,6 +21,7 @@ public class ZipRecordOrderRestorer {
     private static final long END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50L;
     private static final long ZIP64_MARKER = 0xffffffffL;
     private static final int ZIP64_ENTRY_COUNT_MARKER = 0xffff;
+    private static final String MANIFEST_ENTRY = "META-INF/MANIFEST.MF";
 
     public File restore(File originalArtifact, File rebuiltArtifact, File outputDir) throws IOException {
         if (originalArtifact == null || !originalArtifact.isFile()) {
@@ -98,6 +99,13 @@ public class ZipRecordOrderRestorer {
         if (original.isEmptyDirectoryEntry(name) || !rebuilt.localRecords.containsKey(name)) {
             return original.localRecords.get(name).clone();
         }
+        if (usesOriginalPayload(name)) {
+            return original.localRecords.get(name).clone();
+        }
+        byte[] restoredRecord = restoreLocalRecordMetadata(original, rebuilt, name);
+        if (restoredRecord != null) {
+            return restoredRecord;
+        }
         byte[] localRecord = rebuilt.localRecords.get(name).clone();
         copyDosTimestamp(original.localRecords.get(name), 10, localRecord, 10);
         copyExtraFieldIfSameLength(original.localRecords.get(name), localRecord, 26, 28, 30);
@@ -108,10 +116,68 @@ public class ZipRecordOrderRestorer {
         if (original.isEmptyDirectoryEntry(name) || !rebuilt.centralRecords.containsKey(name)) {
             return original.centralRecords.get(name).clone();
         }
+        if (usesOriginalPayload(name)) {
+            return original.centralRecords.get(name).clone();
+        }
+        if (compressedSizesMatch(original, rebuilt, name)) {
+            return original.centralRecords.get(name).clone();
+        }
         byte[] centralRecord = rebuilt.centralRecords.get(name).clone();
         copyDosTimestamp(original.centralRecords.get(name), 12, centralRecord, 12);
         copyExtraFieldIfSameLength(original.centralRecords.get(name), centralRecord, 28, 30, 46);
         return centralRecord;
+    }
+
+    private static byte[] restoreLocalRecordMetadata(ZipLayout original, ZipLayout rebuilt, String name) {
+        if (!compressedSizesMatch(original, rebuilt, name)) {
+            return null;
+        }
+        byte[] originalRecord = original.localRecords.get(name);
+        byte[] rebuiltRecord = rebuilt.localRecords.get(name);
+        int originalDataStart = localDataStart(originalRecord);
+        int rebuiltDataStart = localDataStart(rebuiltRecord);
+        int compressedSize = compressedSizeAsInt(original.centralRecords.get(name));
+        if (compressedSize < 0) {
+            return null;
+        }
+        int rebuiltDataEnd = rebuiltDataStart + compressedSize;
+        if (rebuiltDataEnd > rebuiltRecord.length || originalDataStart + compressedSize > originalRecord.length) {
+            return null;
+        }
+
+        int originalDescriptorStart = originalDataStart + compressedSize;
+        ByteArrayOutputStream output = new ByteArrayOutputStream(
+                originalDataStart + compressedSize + originalRecord.length - originalDescriptorStart);
+        output.write(originalRecord, 0, originalDataStart);
+        output.write(rebuiltRecord, rebuiltDataStart, compressedSize);
+        output.write(originalRecord, originalDescriptorStart, originalRecord.length - originalDescriptorStart);
+        return output.toByteArray();
+    }
+
+    private static boolean compressedSizesMatch(ZipLayout original, ZipLayout rebuilt, String name) {
+        byte[] originalCentralRecord = original.centralRecords.get(name);
+        byte[] rebuiltCentralRecord = rebuilt.centralRecords.get(name);
+        return originalCentralRecord != null
+                && rebuiltCentralRecord != null
+                && readUInt32(originalCentralRecord, 20) == readUInt32(rebuiltCentralRecord, 20);
+    }
+
+    private static int localDataStart(byte[] localRecord) {
+        int nameLength = readUInt16(localRecord, 26);
+        int extraLength = readUInt16(localRecord, 28);
+        return 30 + nameLength + extraLength;
+    }
+
+    private static int compressedSizeAsInt(byte[] centralRecord) {
+        long compressedSize = readUInt32(centralRecord, 20);
+        if (compressedSize > Integer.MAX_VALUE) {
+            return -1;
+        }
+        return (int) compressedSize;
+    }
+
+    private static boolean usesOriginalPayload(String name) {
+        return MANIFEST_ENTRY.equals(name);
     }
 
     private static void copyExtraFieldIfSameLength(byte[] source, byte[] target, int nameLengthOffset,

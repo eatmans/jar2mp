@@ -145,7 +145,7 @@ public class PomGenerator {
                 if (isArchiveDescriptorPlugin(plugin.getArtifactId(), packaging)) {
                     hasArchiveDescriptorPlugin = true;
                 }
-                if (shouldAppendBuildPlugin(plugin, config != null && config.isByteExactPackage())) {
+                if (shouldAppendBuildPlugin(plugin)) {
                     appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalCreatedBy,
                             originalBuildInfoPresent, useOriginalWarLibraries);
                 }
@@ -158,8 +158,8 @@ public class PomGenerator {
             appendMavenDescriptorPlugin(sb, packaging, originalManifestPath, originalCreatedBy,
                     useOriginalWarLibraries);
         }
-        if (useOriginalClassOverlay || useOriginalResourceOverlay || byteExactArtifactFileName != null) {
-            appendAntrunPlugin(sb, useOriginalClassOverlay, useOriginalResourceOverlay, byteExactArtifactFileName);
+        if (useOriginalClassOverlay || useOriginalResourceOverlay) {
+            appendAntrunPlugin(sb, useOriginalClassOverlay, useOriginalResourceOverlay);
         }
         sb.append("        </plugins>\n");
         sb.append("    </build>\n");
@@ -336,8 +336,7 @@ public class PomGenerator {
             }
             if (archiveDescriptorPlugin) {
                 configurationXml = disableMavenDescriptor(configurationXml);
-                configurationXml = configureOriginalManifest(configurationXml, originalManifestPath,
-                        "war".equals(packaging));
+                configurationXml = configureOriginalManifest(configurationXml, originalManifestPath, true);
                 configurationXml = configureOriginalCreatedBy(configurationXml, originalCreatedBy);
                 if (useOriginalWarLibraries) {
                     configurationXml = configureOriginalWarLibraries(configurationXml);
@@ -396,11 +395,8 @@ public class PomGenerator {
                 "<configuration combine.self=\"override\"$1>");
     }
 
-    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin, boolean byteExactPackage) {
+    private boolean shouldAppendBuildPlugin(BuildPluginInfo plugin) {
         if (plugin == null || plugin.getArtifactId() == null) {
-            return false;
-        }
-        if (byteExactPackage && isPackageTransformingPlugin(plugin.getArtifactId())) {
             return false;
         }
         if ("maven-compiler-plugin".equals(plugin.getArtifactId())) {
@@ -412,12 +408,6 @@ public class PomGenerator {
             }
         }
         return true;
-    }
-
-    private boolean isPackageTransformingPlugin(String artifactId) {
-        return "maven-shade-plugin".equals(artifactId)
-                || "maven-assembly-plugin".equals(artifactId)
-                || "spring-boot-maven-plugin".equals(artifactId);
     }
 
     private boolean runsBeforeCompile(String executionXml) {
@@ -479,11 +469,9 @@ public class PomGenerator {
             sb.append(indent).append("        </manifestEntries>\n");
         }
         if (originalManifestPath != null) {
-            if ("war".equals(packaging)) {
-                sb.append(indent).append("        <manifest>\n");
-                sb.append(indent).append("            <addDefaultEntries>false</addDefaultEntries>\n");
-                sb.append(indent).append("        </manifest>\n");
-            }
+            sb.append(indent).append("        <manifest>\n");
+            sb.append(indent).append("            <addDefaultEntries>false</addDefaultEntries>\n");
+            sb.append(indent).append("        </manifest>\n");
             sb.append(indent).append("        <manifestFile>")
                     .append(escapeXml(originalManifestPath))
                     .append("</manifestFile>\n");
@@ -717,7 +705,7 @@ public class PomGenerator {
     }
 
     private void appendAntrunPlugin(StringBuilder sb, boolean useOriginalClassOverlay,
-                                    boolean useOriginalResourceOverlay, String rawArtifactFileName) {
+                                    boolean useOriginalResourceOverlay) {
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>maven-antrun-plugin</artifactId>\n");
@@ -728,9 +716,6 @@ public class PomGenerator {
         }
         if (useOriginalResourceOverlay) {
             appendOriginalResourceOverlayExecution(sb);
-        }
-        if (rawArtifactFileName != null) {
-            appendByteExactArtifactExecution(sb, rawArtifactFileName);
         }
         sb.append("                </executions>\n");
         sb.append("            </plugin>\n");
@@ -765,23 +750,6 @@ public class PomGenerator {
         sb.append("                                <copy todir=\"${project.build.outputDirectory}\" overwrite=\"true\" preservelastmodified=\"true\">\n");
         sb.append("                                    <fileset dir=\"${project.basedir}/src/main/resources\" />\n");
         sb.append("                                </copy>\n");
-        sb.append("                            </target>\n");
-        sb.append("                        </configuration>\n");
-        sb.append("                    </execution>\n");
-    }
-
-    private void appendByteExactArtifactExecution(StringBuilder sb, String rawArtifactFileName) {
-        sb.append("                    <execution>\n");
-        sb.append("                        <id>restore-byte-exact-artifact</id>\n");
-        sb.append("                        <phase>package</phase>\n");
-        sb.append("                        <goals>\n");
-        sb.append("                            <goal>run</goal>\n");
-        sb.append("                        </goals>\n");
-        sb.append("                        <configuration>\n");
-        sb.append("                            <target>\n");
-        sb.append("                                <copy file=\"${project.basedir}/target/raw-artifact/")
-                .append(escapeXml(rawArtifactFileName))
-                .append("\" tofile=\"${project.build.directory}/${project.build.finalName}.${project.packaging}\" overwrite=\"true\" />\n");
         sb.append("                            </target>\n");
         sb.append("                        </configuration>\n");
         sb.append("                    </execution>\n");

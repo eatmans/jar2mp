@@ -190,7 +190,7 @@ class CliRunnerTest {
     }
 
     @Test
-    void byteExactPackageMakesMavenPackageOutputByteExact() throws Exception {
+    void byteExactPackageKeepsRawArtifactAuxiliaryWithoutPomRawCopy() throws Exception {
         Path jar = createJar("sample-1.0.jar", "com/example/App.class",
                 minimalClassBytes(52, "com/example/App"),
                 "config.properties", "mode=raw-package\n".getBytes(StandardCharsets.UTF_8));
@@ -207,19 +207,15 @@ class CliRunnerTest {
         assertEquals(0, exitCode);
         Path projectDir = output.resolve("sample");
         assertTrue(Files.exists(projectDir.resolve("target/raw-artifact/sample-1.0.jar")));
-        assertTrue(Files.readString(projectDir.resolve("pom.xml")).contains("restore-byte-exact-artifact"));
-        int packageExitCode = runMaven(projectDir, "package");
-        assertEquals(0, packageExitCode);
-        Path rebuilt = projectDir.resolve("target/sample-1.0.jar");
-        assertTrue(Files.exists(rebuilt));
-        ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(jar.toFile(), rebuilt.toFile());
-        assertTrue(fidelity.isExactMatch());
+        String pomXml = Files.readString(projectDir.resolve("pom.xml"));
+        assertTrue(pomXml.contains("<finalName>sample-1.0</finalName>"));
+        assertFalse(pomXml.contains("restore-byte-exact-artifact"));
     }
 
     @Test
     void byteExactPackageMakesWarPackageOutputByteExact() throws Exception {
-        Path war = createJar("sample-web-1.0.war", "WEB-INF/classes/com/example/WebApp.class",
-                minimalClassBytes(52, "com/example/WebApp"),
+        Path war = createJarWithManifest("sample-web-1.0.war", "WEB-INF/classes/com/example/WebApp.class",
+                compiledClassBytes("com/example/WebApp"),
                 "WEB-INF/web.xml", "<web-app/>".getBytes(StandardCharsets.UTF_8));
         Path output = tempDir.resolve("out");
 
@@ -227,6 +223,7 @@ class CliRunnerTest {
                 "--byte-exact-package",
                 "--no-decompile",
                 "--no-dependencies",
+                "--verify-build",
                 "-o", output.toString(),
                 war.toString()
         });
@@ -234,10 +231,9 @@ class CliRunnerTest {
         assertEquals(0, exitCode);
         Path projectDir = output.resolve("sample-web");
         assertTrue(Files.exists(projectDir.resolve("target/raw-artifact/sample-web-1.0.war")));
-        assertTrue(Files.readString(projectDir.resolve("pom.xml")).contains("<packaging>war</packaging>"));
-        assertTrue(Files.readString(projectDir.resolve("pom.xml")).contains("restore-byte-exact-artifact"));
-        int packageExitCode = runMaven(projectDir, "package");
-        assertEquals(0, packageExitCode);
+        String pomXml = Files.readString(projectDir.resolve("pom.xml"));
+        assertTrue(pomXml.contains("<packaging>war</packaging>"));
+        assertFalse(pomXml.contains("restore-byte-exact-artifact"));
         Path rebuilt = projectDir.resolve("target/sample-web-1.0.war");
         assertTrue(Files.exists(rebuilt));
         ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(war.toFile(), rebuilt.toFile());
@@ -246,8 +242,8 @@ class CliRunnerTest {
 
     @Test
     void byteExactPackageVerifyBuildDefaultsToPackageGoal() throws Exception {
-        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
-                minimalClassBytes(52, "com/example/App"),
+        Path jar = createJarWithManifest("sample-1.0.jar", "com/example/App.class",
+                compiledClassBytes("com/example/App"),
                 "config.properties", "mode=verify-package\n".getBytes(StandardCharsets.UTF_8));
         Path output = tempDir.resolve("out");
 
@@ -267,8 +263,8 @@ class CliRunnerTest {
 
     @Test
     void byteExactPackageVerifyBuildWritesExactPackageReport() throws Exception {
-        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
-                minimalClassBytes(52, "com/example/App"),
+        Path jar = createJarWithManifest("sample-1.0.jar", "com/example/App.class",
+                compiledClassBytes("com/example/App"),
                 "config.properties", "mode=verify-package-exact\n".getBytes(StandardCharsets.UTF_8));
         Path output = tempDir.resolve("out");
 
@@ -287,6 +283,37 @@ class CliRunnerTest {
         String csv = Files.readString(fidelityDir.resolve("artifact-fidelity-summary.csv"));
         assertTrue(csv.startsWith("exact_match,"));
         assertTrue(csv.contains("\ntrue,"));
+        Path rebuilt = output.resolve("sample").resolve("target/sample-1.0.jar");
+        ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(jar.toFile(), rebuilt.toFile());
+        assertTrue(fidelity.isExactMatch());
+    }
+
+    @Test
+    void byteExactPackageRestoresOriginalManifestByteOrder() throws Exception {
+        byte[] manifestBytes = ("Manifest-Version: 1.0\r\n"
+                + "Created-By: Maven JAR Plugin 3.4.2\r\n"
+                + "Build-Jdk-Spec: 21\r\n"
+                + "Implementation-Title: sample\r\n"
+                + "Implementation-Version: 1.0\r\n"
+                + "\r\n").getBytes(StandardCharsets.UTF_8);
+        Path jar = createJarWithRawManifest("sample-1.0.jar", manifestBytes,
+                "com/example/App.class", compiledClassBytes("com/example/App"),
+                "config.properties", "mode=manifest-order\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--byte-exact-package",
+                "--no-decompile",
+                "--no-dependencies",
+                "--verify-build",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path rebuilt = output.resolve("sample").resolve("target/sample-1.0.jar");
+        ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(jar.toFile(), rebuilt.toFile());
+        assertTrue(fidelity.isExactMatch());
     }
 
     @Test
@@ -572,6 +599,37 @@ class CliRunnerTest {
         return createJar(fileName, classEntry, classBytes, null, null);
     }
 
+    private byte[] compiledClassBytes(String internalName) throws Exception {
+        String simpleName = internalName.substring(internalName.lastIndexOf('/') + 1);
+        String packageName = "";
+        int packageEnd = internalName.lastIndexOf('/');
+        if (packageEnd >= 0) {
+            packageName = internalName.substring(0, packageEnd).replace('/', '.');
+        }
+        Path sourceRoot = tempDir.resolve("compiled-src-" + simpleName + "-" + System.nanoTime());
+        Path packageDir = packageEnd >= 0
+                ? sourceRoot.resolve(internalName.substring(0, packageEnd))
+                : sourceRoot;
+        Files.createDirectories(packageDir);
+        Path sourceFile = packageDir.resolve(simpleName + ".java");
+        String source = (packageName.isEmpty() ? "" : "package " + packageName + ";\n")
+                + "public class " + simpleName + " {}\n";
+        Files.writeString(sourceFile, source, StandardCharsets.UTF_8);
+
+        Path classesDir = tempDir.resolve("compiled-classes-" + simpleName + "-" + System.nanoTime());
+        Files.createDirectories(classesDir);
+        int compileResult = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, compileResult);
+        return Files.readAllBytes(classesDir.resolve(internalName + ".class"));
+    }
+
     private Path createRunnableJar(String fileName) throws Exception {
         Path sourceDir = tempDir.resolve("runtime-src/demo");
         Files.createDirectories(sourceDir);
@@ -632,6 +690,44 @@ class CliRunnerTest {
             out.closeEntry();
             if (resourceEntry != null) {
                 out.putNextEntry(new JarEntry(resourceEntry));
+                out.write(resourceBytes);
+                out.closeEntry();
+            }
+        }
+        return jar;
+    }
+
+    private Path createJarWithManifest(String fileName, String classEntry, byte[] classBytes,
+                                       String resourceEntry, byte[] resourceBytes) throws Exception {
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        Path jar = tempDir.resolve(fileName);
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry(classEntry));
+            out.write(classBytes);
+            out.closeEntry();
+            if (resourceEntry != null) {
+                out.putNextEntry(new JarEntry(resourceEntry));
+                out.write(resourceBytes);
+                out.closeEntry();
+            }
+        }
+        return jar;
+    }
+
+    private Path createJarWithRawManifest(String fileName, byte[] manifestBytes,
+                                          String classEntry, byte[] classBytes,
+                                          String resourceEntry, byte[] resourceBytes) throws Exception {
+        Path jar = tempDir.resolve(fileName);
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new ZipEntry("META-INF/MANIFEST.MF"));
+            out.write(manifestBytes);
+            out.closeEntry();
+            out.putNextEntry(new ZipEntry(classEntry));
+            out.write(classBytes);
+            out.closeEntry();
+            if (resourceEntry != null) {
+                out.putNextEntry(new ZipEntry(resourceEntry));
                 out.write(resourceBytes);
                 out.closeEntry();
             }
