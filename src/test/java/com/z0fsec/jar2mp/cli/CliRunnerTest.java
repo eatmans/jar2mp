@@ -219,6 +219,49 @@ class CliRunnerTest {
     }
 
     @Test
+    void byteExactPackageVerifyBuildDefaultsToPackageGoal() throws Exception {
+        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"),
+                "config.properties", "mode=verify-package\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--byte-exact-package",
+                "--no-decompile",
+                "--no-dependencies",
+                "--verify-build",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        String report = Files.readString(output.resolve("sample").resolve("verification-report.md"));
+        assertTrue(report.contains("package"));
+    }
+
+    @Test
+    void explicitVerifyGoalOverridesByteExactPackageDefault() throws Exception {
+        Path jar = createJar("sample-1.0.jar", "com/example/App.class",
+                minimalClassBytes(52, "com/example/App"),
+                "config.properties", "mode=verify-validate\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--byte-exact-package",
+                "--no-decompile",
+                "--no-dependencies",
+                "--verify-build",
+                "--verify-goal", "validate",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        String report = Files.readString(output.resolve("sample").resolve("verification-report.md"));
+        assertTrue(report.contains("validate"));
+    }
+
+    @Test
     void noDecompileCopiesClassFilesInsteadOfWritingJavaSources() throws Exception {
         Path jar = createJar("sample-1.0.jar", "com/example/App.class",
                 minimalClassBytes(52, "com/example/App"));

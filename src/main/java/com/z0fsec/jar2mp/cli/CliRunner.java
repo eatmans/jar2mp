@@ -243,6 +243,7 @@ public class CliRunner {
     private CliOptions parseArgs(String[] args) {
         CliOptions options = new CliOptions();
         int i = 0;
+        boolean verifyGoalExplicit = false;
         while (i < args.length) {
             String arg = args[i];
             switch (arg) {
@@ -321,6 +322,7 @@ public class CliRunner {
                 case "--verify-goal":
                     if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
                     options.getConfig().setVerifyGoal(args[i]);
+                    verifyGoalExplicit = true;
                     break;
                 case "--trace-runtime":
                     options.getConfig().setTraceRuntime(true);
@@ -347,6 +349,9 @@ public class CliRunner {
                 case "--byte-exact-package":
                     options.getConfig().setEmitRawArtifact(true);
                     options.getConfig().setByteExactPackage(true);
+                    if (!verifyGoalExplicit) {
+                        options.getConfig().setVerifyGoal("package");
+                    }
                     break;
                 case "--compare-artifact":
                     if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
