@@ -63,6 +63,20 @@ class ZipRecordOrderRestorerTest {
     }
 
     @Test
+    void restoresOriginalEmptyDirectoryCompressionRecords() throws Exception {
+        TestEntry bootInf = deflatedDirectory("BOOT-INF/");
+        TestEntry appClass = entry("BOOT-INF/classes/App.class", "bytecode");
+        Path original = writeStoredZip("original.jar", 0L, bootInf, appClass);
+        Path rebuilt = writeStoredZip("rebuilt.jar", 2000L, directory("BOOT-INF/"), appClass);
+
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+    }
+
+    @Test
     void rejectsArchivesWithDifferentEntrySets() throws Exception {
         Path original = writeStoredZip("original.jar", 0L, entry("first.txt", "one"));
         Path rebuilt = writeStoredZip("rebuilt.jar", 0L, entry("second.txt", "two"));
@@ -76,11 +90,13 @@ class ZipRecordOrderRestorerTest {
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(zip))) {
             for (TestEntry entry : entries) {
                 ZipEntry zipEntry = new ZipEntry(entry.name);
-                zipEntry.setMethod(ZipEntry.STORED);
+                zipEntry.setMethod(entry.method);
                 zipEntry.setTime(entryTime);
-                zipEntry.setSize(entry.content.length);
-                zipEntry.setCompressedSize(entry.content.length);
-                zipEntry.setCrc(crc32(entry.content));
+                if (entry.method == ZipEntry.STORED) {
+                    zipEntry.setSize(entry.content.length);
+                    zipEntry.setCompressedSize(entry.content.length);
+                    zipEntry.setCrc(crc32(entry.content));
+                }
                 zipEntry.setExtra(new byte[0]);
                 output.putNextEntry(zipEntry);
                 output.write(entry.content);
@@ -97,20 +113,26 @@ class ZipRecordOrderRestorerTest {
     }
 
     private TestEntry entry(String name, String content) {
-        return new TestEntry(name, content.getBytes(StandardCharsets.UTF_8));
+        return new TestEntry(name, content.getBytes(StandardCharsets.UTF_8), ZipEntry.STORED);
     }
 
     private TestEntry directory(String name) {
-        return new TestEntry(name, new byte[0]);
+        return new TestEntry(name, new byte[0], ZipEntry.STORED);
+    }
+
+    private TestEntry deflatedDirectory(String name) {
+        return new TestEntry(name, new byte[0], ZipEntry.DEFLATED);
     }
 
     private static class TestEntry {
         private final String name;
         private final byte[] content;
+        private final int method;
 
-        private TestEntry(String name, byte[] content) {
+        private TestEntry(String name, byte[] content, int method) {
             this.name = name;
             this.content = content;
+            this.method = method;
         }
     }
 }

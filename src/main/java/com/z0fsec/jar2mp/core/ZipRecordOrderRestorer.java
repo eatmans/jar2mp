@@ -95,7 +95,7 @@ public class ZipRecordOrderRestorer {
     }
 
     private static byte[] selectRestoredLocalRecord(ZipLayout original, ZipLayout rebuilt, String name) {
-        if (!rebuilt.localRecords.containsKey(name)) {
+        if (original.isEmptyDirectoryEntry(name) || !rebuilt.localRecords.containsKey(name)) {
             return original.localRecords.get(name).clone();
         }
         byte[] localRecord = rebuilt.localRecords.get(name).clone();
@@ -105,7 +105,7 @@ public class ZipRecordOrderRestorer {
     }
 
     private static byte[] selectRestoredCentralRecord(ZipLayout original, ZipLayout rebuilt, String name) {
-        if (!rebuilt.centralRecords.containsKey(name)) {
+        if (original.isEmptyDirectoryEntry(name) || !rebuilt.centralRecords.containsKey(name)) {
             return original.centralRecords.get(name).clone();
         }
         byte[] centralRecord = rebuilt.centralRecords.get(name).clone();
@@ -236,7 +236,7 @@ public class ZipRecordOrderRestorer {
             byte[] centralRecord = centralRecords.get(name);
             return name.endsWith("/")
                     && centralRecord != null
-                    && readUInt32(centralRecord, 20) == 0L
+                    && readUInt32(centralRecord, 16) == 0L
                     && readUInt32(centralRecord, 24) == 0L;
         }
 
