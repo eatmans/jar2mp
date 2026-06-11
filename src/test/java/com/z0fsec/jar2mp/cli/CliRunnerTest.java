@@ -191,6 +191,34 @@ class CliRunnerTest {
     }
 
     @Test
+    void byteExactPackageMakesWarPackageOutputByteExact() throws Exception {
+        Path war = createJar("sample-web-1.0.war", "WEB-INF/classes/com/example/WebApp.class",
+                minimalClassBytes(52, "com/example/WebApp"),
+                "WEB-INF/web.xml", "<web-app/>".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--byte-exact-package",
+                "--no-decompile",
+                "--no-dependencies",
+                "-o", output.toString(),
+                war.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path projectDir = output.resolve("sample-web");
+        assertTrue(Files.exists(projectDir.resolve("target/raw-artifact/sample-web-1.0.war")));
+        assertTrue(Files.readString(projectDir.resolve("pom.xml")).contains("<packaging>war</packaging>"));
+        assertTrue(Files.readString(projectDir.resolve("pom.xml")).contains("restore-byte-exact-artifact"));
+        int packageExitCode = runMaven(projectDir, "package");
+        assertEquals(0, packageExitCode);
+        Path rebuilt = projectDir.resolve("target/sample-web-1.0.war");
+        assertTrue(Files.exists(rebuilt));
+        ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(war.toFile(), rebuilt.toFile());
+        assertTrue(fidelity.isExactMatch());
+    }
+
+    @Test
     void noDecompileCopiesClassFilesInsteadOfWritingJavaSources() throws Exception {
         Path jar = createJar("sample-1.0.jar", "com/example/App.class",
                 minimalClassBytes(52, "com/example/App"));
