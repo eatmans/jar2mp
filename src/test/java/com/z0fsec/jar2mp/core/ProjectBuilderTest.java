@@ -409,6 +409,25 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void treatsSyntheticEnumSwitchMapClassesAsOuterSourceSupportArtifacts() throws Exception {
+        Path jar = compileSyntheticSwitchMapJar();
+
+        JarAnalyzer analyzer = new JarAnalyzer(new com.z0fsec.jar2mp.db.PackagePrefixDatabase());
+        JarAnalysisResult analysis = analyzer.analyze(jar.toFile(), null);
+        Path outputDir = tempDir.resolve("synthetic-switch-map-out");
+        new ProjectBuilder(new ProjectConfig()).build(jar.toFile(), analysis, "<project/>", outputDir.toFile(), null);
+
+        assertTrue(Files.exists(outputDir.resolve("target/raw-classes/demo/Outer$1.class")));
+        assertTrue(Files.exists(outputDir.resolve("src/main/resources/demo/Outer$1.class")));
+        assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
+                .contains("No decompilation failures detected."));
+        RestorationScore score = analysis.getRestorationScore();
+        assertEquals(100, score.getBreakdown().get("source").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g ->
+                "decompile".equals(g.getCategory()) && "demo/Outer$1.class".equals(g.getDetail())));
+    }
+
+    @Test
     void copiesUncoveredInnerClassBytesToResourcesForCompilerFallback() throws Exception {
         byte[] outerBytes = minimalClassBytes(52);
         byte[] innerBytes = minimalClassBytes(52);
@@ -637,6 +656,54 @@ class ProjectBuilderTest {
         }
 
         Path jar = tempDir.resolve(simpleName + ".jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar));
+             Stream<Path> paths = Files.walk(classesDir)) {
+            paths.filter(Files::isRegularFile)
+                    .forEach(path -> addCompiledEntry(out, classesDir, path));
+        }
+        return jar;
+    }
+
+    private Path compileSyntheticSwitchMapJar() throws Exception {
+        Path sourceDir = tempDir.resolve("switch-map-src/demo");
+        Files.createDirectories(sourceDir);
+        Path outerSource = sourceDir.resolve("Outer.java");
+        Files.writeString(outerSource,
+                "package demo;\n"
+                        + "public class Outer {\n"
+                        + "  enum Kind { FIRST, SECOND }\n"
+                        + "}\n");
+        Path switchMapSource = sourceDir.resolve("Outer$1.java");
+        Files.writeString(switchMapSource,
+                "package demo;\n"
+                        + "class Outer$1 {\n"
+                        + "  static final int[] $SwitchMap$demo$Outer$Kind;\n"
+                        + "  static {\n"
+                        + "    $SwitchMap$demo$Outer$Kind = new int[Outer.Kind.values().length];\n"
+                        + "    try {\n"
+                        + "      $SwitchMap$demo$Outer$Kind[Outer.Kind.FIRST.ordinal()] = 1;\n"
+                        + "    } catch (NoSuchFieldError ignored) {\n"
+                        + "    }\n"
+                        + "  }\n"
+                        + "}\n");
+
+        Path classesDir = tempDir.resolve("switch-map-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                outerSource.toString(),
+                switchMapSource.toString());
+        if (result != 0) {
+            throw new IllegalStateException("javac failed with exit code " + result);
+        }
+
+        Path jar = tempDir.resolve("switch-map.jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar));
              Stream<Path> paths = Files.walk(classesDir)) {
             paths.filter(Files::isRegularFile)

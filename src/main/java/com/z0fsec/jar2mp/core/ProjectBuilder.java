@@ -681,12 +681,43 @@ public class ProjectBuilder {
 
         try (InputStream input = jarFile.getInputStream(entry)) {
             byte[] bytes = readAllBytes(input);
+            if (SyntheticSwitchMapIndex.isSyntheticSwitchMapClass(bytes)) {
+                finding.setSelectedEngine("synthetic-switch-map");
+                finding.setEngineSummary("synthetic enum switch map retained as bytecode support for outer source");
+                retainRawSupportClass(bytes, classPath, targetOriginalClasses, srcMainResources, outputDir,
+                        compilerFallbackJarEntries, entry.getTime());
+                decompileFindings.add(finding);
+                return;
+            }
             finding.setSelectedEngine("skipped-inner-class");
             finding.setFallbackReason("inner class is not emitted as standalone source");
             finding.setMessage("Inner or anonymous class was not confidently represented in the outer source.");
             retainRawClassForFallback(bytes, classPath, targetOriginalClasses, srcMainResources, outputDir, finding,
                     compilerFallbackJarEntries, false, entry.getTime());
             decompileFindings.add(finding);
+        }
+    }
+
+    private void retainRawSupportClass(byte[] bytes,
+                                       String classPath,
+                                       File targetOriginalClasses,
+                                       File srcMainResources,
+                                       File outputDir,
+                                       Map<String, byte[]> compilerFallbackJarEntries,
+                                       long originalTime) throws IOException {
+        File retainedClassFile = resolveOutputFile(targetOriginalClasses, classPath);
+        if (retainedClassFile != null) {
+            IoUtils.ensureDirectory(retainedClassFile.getParentFile());
+            Files.write(retainedClassFile.toPath(), bytes);
+            preserveLastModified(retainedClassFile.toPath(), originalTime);
+            compilerFallbackJarEntries.put(classPath, bytes);
+        }
+
+        File resourceClassFile = resolveOutputFile(srcMainResources, classPath);
+        if (resourceClassFile != null) {
+            IoUtils.ensureDirectory(resourceClassFile.getParentFile());
+            Files.write(resourceClassFile.toPath(), bytes);
+            preserveLastModified(resourceClassFile.toPath(), originalTime);
         }
     }
 

@@ -152,7 +152,7 @@ Options:
 - `RUNBOOK.md` - 启动候选与运行方式
 - `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证摘要
 - `verification-errors.md` - 启用 `--verify-build` 时解析出的逐文件编译错误明细
-- `decompile-failures.md` - 反编译失败条目和原始 class 退回位置
+- `decompile-failures.md` - 反编译失败条目和原始 class 退回位置；synthetic enum switch-map 等外层源码已覆盖的编译器支撑 class 会原样保留但不计为失败
 - `artifact-fidelity-report.md` / `artifact-fidelity-summary.csv` - 启用 `--compare-artifact` 时的原始/重建 artifact 对比；如果内容一致但 ZIP entry 顺序、空目录 entry 集合或可原位恢复的 ZIP 元数据不同，还会生成 `archive-order-restored/` 候选和对应保真报告
 - `target/byte-exact-package-check/artifact-fidelity-report.md` - 启用 `--byte-exact-package --verify-build` 且 package 生命周期运行时的最终产物保真报告
 
@@ -234,7 +234,7 @@ Options:
 │   ├── .jar2mp/
 │   │   └── byte-exact/          ← byte-exact package helper 与参考原包（启用 --byte-exact-package）
 │   ├── target/
-│   │   ├── original-classes/   ← 反编译失败时保留的原始 class
+│   │   ├── original-classes/   ← 反编译失败或编译器支撑 class 需要保留时的原始 class
 │   │   ├── byte-exact-package-check/  ← byte-exact package 保真报告
 │   │   └── compiler-fallback-classes.jar  ← 大小写冲突 class 的编译 fallback jar
 │   └── src/

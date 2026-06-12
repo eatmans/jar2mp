@@ -39,6 +39,19 @@ final class SyntheticSwitchMapIndex {
         return switchMaps;
     }
 
+    static boolean isSyntheticSwitchMapClass(byte[] classBytes) {
+        if (classBytes == null || classBytes.length == 0) {
+            return false;
+        }
+        Map<String, Map<Integer, String>> switchMaps = new LinkedHashMap<>();
+        try {
+            new ClassFileReader(classBytes).addSwitchMaps(switchMaps);
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+        return !switchMaps.isEmpty();
+    }
+
     private static byte[] readAllBytes(InputStream input) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
