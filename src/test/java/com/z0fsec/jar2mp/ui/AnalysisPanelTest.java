@@ -1,0 +1,81 @@
+package com.z0fsec.jar2mp.ui;
+
+import com.z0fsec.jar2mp.core.RuntimeSmokeRunner;
+import com.z0fsec.jar2mp.core.RuntimeTraceEvent;
+import com.z0fsec.jar2mp.core.RuntimeTraceResult;
+import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.VerificationResult;
+import org.junit.jupiter.api.Test;
+
+import javax.swing.JTable;
+import javax.swing.table.TableModel;
+import java.io.File;
+import java.lang.reflect.Field;
+import java.util.Arrays;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class AnalysisPanelTest {
+
+    @Test
+    void updateAnalysisShowsBuildRuntimeAndRestorationGates() throws Exception {
+        AnalysisPanel panel = new AnalysisPanel(message -> { });
+        JarAnalysisResult result = new JarAnalysisResult();
+        result.setSourceFile(new File("sample.jar"));
+        result.setDetectedGroupId("demo");
+        result.setDetectedArtifactId("sample");
+        result.setDetectedVersion("1.0");
+
+        VerificationResult verification = new VerificationResult();
+        verification.setFailureType("NONE");
+        verification.setExitCode(0);
+        result.setVerificationResult(verification);
+
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.App", "main", "startup", "main",
+                        Arrays.asList("demo.App.main")),
+                new RuntimeTraceEvent("resource", "demo.App", "getResource", "application.yml", "main",
+                        Arrays.asList("demo.App.main"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setTraceResult(traceResult);
+        result.setRuntimeSmokeResult(smokeResult);
+        result.setRuntimeTraceResult(traceResult);
+
+        RestorationScore score = new RestorationScore();
+        score.setOverall(80);
+        score.putBucket("source", 100);
+        score.putBucket("resource", 100);
+        score.putBucket("runtime", 0);
+        score.putBucket("verification", 100);
+        score.addGap("runtime_status", "Runtime startup failure was detected before non-zero exit.", 20);
+        result.setRestorationScore(score);
+
+        panel.updateAnalysis(result);
+
+        TableModel model = summaryTable(panel).getModel();
+        assertEquals("80/100 (source=100, resource=100, runtime=0, verification=100)",
+                valueFor(model, "恢复评分"));
+        assertEquals("BUILD SUCCESS (NONE, exit 0)", valueFor(model, "构建验证"));
+        assertEquals("STARTUP_FAILED_EXIT (events=2)", valueFor(model, "运行状态"));
+        assertEquals("runtime_status=20", valueFor(model, "剩余缺口"));
+    }
+
+    private JTable summaryTable(AnalysisPanel panel) throws Exception {
+        Field field = AnalysisPanel.class.getDeclaredField("summaryTable");
+        field.setAccessible(true);
+        return (JTable) field.get(panel);
+    }
+
+    private String valueFor(TableModel model, String key) {
+        for (int row = 0; row < model.getRowCount(); row++) {
+            if (key.equals(model.getValueAt(row, 0))) {
+                return String.valueOf(model.getValueAt(row, 1));
+            }
+        }
+        return null;
+    }
+}

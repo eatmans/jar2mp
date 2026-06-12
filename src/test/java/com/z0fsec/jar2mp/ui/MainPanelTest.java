@@ -2,14 +2,19 @@ package com.z0fsec.jar2mp.ui;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ProjectConfig;
+import com.z0fsec.jar2mp.model.RestorationScore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import javax.swing.DefaultListModel;
 import javax.swing.JCheckBox;
+import javax.swing.JList;
 import javax.swing.JSpinner;
 import javax.swing.SwingUtilities;
 import javax.swing.JTextField;
+import javax.swing.JTable;
 import javax.swing.text.StyledDocument;
+import javax.swing.table.TableModel;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -233,6 +238,32 @@ class MainPanelTest {
         assertTrue(output.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
     }
 
+    @Test
+    void refreshAnalysisIfSelectedShowsPostBuildRestorationScore() throws Exception {
+        MainPanel panel = new MainPanel(message -> { });
+        File jarFile = new File("sample.jar");
+        fileListModel(panel).addElement(jarFile);
+        fileJList(panel).setSelectedValue(jarFile, true);
+
+        JarAnalysisResult result = new JarAnalysisResult();
+        result.setSourceFile(jarFile);
+        result.setDetectedGroupId("demo");
+        result.setDetectedArtifactId("sample");
+        result.setDetectedVersion("1.0");
+        RestorationScore score = new RestorationScore();
+        score.setOverall(100);
+        score.putBucket("source", 100);
+        score.putBucket("resource", 100);
+        score.putBucket("runtime", 100);
+        score.putBucket("verification", 100);
+        result.setRestorationScore(score);
+
+        invokeRefreshAnalysisIfSelected(panel, jarFile, result);
+
+        assertEquals("100/100 (source=100, resource=100, runtime=100, verification=100)",
+                valueFor(analysisSummaryModel(panel), "恢复评分"));
+    }
+
     private JCheckBox checkBox(MainPanel panel, String name) throws Exception {
         return (JCheckBox) field(panel, name);
     }
@@ -251,6 +282,16 @@ class MainPanelTest {
         return field.get(panel);
     }
 
+    @SuppressWarnings("unchecked")
+    private DefaultListModel<File> fileListModel(MainPanel panel) throws Exception {
+        return (DefaultListModel<File>) field(panel, "fileListModel");
+    }
+
+    @SuppressWarnings("unchecked")
+    private JList<File> fileJList(MainPanel panel) throws Exception {
+        return (JList<File>) field(panel, "fileJList");
+    }
+
     private void setField(MainPanel panel, String name, Object value) throws Exception {
         Field field = MainPanel.class.getDeclaredField(name);
         field.setAccessible(true);
@@ -267,6 +308,33 @@ class MainPanelTest {
         Method method = MainPanel.class.getDeclaredMethod("appendReportPaths", File.class);
         method.setAccessible(true);
         method.invoke(panel, outputDir);
+    }
+
+    private void invokeRefreshAnalysisIfSelected(MainPanel panel, File jarFile, JarAnalysisResult result)
+            throws Exception {
+        Method method = MainPanel.class.getDeclaredMethod("refreshAnalysisIfSelected",
+                File.class, JarAnalysisResult.class);
+        method.setAccessible(true);
+        method.invoke(panel, jarFile, result);
+    }
+
+    private TableModel analysisSummaryModel(MainPanel panel) throws Exception {
+        Field analysisPanelField = MainPanel.class.getDeclaredField("analysisPanel");
+        analysisPanelField.setAccessible(true);
+        AnalysisPanel analysisPanel = (AnalysisPanel) analysisPanelField.get(panel);
+        Field summaryTableField = AnalysisPanel.class.getDeclaredField("summaryTable");
+        summaryTableField.setAccessible(true);
+        JTable table = (JTable) summaryTableField.get(analysisPanel);
+        return table.getModel();
+    }
+
+    private String valueFor(TableModel model, String key) {
+        for (int row = 0; row < model.getRowCount(); row++) {
+            if (key.equals(model.getValueAt(row, 0))) {
+                return String.valueOf(model.getValueAt(row, 1));
+            }
+        }
+        return null;
     }
 
     private String logDocumentText(MainPanel panel) throws Exception {

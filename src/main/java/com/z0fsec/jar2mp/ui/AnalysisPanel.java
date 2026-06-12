@@ -11,6 +11,7 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.io.*;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 public class AnalysisPanel extends BasePanel {
@@ -85,6 +86,7 @@ public class AnalysisPanel extends BasePanel {
         summaryModel.addRow(new Object[]{"检测到 ArtifactId", result.getDetectedArtifactId()});
         summaryModel.addRow(new Object[]{"检测到 Version", result.getDetectedVersion()});
         summaryModel.addRow(new Object[]{"检测到依赖数", result.getDetectedDependencies().size()});
+        addBuildAndRuntimeSummary(result);
 
         // Manifest
         if (result.getManifestInfo() != null) {
@@ -104,6 +106,76 @@ public class AnalysisPanel extends BasePanel {
         }
 
         appendSuccess("分析结果已加载");
+    }
+
+    private void addBuildAndRuntimeSummary(JarAnalysisResult result) {
+        VerificationResult verification = result.getVerificationResult();
+        if (verification != null) {
+            summaryModel.addRow(new Object[]{"构建验证", buildVerificationText(verification)});
+        }
+
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = result.getRuntimeSmokeResult();
+        if (smokeResult != null) {
+            summaryModel.addRow(new Object[]{"运行状态", runtimeStatusText(smokeResult)});
+        }
+
+        RestorationScore score = result.getRestorationScore();
+        if (score != null) {
+            summaryModel.addRow(new Object[]{"恢复评分", restorationScoreText(score)});
+            if (!score.getGaps().isEmpty()) {
+                summaryModel.addRow(new Object[]{"剩余缺口", gapSummaryText(score)});
+            }
+        }
+    }
+
+    private String buildVerificationText(VerificationResult verification) {
+        String failureType = safeValue(verification.getFailureType(), "UNKNOWN");
+        String status = verification.getExitCode() == 0 && "NONE".equals(failureType)
+                ? "BUILD SUCCESS"
+                : "BUILD FAILED";
+        return status + " (" + failureType + ", exit " + verification.getExitCode() + ")";
+    }
+
+    private String runtimeStatusText(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        String status = safeValue(smokeResult.getRunStatus(), "UNKNOWN");
+        int eventCount = smokeResult.getTraceResult() == null ? 0 : smokeResult.getTraceResult().getEvents().size();
+        return status + " (events=" + eventCount + ")";
+    }
+
+    private String restorationScoreText(RestorationScore score) {
+        return score.getOverall() + "/100 (source=" + bucket(score, "source")
+                + ", resource=" + bucket(score, "resource")
+                + ", runtime=" + bucket(score, "runtime")
+                + ", verification=" + bucket(score, "verification") + ")";
+    }
+
+    private int bucket(RestorationScore score, String name) {
+        Map<String, Integer> breakdown = score.getBreakdown();
+        Integer value = breakdown.get(name);
+        return value == null ? 0 : value.intValue();
+    }
+
+    private String gapSummaryText(RestorationScore score) {
+        StringBuilder summary = new StringBuilder();
+        for (RestorationScore.GapItem gap : score.getGaps()) {
+            if (gap == null) {
+                continue;
+            }
+            if (summary.length() > 0) {
+                summary.append("; ");
+            }
+            summary.append(safeValue(gap.getCategory(), "unknown"))
+                    .append("=")
+                    .append(gap.getImpact());
+        }
+        return summary.toString();
+    }
+
+    private String safeValue(String value, String fallback) {
+        if (value == null || value.trim().isEmpty()) {
+            return fallback;
+        }
+        return value.trim();
     }
 
     public void clearData() {

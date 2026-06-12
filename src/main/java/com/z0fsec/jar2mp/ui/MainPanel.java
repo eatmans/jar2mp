@@ -753,6 +753,7 @@ public class MainPanel extends BasePanel {
                     SwingUtilities.invokeLater(() -> {
                         appendSuccess("[" + d + "/" + total + "] 已生成: " + outDir.getAbsolutePath());
                         appendReportPaths(outDir);
+                        refreshAnalysisIfSelected(jarFile, result);
                     });
 
                 } catch (Exception e) {
@@ -782,6 +783,14 @@ public class MainPanel extends BasePanel {
         appendInfo("Reports:");
         for (File report : ReportPathCollector.collectProjectReports(outDir, currentConfig, true)) {
             appendInfo("  " + report.getAbsolutePath());
+        }
+    }
+
+    private void refreshAnalysisIfSelected(File jarFile, JarAnalysisResult result) {
+        File selected = fileJList == null ? null : fileJList.getSelectedValue();
+        if (selected != null && jarFile != null
+                && selected.getAbsolutePath().equals(jarFile.getAbsolutePath())) {
+            analysisPanel.updateAnalysis(result);
         }
     }
 }
