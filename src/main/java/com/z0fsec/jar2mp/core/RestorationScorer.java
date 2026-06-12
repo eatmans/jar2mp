@@ -227,13 +227,34 @@ public class RestorationScorer {
 
     private String runtimeStartupFailureDetail(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
         String message = trimTrailingPeriods(safeValue(smokeResult.getFailureMessage()));
+        String cause = firstCausedBy(smokeResult.getStdout());
+        if (cause == null) {
+            cause = firstCausedBy(smokeResult.getStderr());
+        }
+        cause = trimTrailingPeriods(cause);
+        String causeSuffix = cause.isEmpty() ? "" : " Cause: " + cause + ".";
         if (message.isEmpty()) {
-            return "Runtime startup failure was detected.";
+            return "Runtime startup failure was detected." + causeSuffix;
         }
         if (message.toLowerCase(Locale.ROOT).startsWith("runtime startup failure")) {
-            return message + ".";
+            return message + "." + causeSuffix;
         }
-        return "Runtime startup failure was detected: " + message + ".";
+        return "Runtime startup failure was detected: " + message + "." + causeSuffix;
+    }
+
+    private String firstCausedBy(String content) {
+        if (content == null || content.trim().isEmpty()) {
+            return null;
+        }
+        String[] lines = content.split("\\R");
+        for (String line : lines) {
+            String value = safeValue(line);
+            if (!value.startsWith("Caused by:")) {
+                continue;
+            }
+            return safeValue(value.substring("Caused by:".length()));
+        }
+        return null;
     }
 
     private String trimTrailingPeriods(String value) {

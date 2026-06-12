@@ -360,6 +360,9 @@ class RestorationScorerTest {
         RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
         smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
         smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setStderr("Application run failed\n"
+                + "Caused by: org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379\n");
         smokeResult.setTraceResult(traceResult);
         analysis.setRuntimeSmokeResult(smokeResult);
 
@@ -371,7 +374,9 @@ class RestorationScorerTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("missing runtime_status gap"))
                 .getDetail();
-        assertEquals("Runtime startup failure was detected before non-zero exit.", detail);
+        assertEquals("Runtime startup failure was detected before non-zero exit. Cause: "
+                + "org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379.", detail);
         assertFalse(detail.contains("detected: Runtime"));
         assertFalse(detail.contains(".."));
     }
