@@ -3,13 +3,18 @@ package com.z0fsec.jar2mp.ui;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ProjectConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import javax.swing.JCheckBox;
 import javax.swing.JSpinner;
+import javax.swing.SwingUtilities;
 import javax.swing.JTextField;
+import javax.swing.text.StyledDocument;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -137,6 +142,30 @@ class MainPanelTest {
         assertEquals("package", config.getVerifyGoal());
     }
 
+    @Test
+    void appendReportPathsIncludesByteLevelFidelityReports(@TempDir Path outputDir) throws Exception {
+        MainPanel panel = new MainPanel(message -> { });
+        Files.createDirectories(outputDir.resolve("target/raw-artifact"));
+        Files.createDirectories(outputDir.resolve("target/byte-exact-package-check"));
+        Files.createDirectories(outputDir.resolve("target/package-record-restore-check"));
+        Files.writeString(outputDir.resolve("target/raw-artifact/artifact-fidelity-report.md"), "");
+        Files.writeString(outputDir.resolve("target/raw-artifact/artifact-fidelity-summary.csv"), "");
+        Files.writeString(outputDir.resolve("target/byte-exact-package-check/artifact-fidelity-report.md"), "");
+        Files.writeString(outputDir.resolve("target/byte-exact-package-check/artifact-fidelity-summary.csv"), "");
+        Files.writeString(outputDir.resolve("target/package-record-restore-check/artifact-fidelity-report.md"), "");
+        Files.writeString(outputDir.resolve("target/package-record-restore-check/artifact-fidelity-summary.csv"), "");
+
+        invokeAppendReportPaths(panel, outputDir.toFile());
+
+        String output = logDocumentText(panel);
+        assertTrue(output.contains("target/raw-artifact/artifact-fidelity-report.md"));
+        assertTrue(output.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
+        assertTrue(output.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
+        assertTrue(output.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
+        assertTrue(output.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
+        assertTrue(output.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
+    }
+
     private JCheckBox checkBox(MainPanel panel, String name) throws Exception {
         return (JCheckBox) field(panel, name);
     }
@@ -165,6 +194,20 @@ class MainPanelTest {
         Method method = MainPanel.class.getDeclaredMethod("doGeneratePom");
         method.setAccessible(true);
         method.invoke(panel);
+    }
+
+    private void invokeAppendReportPaths(MainPanel panel, File outputDir) throws Exception {
+        Method method = MainPanel.class.getDeclaredMethod("appendReportPaths", File.class);
+        method.setAccessible(true);
+        method.invoke(panel, outputDir);
+    }
+
+    private String logDocumentText(MainPanel panel) throws Exception {
+        SwingUtilities.invokeAndWait(() -> { });
+        Field field = BasePanel.class.getDeclaredField("logDocument");
+        field.setAccessible(true);
+        StyledDocument document = (StyledDocument) field.get(panel);
+        return document.getText(0, document.getLength());
     }
 
     private void setCurrentResult(MainPanel panel) throws Exception {

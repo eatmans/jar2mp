@@ -796,7 +796,20 @@ public class MainPanel extends BasePanel {
         if (verificationErrors.exists()) {
             appendInfo("  " + verificationErrors.getAbsolutePath());
         }
+        appendReportFileIfExists(outDir, "target/raw-artifact/artifact-fidelity-report.md");
+        appendReportFileIfExists(outDir, "target/raw-artifact/artifact-fidelity-summary.csv");
+        appendReportFileIfExists(outDir, "target/byte-exact-package-check/artifact-fidelity-report.md");
+        appendReportFileIfExists(outDir, "target/byte-exact-package-check/artifact-fidelity-summary.csv");
+        appendReportFileIfExists(outDir, "target/package-record-restore-check/artifact-fidelity-report.md");
+        appendReportFileIfExists(outDir, "target/package-record-restore-check/artifact-fidelity-summary.csv");
         appendInfo("  " + new File(outDir, "RUNBOOK.md").getAbsolutePath());
         appendInfo("  " + new File(outDir, "decompile-failures.md").getAbsolutePath());
+    }
+
+    private void appendReportFileIfExists(File outDir, String relativePath) {
+        File report = new File(outDir, relativePath);
+        if (report.exists()) {
+            appendInfo("  " + report.getAbsolutePath());
+        }
     }
 }
