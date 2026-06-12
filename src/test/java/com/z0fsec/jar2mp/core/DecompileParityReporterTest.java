@@ -118,8 +118,8 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Annotations"));
         assertTrue(report.contains("Generic signatures"));
         assertTrue(report.contains("Thrown exceptions"));
-        assertTrue(report.contains("Risk level: MEDIUM (invokedynamic)"));
-        assertTrue(report.contains("| MEDIUM | `demo/AdvancedParity` | `run(Ljava/lang/Number;)Ljava/lang/String;` | invokedynamic |"));
+        assertTrue(report.contains("Risk level: MEDIUM (lambda metafactory invokedynamic)"));
+        assertTrue(report.contains("| MEDIUM | `demo/AdvancedParity` | `run(Ljava/lang/Number;)Ljava/lang/String;` | lambda metafactory invokedynamic |"));
     }
 
     @Test
@@ -237,9 +237,9 @@ class DecompileParityReporterTest {
 
         String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
         assertTrue(report.contains("Methods with invokedynamic: 1"));
-        assertTrue(report.contains("Risk level: MEDIUM (invokedynamic)"));
+        assertTrue(report.contains("Risk level: MEDIUM (lambda metafactory invokedynamic)"));
         assertTrue(report.contains(
-                "| MEDIUM | `demo/MixedInvokedynamic` | `format(Ljava/lang/String;)Ljava/lang/String;` | invokedynamic |"));
+                "| MEDIUM | `demo/MixedInvokedynamic` | `format(Ljava/lang/String;)Ljava/lang/String;` | lambda metafactory invokedynamic |"));
         assertTrue(report.contains("demo/MixedInvokedynamic.lambda$format$0"));
         assertTrue(report.contains("demo/MixedInvokedynamic.lambda$format$1"));
         assertFalse(report.contains("Risk level: LOW (string-concat invokedynamic only)"));
@@ -333,7 +333,7 @@ class DecompileParityReporterTest {
         }
 
         String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
-        assertTrue(report.contains("Risk level: MEDIUM (invokedynamic)"));
+        assertTrue(report.contains("Risk level: MEDIUM (lambda metafactory invokedynamic)"));
         assertTrue(report.contains("demo/NonReflectiveFieldGetter$FieldData.getField()Ljava/lang/reflect/Field;"));
         assertFalse(report.contains("reflection call detected"));
         assertFalse(report.contains("Reflection: detected call"));

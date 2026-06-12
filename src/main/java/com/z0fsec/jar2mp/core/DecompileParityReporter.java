@@ -238,13 +238,13 @@ public class DecompileParityReporter {
         boolean missingDebugNames = method.requiresLocalVariableNames()
                 && method.getLocalVariableNames().isEmpty();
         if (hasInvokedynamic && missingDebugNames) {
-            return "MEDIUM (invokedynamic and missing debug names)";
+            return "MEDIUM (" + invokedynamicRiskReason(method) + " and missing debug names)";
         }
         if (hasInvokedynamic && method.hasOnlyStringConcatInvokedynamic()) {
             return "LOW (string-concat invokedynamic only)";
         }
         if (hasInvokedynamic) {
-            return "MEDIUM (invokedynamic)";
+            return "MEDIUM (" + invokedynamicRiskReason(method) + ")";
         }
         if (missingDebugNames) {
             return "MEDIUM (missing debug names)";
@@ -272,6 +272,25 @@ public class DecompileParityReporter {
             }
         }
         return false;
+    }
+
+    private static String invokedynamicRiskReason(BytecodeFingerprint.MethodFingerprint method) {
+        boolean hasLambdaMetafactory = false;
+        boolean hasOther = false;
+        for (String call : method.getInvokedynamicCalls()) {
+            if (call.contains("java/lang/invoke/LambdaMetafactory.")) {
+                hasLambdaMetafactory = true;
+            } else if (!call.contains("java/lang/invoke/StringConcatFactory.")) {
+                hasOther = true;
+            }
+        }
+        if (hasLambdaMetafactory && hasOther) {
+            return "lambda metafactory and other invokedynamic";
+        }
+        if (hasLambdaMetafactory) {
+            return "lambda metafactory invokedynamic";
+        }
+        return "invokedynamic";
     }
 
     private static boolean isReflectiveCall(String call) {

@@ -146,7 +146,7 @@ Options:
 
 - `restoration-report.md` - 还原结果总览
 - `resource-inventory.md` - 资源分类与目标路径
-- `decompile-parity-report.md` - 字节码与源码对照，并汇总 HIGH/MEDIUM/LOW 方法级反编译风险；`Risk method index` 会在逐类明细前列出 HIGH/MEDIUM 方法，并区分 `reflection call detected`、`invokedynamic`、`missing debug names` 等原因；反射风险按 `java/lang/Class`、`java/lang/reflect` 和常见反射工具 owner 识别，避免把普通业务 `getMethod()`/`getField()` 方法名误报为反射；invokedynamic 明细会记录 bootstrap 方法及参数，用于定位 lambda 实现目标和字符串拼接 recipe；纯 `StringConcatFactory` 字符串拼接仍记录为 invokedynamic 事实但不进入 MEDIUM 风险；LocalVariableTable 缺失计数只统计确实有用户参数或本地变量写入、但缺少可恢复变量名的方法，并排除 synthetic enum switch-map、bridge method、enum support method、lambda deserialization support method、outer-this constructor 和 monitor temporaries 这类编译器支撑结构
+- `decompile-parity-report.md` - 字节码与源码对照，并汇总 HIGH/MEDIUM/LOW 方法级反编译风险；`Risk method index` 会在逐类明细前列出 HIGH/MEDIUM 方法，并区分 `reflection call detected`、`lambda metafactory invokedynamic`、`invokedynamic`、`missing debug names` 等原因；反射风险按 `java/lang/Class`、`java/lang/reflect` 和常见反射工具 owner 识别，避免把普通业务 `getMethod()`/`getField()` 方法名误报为反射；invokedynamic 明细会记录 bootstrap 方法及参数，用于定位 lambda 实现目标和字符串拼接 recipe；纯 `StringConcatFactory` 字符串拼接仍记录为 invokedynamic 事实但不进入 MEDIUM 风险；LocalVariableTable 缺失计数只统计确实有用户参数或本地变量写入、但缺少可恢复变量名的方法，并排除 synthetic enum switch-map、bridge method、enum support method、lambda deserialization support method、outer-this constructor 和 monitor temporaries 这类编译器支撑结构
 - `restoration-score.md` - 源码、资源、运行时观测与构建验证的综合评分；最终 package 字节一致性以 artifact fidelity 报告为准
 - `gap-summary.md` - 主要缺口汇总
 - `runtime-trace-report.md` - 运行时追踪报告（启用运行时追踪时生成）
