@@ -148,7 +148,7 @@ Options:
 - `resource-inventory.md` - 资源分类与目标路径
 - `decompile-parity-report.md` - 字节码与源码对照，并汇总 HIGH/MEDIUM/LOW 方法级反编译风险；`Risk method index` 会在逐类明细前列出 HIGH/MEDIUM 方法，并区分 `reflection call detected`、`lambda metafactory invokedynamic`、`invokedynamic`、`missing debug names` 等原因；反射风险按 `java/lang/Class`、`java/lang/reflect` 和常见反射工具 owner 识别，避免把普通业务 `getMethod()`/`getField()` 方法名误报为反射；invokedynamic 明细会记录 bootstrap 方法及参数，用于定位 lambda 实现目标和字符串拼接 recipe；纯 `StringConcatFactory` 字符串拼接仍记录为 invokedynamic 事实但不进入 MEDIUM 风险；LocalVariableTable 缺失计数只统计确实有用户参数或本地变量写入、但缺少可恢复变量名的方法，并排除 synthetic enum switch-map、bridge method、enum support method、lambda deserialization support method、outer-this constructor 和 monitor temporaries 这类编译器支撑结构
 - `restoration-score.md` - 源码、资源、运行时观测与构建验证的综合评分；最终 package 字节一致性以 artifact fidelity 报告为准，存在 package fidelity CSV 时会内嵌 exact/archive/content 摘要
-- `gap-summary.md` - 主要缺口汇总
+- `gap-summary.md` - 主要缺口汇总；存在 package fidelity CSV 时同样会显示最终 package exact/archive/content 摘要
 - `runtime-trace-report.md` - 运行时追踪报告（启用运行时追踪时生成）
 - `RUNBOOK.md` - 启动候选与运行方式
 - `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证摘要
@@ -165,7 +165,7 @@ Options:
 1. 先看 `restoration-report.md` 和 `resource-inventory.md`
 2. 再看 `RUNBOOK.md` 确认启动方式
 3. 用 `decompile-parity-report.md` 的 Risk summary 和 Risk method index 定位高风险方法，再下钻逐方法明细
-4. 看 `restoration-score.md` 和 `gap-summary.md` 了解源码、资源、运行时观测与构建验证缺口；如启用了最终 package 保真校验，`restoration-score.md` 也会展示 package exact/archive/content 摘要
+4. 看 `restoration-score.md` 和 `gap-summary.md` 了解源码、资源、运行时观测与构建验证缺口；如启用了最终 package 保真校验，两份报告都会展示 package exact/archive/content 摘要
 5. 如需确认可编译性，启用 `--verify-build`；如需确认最终包字节一致性，查看对应 artifact fidelity 报告
 
 ## 样本回归验证

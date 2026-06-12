@@ -365,6 +365,9 @@ class CliRunnerTest {
         String scoreReport = Files.readString(output.resolve("sample").resolve("restoration-score.md"));
         assertTrue(scoreReport.contains("## Byte-level package fidelity"));
         assertTrue(scoreReport.contains("| byte-exact package | true | true | true |"));
+        String gapSummary = Files.readString(output.resolve("sample").resolve("gap-summary.md"));
+        assertTrue(gapSummary.contains("## Byte-level package fidelity"));
+        assertTrue(gapSummary.contains("| byte-exact package | true | true | true |"));
         Path rebuilt = output.resolve("sample").resolve("target/sample-1.0.jar");
         ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(jar.toFile(), rebuilt.toFile());
         assertTrue(fidelity.isExactMatch());

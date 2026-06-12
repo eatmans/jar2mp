@@ -18,7 +18,9 @@ public class GapSummaryWriter {
 
         report.append("# Gap summary\n\n");
         report.append("- Overall score: ").append(effectiveScore.getOverall()).append("/100\n");
-        report.append("- Gap count: ").append(effectiveScore.getGaps().size()).append("\n\n");
+        report.append("- Gap count: ").append(effectiveScore.getGaps().size()).append("\n");
+        appendPackageFidelityEvidence(report, outputDir);
+        report.append("\n");
         report.append("| Category | Impact | Detail |\n");
         report.append("| --- | --- | --- |\n");
 
@@ -51,6 +53,29 @@ public class GapSummaryWriter {
         }
 
         IoUtils.writeStringToFile(new File(outputDir, "gap-summary.md"), report.toString());
+    }
+
+    private void appendPackageFidelityEvidence(StringBuilder report, File outputDir) throws IOException {
+        List<PackageFidelityEvidence> evidence = PackageFidelityEvidence.readAll(outputDir);
+        if (evidence.isEmpty()) {
+            return;
+        }
+        report.append("\n## Byte-level package fidelity\n\n");
+        report.append("| Mode | Exact match | Archive bytes same | Content entries match | Rebuilt SHA-256 |\n");
+        report.append("| --- | --- | --- | --- | --- |\n");
+        for (PackageFidelityEvidence item : evidence) {
+            report.append("| ")
+                    .append(item.getMode())
+                    .append(" | ")
+                    .append(item.getExactMatch())
+                    .append(" | ")
+                    .append(item.getArchiveBytesSame())
+                    .append(" | ")
+                    .append(item.getContentEntriesMatch())
+                    .append(" | ")
+                    .append(item.getFormattedRebuiltArchiveSha256())
+                    .append(" |\n");
+        }
     }
 
     private String safe(String value) {
