@@ -33,6 +33,7 @@ public class ProjectBuilder {
     private final GapSummaryWriter gapSummaryWriter;
     private final CfrJarDecompiler cfrJarDecompiler;
     private final StandaloneByteExactPackageHelperWriter byteExactPackageHelperWriter;
+    private final NestedClassSourceMerger nestedClassSourceMerger;
 
     public interface ProgressCallback {
         void onProgress(String message, int percent);
@@ -49,6 +50,7 @@ public class ProjectBuilder {
         this.gapSummaryWriter = new GapSummaryWriter();
         this.cfrJarDecompiler = new CfrJarDecompiler();
         this.byteExactPackageHelperWriter = new StandaloneByteExactPackageHelperWriter();
+        this.nestedClassSourceMerger = new NestedClassSourceMerger();
     }
 
     public void build(File jarFile, JarAnalysisResult analysis, String pomXml,
@@ -92,6 +94,7 @@ public class ProjectBuilder {
 
             Set<String> decompiledOuterClasses = new HashSet<>();
             List<DecompileFinding> decompileFindings = analysis.getDecompileFindings();
+            Set<String> sourceCoveredInnerClasses = new HashSet<>();
             Set<String> caseInsensitiveClassCollisions =
                     findCaseInsensitiveClassCollisions(analysis.getClassFiles());
             Map<String, byte[]> compilerFallbackJarEntries = new LinkedHashMap<>();
@@ -107,7 +110,7 @@ public class ProjectBuilder {
             // Phase 1: Decompile class files
             if (callback != null) callback.onProgress("Decompiling class files...", 10);
 
-            for (String classPath : analysis.getClassFiles()) {
+            for (String classPath : classFilesForSourceProcessing(analysis.getClassFiles())) {
                 processed++;
                 int percent = 10 + (int) (80.0 * processed / total);
 
@@ -159,6 +162,13 @@ public class ProjectBuilder {
                 // Skip inner classes as standalone source files, but retain them
                 // when the outer source does not visibly cover the named type.
                 if (shouldDecompile() && DecompilerBridge.isInnerClass(classPath)) {
+                    if (sourceCoveredInnerClasses.contains(classPath)) {
+                        DecompileFinding finding = new DecompileFinding(classPath, null, null);
+                        finding.setSelectedEngine("outer-source-nested");
+                        finding.setEngineSummary("inner class source was merged into the outer source");
+                        decompileFindings.add(finding);
+                        continue;
+                    }
                     handleSkippedInnerClass(jf, entry, classPath, contextSources, targetOriginalClasses,
                             srcMainResources, outputDir, decompileFindings, compilerFallbackJarEntries);
                     continue;
@@ -236,7 +246,9 @@ public class ProjectBuilder {
                     String className = classPath.replace('/', '.').replace(".class", "");
                     String javaSource = sourcePostProcessor.process(contextSource, className, syntheticSwitchMaps,
                             mapstructInputTypes);
-                    if (hasMissingSelfInnerReferences(javaSource, classPath, analysis.getClassFiles())) {
+                    NestedClassSourceMerger.MergeResult mergeResult = mergeMissingInnerSources(
+                            javaSource, classPath, jf, analysis, syntheticSwitchMaps, mapstructInputTypes);
+                    if (!mergeResult.getUnresolvedClassPaths().isEmpty()) {
                         DecompileFinding finding = rawClassFallbackFinding(
                                 classPath,
                                 "decompiled outer source references inner classes that are not declared",
@@ -252,11 +264,14 @@ public class ProjectBuilder {
                         }
                         continue;
                     }
+                    javaSource = mergeResult.getSource();
+                    sourceCoveredInnerClasses.addAll(mergeResult.getMergedClassPaths());
                     IoUtils.ensureDirectory(outputFile.getParentFile());
                     IoUtils.writeStringToFile(outputFile, javaSource);
                     DecompileFinding finding = new DecompileFinding(classPath, null, null);
                     finding.setSelectedEngine("cfr-context");
-                    finding.setEngineSummary("cfr-context=" + DecompilerEngine.scoreSource(javaSource));
+                    finding.setEngineSummary("cfr-context=" + DecompilerEngine.scoreSource(javaSource)
+                            + innerMergeSummary(mergeResult));
                     decompileFindings.add(finding);
                     continue;
                 }
@@ -286,7 +301,9 @@ public class ProjectBuilder {
                         if (decompileResult.isSuccess()) {
                             String javaSource = sourcePostProcessor.process(
                                     decompileResult.getSource(), className, syntheticSwitchMaps, mapstructInputTypes);
-                            if (hasMissingSelfInnerReferences(javaSource, classPath, analysis.getClassFiles())) {
+                            NestedClassSourceMerger.MergeResult mergeResult = mergeMissingInnerSources(
+                                    javaSource, classPath, jf, analysis, syntheticSwitchMaps, mapstructInputTypes);
+                            if (!mergeResult.getUnresolvedClassPaths().isEmpty()) {
                                 finding = rawClassFallbackFinding(
                                         classPath,
                                         "decompiled outer source references inner classes that are not declared",
@@ -300,8 +317,12 @@ public class ProjectBuilder {
                                 }
                                 continue;
                             }
+                            javaSource = mergeResult.getSource();
+                            sourceCoveredInnerClasses.addAll(mergeResult.getMergedClassPaths());
                             IoUtils.ensureDirectory(outputFile.getParentFile());
                             IoUtils.writeStringToFile(outputFile, javaSource);
+                            finding.setEngineSummary(safeEngineSummary(finding.getEngineSummary())
+                                    + innerMergeSummary(mergeResult));
                             decompileFindings.add(finding);
                         } else {
                             retainRawClassForFallback(bytes, classPath, targetOriginalClasses,
@@ -494,6 +515,15 @@ public class ProjectBuilder {
         return hasMissingSelfInnerReferences(source, classPath, classFiles);
     }
 
+    List<String> classFilesForSourceProcessing(List<String> classFiles) {
+        List<String> sorted = new ArrayList<>();
+        if (classFiles != null) {
+            sorted.addAll(classFiles);
+        }
+        sorted.sort(Comparator.comparingInt(classPath -> DecompilerBridge.isInnerClass(classPath) ? 1 : 0));
+        return sorted;
+    }
+
     private void cacheRawClass(JarFile jarFile, JarEntry entry, String classPath, File targetRawClasses)
             throws IOException {
         File rawClassFile = resolveOutputFile(targetRawClasses, classPath);
@@ -535,56 +565,56 @@ public class ProjectBuilder {
     }
 
     private boolean hasMissingSelfInnerReferences(String source, String classPath, Collection<String> classFiles) {
-        if (source == null || classPath == null || classFiles == null || DecompilerBridge.isInnerClass(classPath)) {
-            return false;
-        }
-        if (!classPath.endsWith(".class")) {
-            return false;
-        }
-
-        String outerClassName = classPath.substring(0, classPath.length() - ".class".length()).replace('/', '.');
-        Pattern selfInnerImport = Pattern.compile("(?m)^\\s*import\\s+"
-                + Pattern.quote(outerClassName)
-                + "\\.([A-Za-z_$][\\w$]*)\\s*;");
-        java.util.regex.Matcher matcher = selfInnerImport.matcher(source);
-        while (matcher.find()) {
-            String innerSimpleName = matcher.group(1);
-            String innerClassPath = classPath.substring(0, classPath.length() - ".class".length())
-                    + "$"
-                    + innerSimpleName
-                    + ".class";
-            if (classFiles.contains(innerClassPath) && !sourceDeclaresInnerType(source, innerSimpleName)) {
-                return true;
-            }
-        }
-        String directInnerPrefix = classPath.substring(0, classPath.length() - ".class".length()) + "$";
-        for (String candidateClassPath : classFiles) {
-            if (candidateClassPath == null
-                    || !candidateClassPath.startsWith(directInnerPrefix)
-                    || !candidateClassPath.endsWith(".class")) {
-                continue;
-            }
-            String innerSimpleName = candidateClassPath.substring(
-                    directInnerPrefix.length(),
-                    candidateClassPath.length() - ".class".length());
-            if (innerSimpleName.isEmpty()
-                    || innerSimpleName.indexOf('$') >= 0
-                    || Character.isDigit(innerSimpleName.charAt(0))) {
-                continue;
-            }
-            if (!sourceDeclaresInnerType(source, innerSimpleName)
-                    && sourceReferencesIdentifier(source, innerSimpleName)) {
-                return true;
-            }
-        }
-        return false;
+        return nestedClassSourceMerger.hasMissingNamedInnerReferences(source, classPath, classFiles);
     }
 
-    private boolean sourceReferencesIdentifier(String source, String identifier) {
-        Pattern reference = Pattern.compile("(?<![A-Za-z0-9_$])"
-                + Pattern.quote(identifier)
-                + "(?![A-Za-z0-9_$])");
-        return reference.matcher(source).find();
+    private NestedClassSourceMerger.MergeResult mergeMissingInnerSources(
+            String javaSource,
+            String classPath,
+            JarFile jarFile,
+            JarAnalysisResult analysis,
+            Map<String, Map<Integer, String>> syntheticSwitchMaps,
+            Map<String, Map<String, String>> mapstructInputTypes) throws IOException {
+        return nestedClassSourceMerger.mergeMissingNamedInnerSources(
+                javaSource,
+                classPath,
+                analysis.getClassFiles(),
+                innerClassPath -> decompileInnerSource(jarFile, analysis, innerClassPath,
+                        syntheticSwitchMaps, mapstructInputTypes));
+    }
+
+    private String decompileInnerSource(JarFile jarFile,
+                                        JarAnalysisResult analysis,
+                                        String innerClassPath,
+                                        Map<String, Map<Integer, String>> syntheticSwitchMaps,
+                                        Map<String, Map<String, String>> mapstructInputTypes) throws IOException {
+        String rawEntryPath = analysis.getClassPathMapping().get(innerClassPath);
+        if (rawEntryPath == null) {
+            rawEntryPath = innerClassPath;
+        }
+        JarEntry entry = jarFile.getJarEntry(rawEntryPath);
+        if (entry == null) {
+            return null;
+        }
+        byte[] bytes = readRawClassBytes(jarFile, entry);
+        String className = innerClassPath.replace('/', '.').replace(".class", "");
+        DecompilerBridge.DecompileResult decompileResult = decompiler.decompileDetailed(bytes, className);
+        if (!decompileResult.isSuccess()) {
+            return null;
+        }
+        return sourcePostProcessor.process(decompileResult.getSource(), className,
+                syntheticSwitchMaps, mapstructInputTypes);
+    }
+
+    private String innerMergeSummary(NestedClassSourceMerger.MergeResult mergeResult) {
+        if (mergeResult == null || mergeResult.getMergedClassPaths().isEmpty()) {
+            return "";
+        }
+        return "; merged-inner-source=" + mergeResult.getMergedClassPaths().size();
+    }
+
+    private String safeEngineSummary(String engineSummary) {
+        return engineSummary == null ? "" : engineSummary;
     }
 
     private boolean sourceDeclaresInnerType(String source, String innerSimpleName) {

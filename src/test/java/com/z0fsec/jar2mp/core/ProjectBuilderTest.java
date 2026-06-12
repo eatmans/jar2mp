@@ -29,6 +29,23 @@ class ProjectBuilderTest {
     Path tempDir;
 
     @Test
+    void processesOuterClassesBeforeInnerClassesRegardlessOfArchiveOrder() {
+        ProjectBuilder builder = new ProjectBuilder(new ProjectConfig());
+
+        assertEquals(
+                Arrays.asList(
+                        "demo/Outer.class",
+                        "demo/Other.class",
+                        "demo/Outer$Inner.class",
+                        "demo/Other$Nested.class"),
+                builder.classFilesForSourceProcessing(Arrays.asList(
+                        "demo/Outer$Inner.class",
+                        "demo/Outer.class",
+                        "demo/Other$Nested.class",
+                        "demo/Other.class")));
+    }
+
+    @Test
     void restoresWarStaticResourcesToWebappAndClassResourcesToResources() throws Exception {
         Path war = tempDir.resolve("sample.war");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(war))) {
