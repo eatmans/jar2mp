@@ -156,7 +156,7 @@ public class ResourceClassifier {
             return "Unsafe output path is skipped during project generation.";
         }
         if (isNestedLibrary(originalPath)) {
-            return "Nested dependency archive is archived for inspection; not added to the generated Maven classpath.";
+            return "Nested dependency archive is archived and made available to the generated Maven classpath.";
         }
         if (isClasspathResource(originalPath)) {
             return "Classpath resource; container prefix is stripped.";

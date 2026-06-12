@@ -98,6 +98,9 @@ public class ProjectBuilder {
             Map<String, String> contextSources = shouldDecompile()
                     ? cfrJarDecompiler.decompile(jarFile)
                     : Collections.emptyMap();
+            Map<String, Map<Integer, String>> syntheticSwitchMaps = shouldDecompile()
+                    ? SyntheticSwitchMapIndex.fromJar(jf)
+                    : Collections.emptyMap();
 
             // Phase 1: Decompile class files
             if (callback != null) callback.onProgress("Decompiling class files...", 10);
@@ -229,7 +232,7 @@ public class ProjectBuilder {
                 String contextSource = findContextSource(contextSources, classPath, rawEntryPath);
                 if (contextSource != null && isContextSourceUsable(contextSource)) {
                     String className = classPath.replace('/', '.').replace(".class", "");
-                    String javaSource = sourcePostProcessor.process(contextSource, className);
+                    String javaSource = sourcePostProcessor.process(contextSource, className, syntheticSwitchMaps);
                     if (hasMissingSelfInnerReferences(javaSource, classPath, analysis.getClassFiles())) {
                         DecompileFinding finding = rawClassFallbackFinding(
                                 classPath,
@@ -278,7 +281,8 @@ public class ProjectBuilder {
                         finding.setFallbackReason(decompileResult.getFallbackReason());
                         finding.setEngineSummary(decompileResult.getEngineSummary());
                         if (decompileResult.isSuccess()) {
-                            String javaSource = sourcePostProcessor.process(decompileResult.getSource(), className);
+                            String javaSource = sourcePostProcessor.process(
+                                    decompileResult.getSource(), className, syntheticSwitchMaps);
                             if (hasMissingSelfInnerReferences(javaSource, classPath, analysis.getClassFiles())) {
                                 finding = rawClassFallbackFinding(
                                         classPath,
@@ -342,7 +346,7 @@ public class ProjectBuilder {
                     if (isNestedLibrary(resourcePath)) {
                         CopyResult copyResult = copyJarEntry(jf, resourcePath, targetOriginalLibs,
                                 resourcePath, copiedResourceOutputs, false);
-                        if (copyResult.isCopied() && analysis.isWar() && resourcePath.startsWith(WEB_LIB_PREFIX)) {
+                        if (copyResult.isCopied()) {
                             copyJarEntry(jf, resourcePath, srcMainOriginalLibs, resourcePath,
                                     copiedResourceOutputs, false);
                         }
@@ -649,6 +653,7 @@ public class ProjectBuilder {
             Files.write(retainedClassFile.toPath(), bytes);
             preserveLastModified(retainedClassFile.toPath(), originalTime);
             finding.setRetainedClassPath(relativize(outputDir, retainedClassFile));
+            compilerFallbackJarEntries.put(classPath, bytes);
         }
 
         File compilerFallbackClassFile = resolveOutputFile(srcMainResources, classPath);
@@ -659,7 +664,7 @@ public class ProjectBuilder {
             finding.setMessage(appendNote(finding.getMessage(),
                     "Raw class copied to `"
                             + relativize(outputDir, compilerFallbackClassFile)
-                            + "` for Maven compile fallback."));
+                            + "` and `target/compiler-fallback-classes.jar` for Maven compile fallback."));
         }
     }
 

@@ -68,7 +68,7 @@ class ProjectBuilderTest {
                 Files.readString(outputDir.resolve("src/main/original-libs/WEB-INF/lib/embedded.jar")));
         String runbook = Files.readString(outputDir.resolve("RUNBOOK.md"));
         assertTrue(runbook.contains("target/original-libs/WEB-INF/lib/embedded.jar"));
-        assertTrue(runbook.contains("not added to the generated Maven classpath"));
+        assertTrue(runbook.contains("available to the generated Maven classpath"));
         assertTrue(Files.readString(outputDir.resolve("decompile-parity-report.md"))
                 .contains("Decompile parity report"));
         assertTrue(Files.exists(outputDir.resolve("restoration-score.md")));
@@ -149,9 +149,11 @@ class ProjectBuilderTest {
         assertFalse(Files.exists(outputDir.resolve("src/main/resources/BOOT-INF/lib/dependency.jar")));
         assertEquals("library-bytes",
                 Files.readString(outputDir.resolve("target/original-libs/BOOT-INF/lib/dependency.jar")));
+        assertEquals("library-bytes",
+                Files.readString(outputDir.resolve("src/main/original-libs/BOOT-INF/lib/dependency.jar")));
         String inventory = Files.readString(outputDir.resolve("resource-inventory.md"));
         assertTrue(inventory.contains("target/original-libs/BOOT-INF/lib/dependency.jar"));
-        assertTrue(inventory.contains("not added to the generated Maven classpath"));
+        assertTrue(inventory.contains("available to the generated Maven classpath"));
         assertFalse(Files.exists(outputDir.resolve("src/main/java/org/springframework/boot/loader/JarLauncher.java")));
     }
 
@@ -475,6 +477,13 @@ class ProjectBuilderTest {
         assertArrayEquals(classBytes, Files.readAllBytes(outputDir.resolve("target/raw-classes/demo/-KotlinName.class")));
         assertArrayEquals(classBytes, Files.readAllBytes(outputDir.resolve("target/original-classes/demo/-KotlinName.class")));
         assertArrayEquals(classBytes, Files.readAllBytes(outputDir.resolve("src/main/resources/demo/-KotlinName.class")));
+        Path fallbackJar = outputDir.resolve("target/compiler-fallback-classes.jar");
+        assertTrue(Files.exists(fallbackJar));
+        try (JarFile fallback = new JarFile(fallbackJar.toFile())) {
+            assertArrayEquals(classBytes, readJarEntry(fallback, "demo/-KotlinName.class"));
+        }
+        assertTrue(Files.readString(outputDir.resolve("pom.xml"))
+                .contains("<systemPath>${project.basedir}/target/compiler-fallback-classes.jar</systemPath>"));
         assertTrue(Files.readString(outputDir.resolve("decompile-failures.md"))
                 .contains("class name is not a legal Java source identifier"));
     }

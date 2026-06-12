@@ -3,8 +3,10 @@ package com.z0fsec.jar2mp.core;
 import com.z0fsec.jar2mp.model.*;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 
 public class PomGenerator {
@@ -63,6 +65,7 @@ public class PomGenerator {
         }
         boolean byteExactPackage = byteExactArtifactFileName != null;
         Map<String, String> originalWarLibraryPaths = originalWarLibraryPaths(analysis, useOriginalWarLibraries);
+        Map<String, String> originalNestedLibraryPaths = originalNestedLibraryPaths(analysis);
 
         // Properties
         int javaVersion = config.getJavaVersion() > 0 ? config.getJavaVersion() : analysis.getJavaVersion();
@@ -116,10 +119,21 @@ public class PomGenerator {
             }
         }
 
-        if (!included.isEmpty()) {
+        if (!included.isEmpty() || !originalNestedLibraryPaths.isEmpty()) {
             sb.append("    <dependencies>\n");
+            Set<String> renderedSystemPaths = new LinkedHashSet<>();
             for (MavenDependency dep : included) {
+                String systemPath = originalWarLibrarySystemPath(dep, originalWarLibraryPaths);
+                if (systemPath != null) {
+                    renderedSystemPaths.add(systemPath);
+                }
                 appendDependency(sb, dep, "        ", useOriginalWarLibraries, originalWarLibraryPaths);
+            }
+            for (Map.Entry<String, String> originalLibrary : originalNestedLibraryPaths.entrySet()) {
+                if (renderedSystemPaths.add(originalLibrary.getValue())) {
+                    appendEmbeddedSystemDependency(sb, originalLibrary.getKey(), originalLibrary.getValue(),
+                            "        ");
+                }
             }
             sb.append("    </dependencies>\n\n");
         }
@@ -326,6 +340,21 @@ public class PomGenerator {
         return libraries;
     }
 
+    private Map<String, String> originalNestedLibraryPaths(JarAnalysisResult analysis) {
+        Map<String, String> libraries = new LinkedHashMap<>();
+        if (analysis == null) {
+            return libraries;
+        }
+        for (String resource : analysis.getResourceFiles()) {
+            if (resource != null
+                    && (resource.startsWith("BOOT-INF/lib/") || resource.startsWith("WEB-INF/lib/"))
+                    && resource.endsWith(".jar")) {
+                libraries.putIfAbsent(resource, "${project.basedir}/src/main/original-libs/" + resource);
+            }
+        }
+        return libraries;
+    }
+
     private String originalWarLibrarySystemPath(MavenDependency dep, Map<String, String> originalWarLibraryPaths) {
         if (dep == null || originalWarLibraryPaths == null || originalWarLibraryPaths.isEmpty()
                 || !hasKnownValue(dep.getArtifactId()) || !hasKnownValue(dep.getVersion())
@@ -333,6 +362,30 @@ public class PomGenerator {
             return null;
         }
         return originalWarLibraryPaths.get(dep.getArtifactId() + "-" + dep.getVersion() + ".jar");
+    }
+
+    private void appendEmbeddedSystemDependency(StringBuilder sb, String resourcePath, String systemPath,
+                                                String indent) {
+        sb.append(indent).append("<dependency>\n");
+        appendElement(sb, "groupId", "jar2mp.embedded", indent + "    ");
+        appendElement(sb, "artifactId", embeddedLibraryArtifactId(resourcePath), indent + "    ");
+        appendElement(sb, "version", "system", indent + "    ");
+        appendElement(sb, "scope", "system", indent + "    ");
+        appendElement(sb, "systemPath", systemPath, indent + "    ");
+        sb.append(indent).append("</dependency>\n");
+    }
+
+    private String embeddedLibraryArtifactId(String resourcePath) {
+        if (resourcePath == null || resourcePath.isEmpty()) {
+            return "library";
+        }
+        int slash = resourcePath.lastIndexOf('/');
+        String fileName = slash >= 0 ? resourcePath.substring(slash + 1) : resourcePath;
+        if (fileName.endsWith(".jar")) {
+            fileName = fileName.substring(0, fileName.length() - ".jar".length());
+        }
+        String artifactId = fileName.replaceAll("[^A-Za-z0-9_.-]", "-");
+        return artifactId.isEmpty() ? "library" : artifactId;
     }
 
     private boolean isBundledByteExactDependency(MavenDependency dep, JarAnalysisResult analysis,

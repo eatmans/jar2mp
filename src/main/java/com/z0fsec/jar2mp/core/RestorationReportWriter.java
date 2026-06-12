@@ -75,7 +75,7 @@ public class RestorationReportWriter {
                 continue;
             }
             report.append("- Nested library `").append(finding.getOriginalPath()).append("` is archived at `")
-                    .append(displayTarget(finding)).append("` but not added to the generated Maven classpath.\n");
+                    .append(displayTarget(finding)).append("` and available to the generated Maven classpath.\n");
             hasGaps = true;
         }
         if (!hasGaps) {

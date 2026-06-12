@@ -140,6 +140,30 @@ class PomGeneratorTest {
     }
 
     @Test
+    void springBootNestedLibrariesAreAddedAsLocalSystemDependencies() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("boot-app");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.getResourceFiles().add("BOOT-INF/lib/spring-context-6.1.14.jar");
+        analysis.getResourceFiles().add("BOOT-INF/lib/private-api-1.0-SNAPSHOT.jar");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<groupId>jar2mp.embedded</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>spring-context-6.1.14</artifactId>"));
+        assertTrue(pomXml.contains("<artifactId>private-api-1.0-SNAPSHOT</artifactId>"));
+        assertTrue(pomXml.contains("<scope>system</scope>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/spring-context-6.1.14.jar</systemPath>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/private-api-1.0-SNAPSHOT.jar</systemPath>"));
+    }
+
+
+    @Test
     void usesOriginalJarManifestWhenPresent() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setWar(false);
