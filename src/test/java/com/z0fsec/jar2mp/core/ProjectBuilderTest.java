@@ -337,6 +337,21 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void detectsBareSelfInnerReferencesWithoutDeclarationsAsCompilerUnsafe() {
+        ProjectBuilder builder = new ProjectBuilder(new ProjectConfig());
+        String source = "package demo;\n"
+                + "class Outer {\n"
+                + "  Node head;\n"
+                + "  Node create() { return new Node(); }\n"
+                + "}\n";
+
+        assertTrue(builder.hasMissingSelfInnerReferencesForTest(
+                source,
+                "demo/Outer.class",
+                Arrays.asList("demo/Outer.class", "demo/Outer$Node.class")));
+    }
+
+    @Test
     void allowsSelfInnerImportsWhenDeclarationIsPresent() {
         ProjectBuilder builder = new ProjectBuilder(new ProjectConfig());
         String source = "package demo;\n"

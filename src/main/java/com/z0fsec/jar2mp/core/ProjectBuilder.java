@@ -554,7 +554,34 @@ public class ProjectBuilder {
                 return true;
             }
         }
+        String directInnerPrefix = classPath.substring(0, classPath.length() - ".class".length()) + "$";
+        for (String candidateClassPath : classFiles) {
+            if (candidateClassPath == null
+                    || !candidateClassPath.startsWith(directInnerPrefix)
+                    || !candidateClassPath.endsWith(".class")) {
+                continue;
+            }
+            String innerSimpleName = candidateClassPath.substring(
+                    directInnerPrefix.length(),
+                    candidateClassPath.length() - ".class".length());
+            if (innerSimpleName.isEmpty()
+                    || innerSimpleName.indexOf('$') >= 0
+                    || Character.isDigit(innerSimpleName.charAt(0))) {
+                continue;
+            }
+            if (!sourceDeclaresInnerType(source, innerSimpleName)
+                    && sourceReferencesIdentifier(source, innerSimpleName)) {
+                return true;
+            }
+        }
         return false;
+    }
+
+    private boolean sourceReferencesIdentifier(String source, String identifier) {
+        Pattern reference = Pattern.compile("(?<![A-Za-z0-9_$])"
+                + Pattern.quote(identifier)
+                + "(?![A-Za-z0-9_$])");
+        return reference.matcher(source).find();
     }
 
     private boolean sourceDeclaresInnerType(String source, String innerSimpleName) {
