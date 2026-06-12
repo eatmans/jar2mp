@@ -2,12 +2,19 @@ package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.*;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import java.util.regex.Matcher;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class PomGenerator {
 
@@ -66,6 +73,11 @@ public class PomGenerator {
         boolean byteExactPackage = byteExactArtifactFileName != null;
         Map<String, String> originalWarLibraryPaths = originalWarLibraryPaths(analysis, useOriginalWarLibraries);
         Map<String, String> originalNestedLibraryPaths = originalNestedLibraryPaths(analysis);
+        boolean includeOriginalSystemScopeInBootRepackage = isSpringBootExecutable(analysis)
+                && hasBootInfNestedLibraries(originalNestedLibraryPaths);
+        boolean useOriginalPackagedLibraries = useOriginalWarLibraries || includeOriginalSystemScopeInBootRepackage;
+        Map<String, EmbeddedLibraryCoordinates> originalNestedLibraryCoordinates =
+                originalNestedLibraryCoordinates(analysis, originalNestedLibraryPaths);
 
         // Properties
         int javaVersion = config.getJavaVersion() > 0 ? config.getJavaVersion() : analysis.getJavaVersion();
@@ -118,6 +130,9 @@ public class PomGenerator {
                 included.add(dep);
             }
         }
+        List<MavenDependency> bootRepackageResolvedDependencyExcludes = includeOriginalSystemScopeInBootRepackage
+                ? bootRepackageResolvedDependencyExcludes(included, originalNestedLibraryCoordinates)
+                : java.util.Collections.emptyList();
 
         if (!included.isEmpty() || !originalNestedLibraryPaths.isEmpty()) {
             sb.append("    <dependencies>\n");
@@ -127,12 +142,12 @@ public class PomGenerator {
                 if (systemPath != null) {
                     renderedSystemPaths.add(systemPath);
                 }
-                appendDependency(sb, dep, "        ", useOriginalWarLibraries, originalWarLibraryPaths);
+                appendDependency(sb, dep, "        ", useOriginalPackagedLibraries, originalWarLibraryPaths);
             }
             for (Map.Entry<String, String> originalLibrary : originalNestedLibraryPaths.entrySet()) {
                 if (renderedSystemPaths.add(originalLibrary.getValue())) {
                     appendEmbeddedSystemDependency(sb, originalLibrary.getKey(), originalLibrary.getValue(),
-                            "        ");
+                            originalNestedLibraryCoordinates.get(originalLibrary.getKey()), "        ");
                 }
             }
             sb.append("    </dependencies>\n\n");
@@ -166,7 +181,8 @@ public class PomGenerator {
                         hasArchiveDescriptorPlugin = true;
                     }
                     appendBuildPlugin(sb, plugin, packaging, originalManifestPath, originalCreatedBy,
-                            originalBuildInfoPresent, useOriginalWarLibraries);
+                            originalBuildInfoPresent, useOriginalWarLibraries,
+                            includeOriginalSystemScopeInBootRepackage, bootRepackageResolvedDependencyExcludes);
                 }
             }
         }
@@ -291,7 +307,7 @@ public class PomGenerator {
     }
 
     private void appendDependency(StringBuilder sb, MavenDependency dep, String indent,
-                                  boolean useOriginalWarLibraries,
+                                  boolean useOriginalPackagedLibraries,
                                   Map<String, String> originalWarLibraryPaths) {
         sb.append(indent).append("<dependency>\n");
         appendElement(sb, "groupId", dep.getGroupId(), indent + "    ");
@@ -303,7 +319,7 @@ public class PomGenerator {
             appendElement(sb, "type", dep.getType(), indent + "    ");
         }
         String systemPath = originalWarLibrarySystemPath(dep, originalWarLibraryPaths);
-        String scope = systemPath == null ? dependencyScope(dep, useOriginalWarLibraries) : "system";
+        String scope = systemPath == null ? dependencyScope(dep, useOriginalPackagedLibraries) : "system";
         if (scope != null && !"compile".equals(scope)) {
             appendElement(sb, "scope", scope, indent + "    ");
         }
@@ -313,9 +329,9 @@ public class PomGenerator {
         sb.append(indent).append("</dependency>\n");
     }
 
-    private String dependencyScope(MavenDependency dep, boolean useOriginalWarLibraries) {
+    private String dependencyScope(MavenDependency dep, boolean useOriginalPackagedLibraries) {
         String scope = dep.getScope();
-        if (!useOriginalWarLibraries) {
+        if (!useOriginalPackagedLibraries) {
             return scope;
         }
         if (scope == null || "compile".equals(scope) || "runtime".equals(scope)) {
@@ -355,6 +371,106 @@ public class PomGenerator {
         return libraries;
     }
 
+    private boolean hasBootInfNestedLibraries(Map<String, String> originalNestedLibraryPaths) {
+        if (originalNestedLibraryPaths == null || originalNestedLibraryPaths.isEmpty()) {
+            return false;
+        }
+        for (String resourcePath : originalNestedLibraryPaths.keySet()) {
+            if (resourcePath != null && resourcePath.startsWith("BOOT-INF/lib/")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Map<String, EmbeddedLibraryCoordinates> originalNestedLibraryCoordinates(
+            JarAnalysisResult analysis,
+            Map<String, String> originalNestedLibraryPaths) {
+        Map<String, EmbeddedLibraryCoordinates> coordinates = new LinkedHashMap<>();
+        if (analysis == null || analysis.getSourceFile() == null || !analysis.getSourceFile().isFile()
+                || originalNestedLibraryPaths == null || originalNestedLibraryPaths.isEmpty()) {
+            return coordinates;
+        }
+        try (JarFile jarFile = new JarFile(analysis.getSourceFile())) {
+            for (String resourcePath : originalNestedLibraryPaths.keySet()) {
+                JarEntry entry = jarFile.getJarEntry(resourcePath);
+                if (entry == null) {
+                    continue;
+                }
+                try (InputStream inputStream = jarFile.getInputStream(entry)) {
+                    EmbeddedLibraryCoordinates coordinate = readNestedLibraryCoordinates(resourcePath, inputStream);
+                    if (coordinate != null) {
+                        coordinates.put(resourcePath, coordinate);
+                    }
+                } catch (IOException ignored) {
+                    // Filename parsing remains the fallback when a nested JAR cannot be inspected.
+                }
+            }
+        } catch (IOException ignored) {
+            return coordinates;
+        }
+        return coordinates;
+    }
+
+    private List<MavenDependency> bootRepackageResolvedDependencyExcludes(
+            List<MavenDependency> includedDependencies,
+            Map<String, EmbeddedLibraryCoordinates> originalNestedLibraryCoordinates) {
+        Set<String> originalCoordinates = new LinkedHashSet<>();
+        if (originalNestedLibraryCoordinates != null) {
+            for (EmbeddedLibraryCoordinates coordinates : originalNestedLibraryCoordinates.values()) {
+                if (coordinates != null && hasKnownValue(coordinates.getGroupId())
+                        && hasKnownValue(coordinates.getArtifactId())) {
+                    originalCoordinates.add(coordinates.getGroupId() + ":" + coordinates.getArtifactId());
+                }
+            }
+        }
+
+        List<MavenDependency> excludes = new java.util.ArrayList<>();
+        if (includedDependencies != null) {
+            for (MavenDependency dependency : includedDependencies) {
+                if (dependency == null || !hasKnownValue(dependency.getGroupId())
+                        || !hasKnownValue(dependency.getArtifactId())) {
+                    continue;
+                }
+                String key = dependency.getGroupId() + ":" + dependency.getArtifactId();
+                if (!originalCoordinates.contains(key)) {
+                    excludes.add(dependency);
+                }
+            }
+        }
+        return excludes;
+    }
+
+    private EmbeddedLibraryCoordinates readNestedLibraryCoordinates(String resourcePath,
+                                                                    InputStream inputStream) throws IOException {
+        String baseName = embeddedLibraryArtifactId(resourcePath);
+        try (ZipInputStream zipInputStream = new ZipInputStream(inputStream)) {
+            ZipEntry entry;
+            while ((entry = zipInputStream.getNextEntry()) != null) {
+                String name = entry.getName();
+                if (name != null && name.startsWith("META-INF/maven/") && name.endsWith("/pom.properties")) {
+                    Properties properties = new Properties();
+                    properties.load(zipInputStream);
+                    String groupId = trimToNull(properties.getProperty("groupId"));
+                    String artifactId = trimToNull(properties.getProperty("artifactId"));
+                    String version = trimToNull(properties.getProperty("version"));
+                    if (groupId != null && artifactId != null && version != null) {
+                        String expectedBaseName = artifactId + "-" + version;
+                        if (baseName.equals(expectedBaseName)) {
+                            return new EmbeddedLibraryCoordinates(groupId, artifactId, version);
+                        }
+                        String classifierPrefix = expectedBaseName + "-";
+                        if (baseName.startsWith(classifierPrefix)) {
+                            String classifier = baseName.substring(classifierPrefix.length());
+                            return new EmbeddedLibraryCoordinates(groupId, artifactId, version, classifier);
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     private String originalWarLibrarySystemPath(MavenDependency dep, Map<String, String> originalWarLibraryPaths) {
         if (dep == null || originalWarLibraryPaths == null || originalWarLibraryPaths.isEmpty()
                 || !hasKnownValue(dep.getArtifactId()) || !hasKnownValue(dep.getVersion())
@@ -365,14 +481,34 @@ public class PomGenerator {
     }
 
     private void appendEmbeddedSystemDependency(StringBuilder sb, String resourcePath, String systemPath,
+                                                EmbeddedLibraryCoordinates detectedCoordinates,
                                                 String indent) {
+        EmbeddedLibraryCoordinates coordinates = detectedCoordinates != null
+                ? detectedCoordinates
+                : embeddedLibraryCoordinates(resourcePath);
         sb.append(indent).append("<dependency>\n");
-        appendElement(sb, "groupId", "jar2mp.embedded", indent + "    ");
-        appendElement(sb, "artifactId", embeddedLibraryArtifactId(resourcePath), indent + "    ");
-        appendElement(sb, "version", "system", indent + "    ");
+        appendElement(sb, "groupId", coordinates.getGroupId(), indent + "    ");
+        appendElement(sb, "artifactId", coordinates.getArtifactId(), indent + "    ");
+        appendElement(sb, "version", coordinates.getVersion(), indent + "    ");
+        appendElement(sb, "classifier", coordinates.getClassifier(), indent + "    ");
         appendElement(sb, "scope", "system", indent + "    ");
         appendElement(sb, "systemPath", systemPath, indent + "    ");
         sb.append(indent).append("</dependency>\n");
+    }
+
+    private EmbeddedLibraryCoordinates embeddedLibraryCoordinates(String resourcePath) {
+        String baseName = embeddedLibraryArtifactId(resourcePath);
+        String[] parts = baseName.split("-");
+        for (int i = 1; i < parts.length; i++) {
+            if (startsWithDigit(parts[i])) {
+                String artifactId = join(parts, 0, i);
+                String version = join(parts, i, parts.length);
+                if (!artifactId.isEmpty() && !version.isEmpty()) {
+                    return new EmbeddedLibraryCoordinates("jar2mp.embedded", artifactId, version);
+                }
+            }
+        }
+        return new EmbeddedLibraryCoordinates("jar2mp.embedded", baseName, "system");
     }
 
     private String embeddedLibraryArtifactId(String resourcePath) {
@@ -386,6 +522,32 @@ public class PomGenerator {
         }
         String artifactId = fileName.replaceAll("[^A-Za-z0-9_.-]", "-");
         return artifactId.isEmpty() ? "library" : artifactId;
+    }
+
+    private boolean startsWithDigit(String value) {
+        return value != null && !value.isEmpty() && Character.isDigit(value.charAt(0));
+    }
+
+    private String join(String[] parts, int startInclusive, int endExclusive) {
+        StringBuilder joined = new StringBuilder();
+        for (int i = startInclusive; i < endExclusive && i < parts.length; i++) {
+            if (i < 0) {
+                continue;
+            }
+            if (joined.length() > 0) {
+                joined.append('-');
+            }
+            joined.append(parts[i]);
+        }
+        return joined.toString();
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private boolean isBundledByteExactDependency(MavenDependency dep, JarAnalysisResult analysis,
@@ -433,7 +595,9 @@ public class PomGenerator {
 
     private void appendBuildPlugin(StringBuilder sb, BuildPluginInfo plugin, String packaging,
                                    String originalManifestPath, String originalCreatedBy,
-                                   boolean originalBuildInfoPresent, boolean useOriginalWarLibraries) {
+                                   boolean originalBuildInfoPresent, boolean useOriginalWarLibraries,
+                                   boolean includeOriginalSystemScopeInBootRepackage,
+                                   List<MavenDependency> bootRepackageResolvedDependencyExcludes) {
         sb.append("            <plugin>\n");
         if (plugin.getGroupId() != null) {
             appendElement(sb, "groupId", plugin.getGroupId(), "                ");
@@ -457,6 +621,10 @@ public class PomGenerator {
                     configurationXml = configureOriginalWarLibraries(configurationXml);
                 }
             }
+            if (includeOriginalSystemScopeInBootRepackage && isSpringBootPlugin(plugin.getArtifactId())) {
+                configurationXml = configureSpringBootOriginalSystemScope(configurationXml,
+                        bootRepackageResolvedDependencyExcludes);
+            }
             appendRawXml(sb, configurationXml, "                ");
         } else if (compilerPlugin) {
             sb.append("                <configuration combine.self=\"override\">\n");
@@ -465,6 +633,9 @@ public class PomGenerator {
         } else if (archiveDescriptorPlugin) {
             appendMavenDescriptorConfiguration(sb, packaging, originalManifestPath, originalCreatedBy,
                     useOriginalWarLibraries, "                ");
+        } else if (includeOriginalSystemScopeInBootRepackage && isSpringBootPlugin(plugin.getArtifactId())) {
+            appendRawXml(sb, springBootOriginalSystemScopeConfiguration(bootRepackageResolvedDependencyExcludes),
+                    "                ");
         }
         if (!plugin.getExecutionsXml().isEmpty()) {
             sb.append("                <executions>\n");
@@ -766,6 +937,88 @@ public class PomGenerator {
         return configurationXml;
     }
 
+    private String configureSpringBootOriginalSystemScope(String configurationXml,
+                                                          List<MavenDependency> resolvedDependencyExcludes) {
+        if (configurationXml == null) {
+            return springBootOriginalSystemScopeConfiguration(resolvedDependencyExcludes);
+        }
+        String configured = configurationXml;
+        String includeSystemScope = "<includeSystemScope>true</includeSystemScope>";
+        if (configured.matches("(?s).*<includeSystemScope>.*?</includeSystemScope>.*")) {
+            configured = configured.replaceAll("(?s)<includeSystemScope>.*?</includeSystemScope>",
+                    Matcher.quoteReplacement(includeSystemScope));
+        } else if (configured.contains("</configuration>")) {
+            configured = configured.replace("</configuration>", "  " + includeSystemScope + "\n</configuration>");
+        }
+
+        String excludes = springBootRepackageExcludes("    ", resolvedDependencyExcludes, configured);
+        if (excludes.isEmpty()) {
+            return configured;
+        }
+        if (configured.contains("</excludes>")) {
+            return configured.replace("</excludes>", excludes + "</excludes>");
+        }
+        if (configured.contains("</configuration>")) {
+            return configured.replace("</configuration>",
+                    "  <excludes>\n"
+                            + excludes
+                            + "  </excludes>\n"
+                            + "</configuration>");
+        }
+        return configured;
+    }
+
+    private String springBootOriginalSystemScopeConfiguration(List<MavenDependency> resolvedDependencyExcludes) {
+        return "<configuration>\n"
+                + "  <includeSystemScope>true</includeSystemScope>\n"
+                + "  <excludes>\n"
+                + springBootRepackageExcludes("    ", resolvedDependencyExcludes, "")
+                + "  </excludes>\n"
+                + "</configuration>";
+    }
+
+    private String springBootRepackageExcludes(String indent, List<MavenDependency> resolvedDependencyExcludes,
+                                               String configuredXml) {
+        StringBuilder excludes = new StringBuilder();
+        if (!containsSpringBootExclude(configuredXml, "com.z0fsec.jar2mp", "compiler-fallback-classes")) {
+            excludes.append(springBootDependencyExclude(indent, "com.z0fsec.jar2mp", "compiler-fallback-classes"));
+        }
+        if (resolvedDependencyExcludes != null) {
+            Set<String> rendered = new LinkedHashSet<>();
+            for (MavenDependency dependency : resolvedDependencyExcludes) {
+                if (dependency == null || !hasKnownValue(dependency.getGroupId())
+                        || !hasKnownValue(dependency.getArtifactId())) {
+                    continue;
+                }
+                String key = dependency.getGroupId() + ":" + dependency.getArtifactId();
+                if (rendered.add(key)
+                        && !containsSpringBootExclude(configuredXml,
+                        dependency.getGroupId(), dependency.getArtifactId())) {
+                    excludes.append(springBootDependencyExclude(indent,
+                            dependency.getGroupId(), dependency.getArtifactId()));
+                }
+            }
+        }
+        return excludes.toString();
+    }
+
+    private String springBootDependencyExclude(String indent, String groupId, String artifactId) {
+        return indent + "<exclude>\n"
+                + indent + "  <groupId>" + escapeXml(groupId) + "</groupId>\n"
+                + indent + "  <artifactId>" + escapeXml(artifactId) + "</artifactId>\n"
+                + indent + "</exclude>\n";
+    }
+
+    private boolean containsSpringBootExclude(String configuredXml, String groupId, String artifactId) {
+        if (configuredXml == null || configuredXml.isEmpty()) {
+            return false;
+        }
+        String compact = configuredXml.replaceAll("\\s+", "");
+        String needle = "<exclude><groupId>" + escapeXml(groupId) + "</groupId><artifactId>"
+                + escapeXml(artifactId) + "</artifactId></exclude>";
+        return compact.contains(needle);
+    }
+
     private void appendOriginalWarLibraryWebResource(StringBuilder sb, String indent) {
         sb.append(originalWarLibraryWebResource(indent));
     }
@@ -1031,5 +1284,39 @@ public class PomGenerator {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("'", "&apos;");
+    }
+
+    private static final class EmbeddedLibraryCoordinates {
+        private final String groupId;
+        private final String artifactId;
+        private final String version;
+        private final String classifier;
+
+        private EmbeddedLibraryCoordinates(String groupId, String artifactId, String version) {
+            this(groupId, artifactId, version, null);
+        }
+
+        private EmbeddedLibraryCoordinates(String groupId, String artifactId, String version, String classifier) {
+            this.groupId = groupId == null || groupId.isEmpty() ? "jar2mp.embedded" : groupId;
+            this.artifactId = artifactId == null || artifactId.isEmpty() ? "library" : artifactId;
+            this.version = version == null || version.isEmpty() ? "system" : version;
+            this.classifier = classifier == null || classifier.isEmpty() ? null : classifier;
+        }
+
+        private String getGroupId() {
+            return groupId;
+        }
+
+        private String getArtifactId() {
+            return artifactId;
+        }
+
+        private String getVersion() {
+            return version;
+        }
+
+        private String getClassifier() {
+            return classifier;
+        }
     }
 }

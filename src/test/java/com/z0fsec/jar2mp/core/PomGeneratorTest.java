@@ -7,13 +7,22 @@ import com.z0fsec.jar2mp.model.MavenDependency;
 import com.z0fsec.jar2mp.model.PomInfo;
 import com.z0fsec.jar2mp.model.ProjectConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PomGeneratorTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void usesWarPackagingWhenConfigDoesNotOverrideDetectedWar() {
@@ -153,13 +162,117 @@ class PomGeneratorTest {
         String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
 
         assertTrue(pomXml.contains("<groupId>jar2mp.embedded</groupId>"));
-        assertTrue(pomXml.contains("<artifactId>spring-context-6.1.14</artifactId>"));
-        assertTrue(pomXml.contains("<artifactId>private-api-1.0-SNAPSHOT</artifactId>"));
+        assertTrue(pomXml.contains("<artifactId>spring-context</artifactId>"));
+        assertTrue(pomXml.contains("<version>6.1.14</version>"));
+        assertTrue(pomXml.contains("<artifactId>private-api</artifactId>"));
+        assertTrue(pomXml.contains("<version>1.0-SNAPSHOT</version>"));
         assertTrue(pomXml.contains("<scope>system</scope>"));
         assertTrue(pomXml.contains(
                 "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/spring-context-6.1.14.jar</systemPath>"));
         assertTrue(pomXml.contains(
                 "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/private-api-1.0-SNAPSHOT.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootRepackageIncludesOriginalSystemScopeLibrariesButExcludesCompilerFallbackJar() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("boot-app");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.getResourceFiles().add("BOOT-INF/lib/private-api-1.0-SNAPSHOT.jar");
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.launch.JarLauncher");
+        manifestInfo.getAllEntries().put("Spring-Boot-Lib", "BOOT-INF/lib/");
+        analysis.setManifestInfo(manifestInfo);
+        PomInfo pomInfo = new PomInfo();
+        MavenDependency resolvedDependency = new MavenDependency("io.projectreactor", "reactor-core", "3.6.2",
+                MavenDependency.Confidence.HIGH);
+        analysis.getDetectedDependencies().add(resolvedDependency);
+        BuildPluginInfo bootPlugin = new BuildPluginInfo();
+        bootPlugin.setGroupId("org.springframework.boot");
+        bootPlugin.setArtifactId("spring-boot-maven-plugin");
+        bootPlugin.getExecutionsXml().add("<execution><goals><goal>repackage</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(bootPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<includeSystemScope>true</includeSystemScope>"));
+        assertTrue(pomXml.contains("<groupId>com.z0fsec.jar2mp</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>compiler-fallback-classes</artifactId>"));
+        String compactPomXml = pomXml.replaceAll("\\s+", "");
+        assertTrue(compactPomXml.contains(
+                "<exclude><groupId>io.projectreactor</groupId><artifactId>reactor-core</artifactId></exclude>"));
+    }
+
+    @Test
+    void springBootEmbeddedLibrariesPreferNestedPomPropertiesCoordinates() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/org.apache.commons/commons-collections4/pom.properties",
+                "groupId=org.apache.commons\nartifactId=commons-collections4\nversion=4.4\n");
+        Path outerJar = tempDir.resolve("boot-app.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/commons-collections4-4.4.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/commons-collections4-4.4.jar");
+        analysis.setSourceFile(outerJar.toFile());
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<groupId>org.apache.commons</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>commons-collections4</artifactId>"));
+        assertTrue(pomXml.contains("<version>4.4</version>"));
+        assertFalse(pomXml.contains("<groupId>jar2mp.embedded</groupId>"));
+    }
+
+    @Test
+    void springBootEmbeddedLibrariesInferClassifierFromOriginalFileName() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/io.netty/netty-resolver-dns-native-macos/pom.properties",
+                "groupId=io.netty\nartifactId=netty-resolver-dns-native-macos\nversion=4.1.114.Final\n");
+        Path outerJar = tempDir.resolve("boot-native.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry(
+                    "BOOT-INF/lib/netty-resolver-dns-native-macos-4.1.114.Final-osx-aarch_64.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib(
+                "BOOT-INF/lib/netty-resolver-dns-native-macos-4.1.114.Final-osx-aarch_64.jar");
+        analysis.setSourceFile(outerJar.toFile());
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<groupId>io.netty</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>netty-resolver-dns-native-macos</artifactId>"));
+        assertTrue(pomXml.contains("<version>4.1.114.Final</version>"));
+        assertTrue(pomXml.contains("<classifier>osx-aarch_64</classifier>"));
+    }
+
+    @Test
+    void springBootRepackageKeepsResolvedDependencyWhenOriginalSystemLibraryUsesSameCoordinates() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/io.projectreactor/reactor-core/pom.properties",
+                "groupId=io.projectreactor\nartifactId=reactor-core\nversion=3.6.11\n");
+        Path outerJar = tempDir.resolve("boot-reactor.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/reactor-core-3.6.11.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactor-core-3.6.11.jar");
+        analysis.setSourceFile(outerJar.toFile());
+        analysis.getDetectedDependencies().add(new MavenDependency("io.projectreactor", "reactor-core", "3.6.2",
+                MavenDependency.Confidence.LOW));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        String compactPomXml = pomXml.replaceAll("\\s+", "");
+        assertFalse(compactPomXml.contains(
+                "<exclude><groupId>io.projectreactor</groupId><artifactId>reactor-core</artifactId></exclude>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/reactor-core-3.6.11.jar</systemPath>"));
     }
 
 
@@ -697,5 +810,37 @@ class PomGeneratorTest {
 
         assertFalse(pomXml.contains("<artifactId>dependency-track</artifactId>"));
         assertTrue(pomXml.contains("<artifactId>external-helper</artifactId>"));
+    }
+
+    private Path createNestedLibraryJar(String pomPropertiesPath, String pomProperties) throws Exception {
+        Path nestedJar = tempDir.resolve("nested-lib-" + System.nanoTime() + ".jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(nestedJar))) {
+            out.putNextEntry(new JarEntry(pomPropertiesPath));
+            out.write(pomProperties.getBytes(StandardCharsets.UTF_8));
+            out.closeEntry();
+        }
+        return nestedJar;
+    }
+
+    private JarAnalysisResult springBootAnalysisWithOriginalLib(String originalLibPath) {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("boot-app");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.getResourceFiles().add(originalLibPath);
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.launch.JarLauncher");
+        manifestInfo.getAllEntries().put("Spring-Boot-Lib", "BOOT-INF/lib/");
+        analysis.setManifestInfo(manifestInfo);
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo bootPlugin = new BuildPluginInfo();
+        bootPlugin.setGroupId("org.springframework.boot");
+        bootPlugin.setArtifactId("spring-boot-maven-plugin");
+        bootPlugin.getExecutionsXml().add("<execution><goals><goal>repackage</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(bootPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+        return analysis;
     }
 }
