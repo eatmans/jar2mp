@@ -204,6 +204,11 @@ Options:
 
 汇总报告写入 `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.md` 和 `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.csv`。固定缓存样本、PASS 规则和输出目录见 `docs/regression-samples.md`。
 
+
+```bash
+```
+
+
 能还原的主要内容：
 
 - Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标、原始 class bytes、原始 `META-INF/maven/**` metadata、原始 manifest、build-info/SBOM 等可保留构建元数据
