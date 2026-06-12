@@ -246,6 +246,42 @@ class DecompileParityReporterTest {
     }
 
     @Test
+    void treatsLambdaDeserializationSupportMethodAsLowRisk() throws Exception {
+        Path classFile = compileSerializableLambdaClass();
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(Files.readAllBytes(classFile));
+        BytecodeFingerprint.MethodFingerprint method =
+                fingerprint.getMethodsByKey().get("$deserializeLambda$(Ljava/lang/invoke/SerializedLambda;)Ljava/lang/Object;");
+        assertNotNull(method);
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("LambdaMetafactory")));
+
+        Path jarPath = tempDir.resolve("serializable-lambda.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/SerializableLambdaOwner.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("serializable-lambda-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/SerializableLambdaOwner.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, serializableLambdaSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/SerializableLambdaOwner.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("### $deserializeLambda$(Ljava/lang/invoke/SerializedLambda;)Ljava/lang/Object;"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated lambda deserialization support method)"));
+        assertFalse(report.contains("| MEDIUM | `demo/SerializableLambdaOwner` | "
+                + "`$deserializeLambda$(Ljava/lang/invoke/SerializedLambda;)Ljava/lang/Object;`"));
+    }
+
+    @Test
     void doesNotTreatOrdinaryGetMethodCallsAsReflection() throws Exception {
         Path classFile = compileNonReflectiveGetMethodClass();
         Path jarPath = tempDir.resolve("non-reflective-get-method.jar");
@@ -505,7 +541,7 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Risk level: LOW (compiler-generated synthetic switch-map support class)"));
         assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
         assertTrue(report.contains("synthetic switch-map support classes, bridge methods, enum support methods, "
-                + "outer-this constructors, and monitor temporaries."));
+                + "lambda deserialization support methods, outer-this constructors, and monitor temporaries."));
         assertTrue(report.contains("| MEDIUM | 0 |"));
         assertTrue(report.contains("Variable names: not required; compiler-generated synthetic switch-map support class."));
     }
@@ -779,6 +815,27 @@ class DecompileParityReporterTest {
                 sourceFile.toString());
         assertEquals(0, result);
         return classesDir.resolve("demo/MixedInvokedynamic.class");
+    }
+
+    private Path compileSerializableLambdaClass() throws Exception {
+        Path sourceDir = tempDir.resolve("serializable-lambda-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("SerializableLambdaOwner.java");
+        Files.write(sourceFile, serializableLambdaSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("serializable-lambda-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/SerializableLambdaOwner.class");
     }
 
     private Path compileNonReflectiveGetMethodClass() throws Exception {
@@ -1259,6 +1316,23 @@ class DecompileParityReporterTest {
                 "        Function<String, String> normalizer = value -> value.trim();\n" +
                 "        Function<String, String> lowercase = value -> value.toLowerCase();\n" +
                 "        return \"user=\" + normalizer.apply(input) + \", lower=\" + lowercase.apply(input);\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String serializableLambdaSource() {
+        return "package demo;\n" +
+                "\n" +
+                "import java.io.Serializable;\n" +
+                "\n" +
+                "public class SerializableLambdaOwner {\n" +
+                "    @FunctionalInterface\n" +
+                "    interface Task extends Serializable {\n" +
+                "        String run(String value);\n" +
+                "    }\n" +
+                "\n" +
+                "    public Task task() {\n" +
+                "        return value -> value.trim();\n" +
                 "    }\n" +
                 "}\n";
     }

@@ -173,7 +173,7 @@ public class DecompileParityReporter {
         report.append("Methods without LocalVariableTable names excludes bytecode bodies with no ")
                 .append("user parameters and no local-variable stores, plus compiler-generated ")
                 .append("synthetic switch-map support classes, bridge methods, enum support methods, ")
-                .append("outer-this constructors, and monitor temporaries.\n\n");
+                .append("lambda deserialization support methods, outer-this constructors, and monitor temporaries.\n\n");
         report.append("| Risk | Methods |\n");
         report.append("| --- | ---: |\n");
         report.append("| HIGH | ").append(summary.highMethods).append(" |\n");
@@ -382,6 +382,9 @@ public class DecompileParityReporter {
             }
             return "compiler-generated enum support method";
         }
+        if (isLambdaDeserializationSupportMethod(method)) {
+            return "compiler-generated lambda deserialization support method";
+        }
         if (isOuterThisOnlyConstructor(fingerprint, method)) {
             return "compiler-generated outer-this constructor";
         }
@@ -429,6 +432,11 @@ public class DecompileParityReporter {
         }
         return "$values".equals(method.getName())
                 && ("()[" + enumDescriptor).equals(descriptor);
+    }
+
+    private static boolean isLambdaDeserializationSupportMethod(BytecodeFingerprint.MethodFingerprint method) {
+        return "$deserializeLambda$".equals(method.getName())
+                && "(Ljava/lang/invoke/SerializedLambda;)Ljava/lang/Object;".equals(method.getDescriptor());
     }
 
     private static boolean isOuterThisOnlyConstructor(BytecodeFingerprint fingerprint,
