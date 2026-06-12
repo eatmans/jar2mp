@@ -192,7 +192,7 @@ Options:
 
 汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven package 验证、raw artifact exact 与 byte-exact package 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警或源码分数未满分。
 
-严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、写入常见测试/质量插件的 skip properties，并跳过原 POM 中会在 `package` 阶段重写主 artifact 的 shade/assembly/repackage 等插件。jar2mp 还会在生成项目的 `.jar2mp/byte-exact/` 写入 standalone ZIP record helper 和 `.jar2mp/byte-exact/raw-artifact/<original-name>` 参考原包；后续 `mvn package` 或 `mvn clean package` 会先生成正常 package 产物作为 Maven 项目可打包性的门禁，再由 helper 以原始归档作为最终 ZIP record 的规范字节来源，回放原始 entry 顺序、空目录 entry、manifest/module-info/resource/class 字节、entry 集合和 ZIP 元数据，最终写入 `target/byte-exact-package-restored/<original-name>`。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。普通 `--emit-raw-artifact` 只保留 `target/raw-artifact/` 原始副本和报告，不改变 `mvn package` 的源码重构产物；普通源码重构包会在 `process-classes` 阶段回填原始 class bytes，用于隔离剩余 ZIP 容器层差异。Spring Boot 可执行 JAR 的普通 package 还会在 repackage 后用 `src/main/original-libs/BOOT-INF/lib` 重建最终 `BOOT-INF/lib` 集合，避免 system-scope 依赖被 Spring Boot 插件改名或补入传递依赖。
+严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、写入常见测试/质量插件的 skip properties，并跳过原 POM 中会在 `package` 阶段重写主 artifact 的 shade/assembly/repackage 等插件。jar2mp 还会在生成项目的 `.jar2mp/byte-exact/` 写入 standalone ZIP record helper 和 `.jar2mp/byte-exact/raw-artifact/<original-name>` 参考原包；后续 `mvn package` 或 `mvn clean package` 会先生成正常 package 产物作为 Maven 项目可打包性的门禁，再由 helper 以原始归档作为最终 ZIP record 的规范字节来源，回放原始 entry 顺序、空目录 entry、manifest/module-info/resource/class 字节、entry 集合和 ZIP 元数据，最终写入 `target/byte-exact-package-restored/<original-name>`。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。普通 `--emit-raw-artifact` 只保留 `target/raw-artifact/` 原始副本和报告，不改变 `mvn package` 的源码重构产物；普通源码重构包会在 `process-classes` 阶段回填原始 class bytes，用于隔离剩余 ZIP 容器层差异。Spring Boot 可执行 JAR 的普通 package 还会在 repackage 后用 `src/main/original-libs/BOOT-INF/lib` 重建最终 `BOOT-INF/lib` 集合，并用 `src/main/original-boot-loader` 回填原始 root Spring Boot loader classes，避免 system-scope 依赖被 Spring Boot 插件改名、补入传递依赖，或由当前插件版本注入不同 loader 字节。
 
 对于已经下载到 `target/adhoc-github-release-assets/assets/` 的临时 GitHub Release 二进制样本，可以运行离线缓存矩阵来刷新当前源码的编译、raw artifact 与 byte-exact package 门禁结果：
 
@@ -243,6 +243,7 @@ Options:
 │       │   ├── resources/     ← 非类文件资源 + META-INF/services
 │       │   ├── original-classes/ ← clean package 时回填原始 class bytes 和 entry mtime
 │       │   ├── original-libs/  ← clean package 时提供原始 BOOT-INF/lib / WEB-INF/lib 编译 classpath
+│       │   ├── original-boot-loader/ ← Spring Boot package 时回填原始 root loader classes
 │       │   └── webapp/        ← WAR 根资源与 WEB-INF 相关资源
 │       └── test/
 │           ├── java/

@@ -16,6 +16,7 @@ public class ProjectBuilder {
 
     private static final String BOOT_CLASSES_PREFIX = "BOOT-INF/classes/";
     private static final String BOOT_LIB_PREFIX = "BOOT-INF/lib/";
+    private static final String BOOT_LOADER_PREFIX = "org/springframework/boot/loader/";
     private static final String WEB_CLASSES_PREFIX = "WEB-INF/classes/";
     private static final String WEB_LIB_PREFIX = "WEB-INF/lib/";
     private static final String NAMED_INNER_DECLARATION_PATTERN =
@@ -69,6 +70,8 @@ public class ProjectBuilder {
         File srcMainOriginalClasses = new File(outputDir, "src/main/original-classes");
         File targetOriginalLibs = new File(outputDir, "target/original-libs");
         File srcMainOriginalLibs = new File(outputDir, "src/main/original-libs");
+        File targetOriginalBootLoader = new File(outputDir, "target/original-boot-loader");
+        File srcMainOriginalBootLoader = new File(outputDir, "src/main/original-boot-loader");
         File compilerFallbackJar = new File(outputDir, "target/compiler-fallback-classes.jar");
         File srcTestJava = new File(outputDir, "src/test/java");
         File srcTestResources = new File(outputDir, "src/test/resources");
@@ -98,6 +101,7 @@ public class ProjectBuilder {
             Set<String> caseInsensitiveClassCollisions =
                     findCaseInsensitiveClassCollisions(analysis.getClassFiles());
             Map<String, byte[]> compilerFallbackJarEntries = new LinkedHashMap<>();
+            copyOriginalBootLoaderEntries(jf, targetOriginalBootLoader, srcMainOriginalBootLoader);
             Map<String, String> contextSources = shouldDecompile()
                     ? cfrJarDecompiler.decompile(jarFile)
                     : Collections.emptyMap();
@@ -462,6 +466,22 @@ public class ProjectBuilder {
 
     private boolean isNestedLibrary(String resourcePath) {
         return resourcePath.startsWith(BOOT_LIB_PREFIX) || resourcePath.startsWith(WEB_LIB_PREFIX);
+    }
+
+    private void copyOriginalBootLoaderEntries(JarFile jarFile, File targetOriginalBootLoader,
+                                               File srcMainOriginalBootLoader) throws IOException {
+        Enumeration<JarEntry> entries = jarFile.entries();
+        Set<Path> copiedTargets = new HashSet<>();
+        Set<Path> copiedSources = new HashSet<>();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            String entryPath = entry.getName();
+            if (entry.isDirectory() || !entryPath.startsWith(BOOT_LOADER_PREFIX)) {
+                continue;
+            }
+            copyJarEntry(jarFile, entryPath, targetOriginalBootLoader, entryPath, copiedTargets, true);
+            copyJarEntry(jarFile, entryPath, srcMainOriginalBootLoader, entryPath, copiedSources, true);
+        }
     }
 
     private boolean shouldCopyMetaInfResource(String metaPath) {

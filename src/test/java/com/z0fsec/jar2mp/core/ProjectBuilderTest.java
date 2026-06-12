@@ -139,8 +139,9 @@ class ProjectBuilderTest {
     @Test
     void restoresSpringBootClassResourcesAndSkipsNestedLibraries() throws Exception {
         Path jar = tempDir.resolve("boot.jar");
+        byte[] launcherBytes = minimalClassBytes(52);
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
-            addEntry(out, "org/springframework/boot/loader/JarLauncher.class", minimalClassBytes(52));
+            addEntry(out, "org/springframework/boot/loader/JarLauncher.class", launcherBytes);
             addEntry(out, "BOOT-INF/classes/com/example/App.class", minimalClassBytes(52));
             addEntry(out, "BOOT-INF/classes/static/app.css", "body { color: #333; }");
             addEntry(out, "BOOT-INF/classes/templates/home.html", "<p>home</p>");
@@ -168,6 +169,10 @@ class ProjectBuilderTest {
                 Files.readString(outputDir.resolve("target/original-libs/BOOT-INF/lib/dependency.jar")));
         assertEquals("library-bytes",
                 Files.readString(outputDir.resolve("src/main/original-libs/BOOT-INF/lib/dependency.jar")));
+        assertArrayEquals(launcherBytes, Files.readAllBytes(outputDir.resolve(
+                "target/original-boot-loader/org/springframework/boot/loader/JarLauncher.class")));
+        assertArrayEquals(launcherBytes, Files.readAllBytes(outputDir.resolve(
+                "src/main/original-boot-loader/org/springframework/boot/loader/JarLauncher.class")));
         String inventory = Files.readString(outputDir.resolve("resource-inventory.md"));
         assertTrue(inventory.contains("target/original-libs/BOOT-INF/lib/dependency.jar"));
         assertTrue(inventory.contains("available to the generated Maven classpath"));

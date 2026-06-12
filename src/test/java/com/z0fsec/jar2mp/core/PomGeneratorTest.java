@@ -293,6 +293,23 @@ class PomGeneratorTest {
                 "<move file=\"${jar2mp.package.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />"));
     }
 
+    @Test
+    void springBootPackageRestoresOriginalBootLoaderAfterRepackage() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactive-streams-1.0.4.jar");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<id>restore-original-boot-loader</id>"));
+        assertTrue(pomXml.contains(
+                "<zip destfile=\"${jar2mp.package.bootloader.overlay}\" compress=\"false\" keepcompression=\"true\">"));
+        assertTrue(pomXml.contains(
+                "<zipfileset src=\"${jar2mp.package.artifact}\" excludes=\"org/springframework/boot/loader/**\" />"));
+        assertTrue(pomXml.contains(
+                "<zipfileset dir=\"${project.basedir}/src/main/original-boot-loader\" />"));
+        assertTrue(pomXml.contains(
+                "<move file=\"${jar2mp.package.bootloader.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />"));
+    }
+
 
     @Test
     void usesOriginalJarManifestWhenPresent() {

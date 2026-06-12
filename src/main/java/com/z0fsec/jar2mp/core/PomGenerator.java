@@ -195,10 +195,13 @@ public class PomGenerator {
         }
         boolean useOriginalBootLibraryPackageOverlay = includeOriginalSystemScopeInBootRepackage
                 && byteExactArtifactFileName == null;
+        boolean useOriginalBootLoaderPackageOverlay = isSpringBootExecutable(analysis)
+                && byteExactArtifactFileName == null;
         if (useOriginalClassOverlay || useOriginalResourceOverlay || useOriginalBootLibraryPackageOverlay
-                || byteExactArtifactFileName != null) {
+                || useOriginalBootLoaderPackageOverlay || byteExactArtifactFileName != null) {
             appendAntrunPlugin(sb, useOriginalClassOverlay, useOriginalResourceOverlay,
-                    useOriginalBootLibraryPackageOverlay, byteExactArtifactFileName);
+                    useOriginalBootLibraryPackageOverlay, useOriginalBootLoaderPackageOverlay,
+                    byteExactArtifactFileName);
         }
         sb.append("        </plugins>\n");
         sb.append("    </build>\n");
@@ -1142,6 +1145,7 @@ public class PomGenerator {
     private void appendAntrunPlugin(StringBuilder sb, boolean useOriginalClassOverlay,
                                     boolean useOriginalResourceOverlay,
                                     boolean useOriginalBootLibraryPackageOverlay,
+                                    boolean useOriginalBootLoaderPackageOverlay,
                                     String rawArtifactFileName) {
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
@@ -1156,6 +1160,9 @@ public class PomGenerator {
         }
         if (useOriginalBootLibraryPackageOverlay) {
             appendOriginalBootLibraryPackageOverlayExecution(sb);
+        }
+        if (useOriginalBootLoaderPackageOverlay) {
+            appendOriginalBootLoaderPackageOverlayExecution(sb);
         }
         if (rawArtifactFileName != null) {
             appendByteExactPackageRestoreExecution(sb, rawArtifactFileName);
@@ -1215,6 +1222,28 @@ public class PomGenerator {
         sb.append("                                    <zipfileset dir=\"${project.basedir}/src/main/original-libs/BOOT-INF/lib\" prefix=\"BOOT-INF/lib\" />\n");
         sb.append("                                </zip>\n");
         sb.append("                                <move file=\"${jar2mp.package.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />\n");
+        sb.append("                            </target>\n");
+        sb.append("                        </configuration>\n");
+        sb.append("                    </execution>\n");
+    }
+
+    private void appendOriginalBootLoaderPackageOverlayExecution(StringBuilder sb) {
+        sb.append("                    <execution>\n");
+        sb.append("                        <id>restore-original-boot-loader</id>\n");
+        sb.append("                        <phase>package</phase>\n");
+        sb.append("                        <goals>\n");
+        sb.append("                            <goal>run</goal>\n");
+        sb.append("                        </goals>\n");
+        sb.append("                        <configuration>\n");
+        sb.append("                            <target>\n");
+        sb.append("                                <property name=\"jar2mp.package.artifact\" value=\"${project.build.directory}/${project.build.finalName}.${project.packaging}\" />\n");
+        sb.append("                                <property name=\"jar2mp.package.bootloader.overlay\" value=\"${project.build.directory}/jar2mp-package-bootloader-overlay/${project.build.finalName}.${project.packaging}\" />\n");
+        sb.append("                                <mkdir dir=\"${project.build.directory}/jar2mp-package-bootloader-overlay\" />\n");
+        sb.append("                                <zip destfile=\"${jar2mp.package.bootloader.overlay}\" compress=\"false\" keepcompression=\"true\">\n");
+        sb.append("                                    <zipfileset src=\"${jar2mp.package.artifact}\" excludes=\"org/springframework/boot/loader/**\" />\n");
+        sb.append("                                    <zipfileset dir=\"${project.basedir}/src/main/original-boot-loader\" />\n");
+        sb.append("                                </zip>\n");
+        sb.append("                                <move file=\"${jar2mp.package.bootloader.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />\n");
         sb.append("                            </target>\n");
         sb.append("                        </configuration>\n");
         sb.append("                    </execution>\n");
