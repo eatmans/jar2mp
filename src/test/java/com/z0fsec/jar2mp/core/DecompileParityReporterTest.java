@@ -145,6 +145,34 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Methods with missing source: 0"));
     }
 
+    @Test
+    void treatsSignatureOnlyMethodsAsLowRiskWhenSourceExists() throws Exception {
+        Path interfaceClassFile = compileNoBodyInterface();
+        Path jarPath = tempDir.resolve("interface.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/NoBody.class"));
+            jar.write(Files.readAllBytes(interfaceClassFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("interface-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/NoBody.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, noBodyInterfaceSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/NoBody.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (no bytecode body; signature-only method)"));
+        assertTrue(report.contains("No Code attribute; abstract/native/synthetic-only method."));
+        assertTrue(report.contains("| HIGH | 0 |"));
+    }
+
     private Path compileReflectiveFlowClass() throws Exception {
         Path sourceDir = tempDir.resolve("compile-src/demo");
         Files.createDirectories(sourceDir);
@@ -231,6 +259,27 @@ class DecompileParityReporterTest {
         return classesDir.resolve("demo/Outer$Inner.class");
     }
 
+    private Path compileNoBodyInterface() throws Exception {
+        Path sourceDir = tempDir.resolve("interface-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("NoBody.java");
+        Files.write(sourceFile, noBodyInterfaceSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("interface-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/NoBody.class");
+    }
+
     private String innerSource() {
         return "package demo;\n" +
                 "\n" +
@@ -241,6 +290,14 @@ class DecompileParityReporterTest {
                 "            return trimmed;\n" +
                 "        }\n" +
                 "    }\n" +
+                "}\n";
+    }
+
+    private String noBodyInterfaceSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public interface NoBody {\n" +
+                "    String map(String input);\n" +
                 "}\n";
     }
 

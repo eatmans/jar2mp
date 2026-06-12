@@ -164,7 +164,7 @@ public class DecompileParityReporter {
             return "HIGH (source missing)";
         }
         if (!method.hasCode()) {
-            return "HIGH (no bytecode body)";
+            return "LOW (no bytecode body; signature-only method)";
         }
         if (hasReflection(method)) {
             return "HIGH (reflection call detected)";
