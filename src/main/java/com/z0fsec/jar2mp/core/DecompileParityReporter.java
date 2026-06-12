@@ -214,6 +214,9 @@ public class DecompileParityReporter {
         if (hasInvokedynamic && missingDebugNames) {
             return "MEDIUM (invokedynamic and missing debug names)";
         }
+        if (hasInvokedynamic && method.hasOnlyStringConcatInvokedynamic()) {
+            return "LOW (string-concat invokedynamic only)";
+        }
         if (hasInvokedynamic) {
             return "MEDIUM (invokedynamic)";
         }

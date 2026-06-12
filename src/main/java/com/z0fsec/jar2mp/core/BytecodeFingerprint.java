@@ -207,6 +207,20 @@ public class BytecodeFingerprint {
             return foundCompilerTemp;
         }
 
+        public boolean hasOnlyStringConcatInvokedynamic() {
+            if (invokedynamicCalls.isEmpty()) {
+                return false;
+            }
+            for (String call : invokedynamicCalls) {
+                if (!(call.startsWith("invokedynamic.makeConcat")
+                        && call.contains(")Ljava/lang/String;")
+                        && call.contains("[bootstrap=java/lang/invoke/StringConcatFactory.makeConcat"))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public boolean hasCode() {
             return hasCode;
         }
@@ -253,6 +267,7 @@ public class BytecodeFingerprint {
     private static class ClassReader {
         private final byte[] data;
         private CpInfo[] constantPool;
+        private List<String> bootstrapMethodReferences = Collections.emptyList();
         private int offset;
 
         private ClassReader(byte[] data) {
@@ -266,6 +281,8 @@ public class BytecodeFingerprint {
 
             offset = 8;
             readConstantPool();
+            int classBodyOffset = offset;
+            readBootstrapMethodsBeforeMembers(classBodyOffset);
             int accessFlags = readU2();
             int thisClassIndex = readU2();
             offset += 2; // super_class
@@ -276,6 +293,37 @@ public class BytecodeFingerprint {
             ClassAttributes attributes = readClassAttributes();
             return new BytecodeFingerprint(resolveClassName(thisClassIndex), fields, attributes.annotations,
                     attributes.genericSignatures, attributes.bootstrapMethods, methods, accessFlags);
+        }
+
+        private void readBootstrapMethodsBeforeMembers(int classBodyOffset) {
+            int savedOffset = offset;
+            offset = classBodyOffset;
+            offset += 6; // access_flags + this_class + super_class
+            skipInterfaces();
+            skipMembers(); // fields
+            skipMembers(); // methods
+            bootstrapMethodReferences = readBootstrapMethodReferencesFromClassAttributes();
+            offset = savedOffset;
+        }
+
+        private List<String> readBootstrapMethodReferencesFromClassAttributes() {
+            List<String> references = new ArrayList<>();
+            int attributesCount = readU2();
+            for (int i = 0; i < attributesCount; i++) {
+                String attributeName = utf8(readU2());
+                int attributeLength = readU4();
+                int attributeEnd = offset + attributeLength;
+                if ("BootstrapMethods".equals(attributeName)) {
+                    int bootstrapCount = readU2();
+                    for (int j = 0; j < bootstrapCount; j++) {
+                        references.add(resolveMethodHandle(readU2()));
+                        int argumentCount = readU2();
+                        offset += argumentCount * 2;
+                    }
+                }
+                offset = attributeEnd;
+            }
+            return references;
         }
 
         private void readConstantPool() {
@@ -689,6 +737,13 @@ public class BytecodeFingerprint {
             skipAttributes();
         }
 
+        private void skipMembers() {
+            int count = readU2();
+            for (int i = 0; i < count; i++) {
+                skipMember();
+            }
+        }
+
         private void skipAttributes() {
             int attributesCount = readU2();
             for (int i = 0; i < attributesCount; i++) {
@@ -808,7 +863,11 @@ public class BytecodeFingerprint {
             if (nameAndType == null) {
                 return "invokedynamic#" + index;
             }
-            return "invokedynamic." + utf8(nameAndType.index1) + utf8(nameAndType.index2);
+            String call = "invokedynamic." + utf8(nameAndType.index1) + utf8(nameAndType.index2);
+            if (invokeDynamic.index1 >= 0 && invokeDynamic.index1 < bootstrapMethodReferences.size()) {
+                return call + " [bootstrap=" + bootstrapMethodReferences.get(invokeDynamic.index1) + "]";
+            }
+            return call;
         }
 
         private String resolveClassName(int index) {

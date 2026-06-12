@@ -123,6 +123,89 @@ class DecompileParityReporterTest {
     }
 
     @Test
+    void treatsStringConcatInvokedynamicAsLowRiskWhenSourceExists() throws Exception {
+        Path classFile = compileStringConcatClass();
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(Files.readAllBytes(classFile));
+        BytecodeFingerprint.MethodFingerprint method =
+                fingerprint.getMethodsByKey().get("message(Ljava/lang/String;I)Ljava/lang/String;");
+        assertNotNull(method);
+        assertTrue(method.getInvokedynamicCalls().iterator().next()
+                .contains("java/lang/invoke/StringConcatFactory.makeConcatWithConstants"));
+
+        Path jarPath = tempDir.resolve("string-concat.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/StringConcatOnly.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("string-concat-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/StringConcatOnly.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, stringConcatSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/StringConcatOnly.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Methods with invokedynamic: 1"));
+        assertTrue(report.contains("Risk level: LOW (string-concat invokedynamic only)"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertFalse(report.contains("| MEDIUM | `demo/StringConcatOnly` | `message(Ljava/lang/String;I)Ljava/lang/String;`"));
+    }
+
+    @Test
+    void keepsMixedLambdaAndStringConcatInvokedynamicAsMediumRisk() throws Exception {
+        Path classFile = compileMixedInvokedynamicClass();
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(Files.readAllBytes(classFile));
+        BytecodeFingerprint.MethodFingerprint method =
+                fingerprint.getMethodsByKey().get("format(Ljava/lang/String;)Ljava/lang/String;");
+        assertNotNull(method);
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .allMatch(call -> call.contains(" [bootstrap=")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .filter(call -> call.startsWith("invokedynamic.apply"))
+                .allMatch(call -> call.contains("java/lang/invoke/LambdaMetafactory.metafactory")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .filter(call -> call.startsWith("invokedynamic.makeConcat"))
+                .allMatch(call -> call.contains("java/lang/invoke/StringConcatFactory.makeConcat")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("java/lang/invoke/StringConcatFactory.makeConcatWithConstants")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("java/lang/invoke/LambdaMetafactory.metafactory")));
+
+        Path jarPath = tempDir.resolve("mixed-invokedynamic.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/MixedInvokedynamic.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("mixed-invokedynamic-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/MixedInvokedynamic.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, mixedInvokedynamicSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/MixedInvokedynamic.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Methods with invokedynamic: 1"));
+        assertTrue(report.contains("Risk level: MEDIUM (invokedynamic)"));
+        assertTrue(report.contains(
+                "| MEDIUM | `demo/MixedInvokedynamic` | `format(Ljava/lang/String;)Ljava/lang/String;` | invokedynamic |"));
+        assertFalse(report.contains("Risk level: LOW (string-concat invokedynamic only)"));
+    }
+
+    @Test
     void explainsMissingDebugNameRiskSeparatelyFromInvokedynamic() throws Exception {
         Path classFile = compileUserVariablesClassWithoutDebug();
         Path jarPath = tempDir.resolve("missing-debug-names.jar");
@@ -512,6 +595,46 @@ class DecompileParityReporterTest {
                 classesDir.resolve("demo/AuditMarker.class"));
     }
 
+    private Path compileStringConcatClass() throws Exception {
+        Path sourceDir = tempDir.resolve("string-concat-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("StringConcatOnly.java");
+        Files.write(sourceFile, stringConcatSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("string-concat-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "--release", "17",
+                "-g",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/StringConcatOnly.class");
+    }
+
+    private Path compileMixedInvokedynamicClass() throws Exception {
+        Path sourceDir = tempDir.resolve("mixed-invokedynamic-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("MixedInvokedynamic.java");
+        Files.write(sourceFile, mixedInvokedynamicSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("mixed-invokedynamic-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "--release", "17",
+                "-g",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/MixedInvokedynamic.class");
+    }
+
     private Path compileInnerClass() throws Exception {
         Path sourceDir = tempDir.resolve("inner-src/demo");
         Files.createDirectories(sourceDir);
@@ -894,6 +1017,30 @@ class DecompileParityReporterTest {
                 "        } finally {\n" +
                 "            this.state = String.valueOf(this.state);\n" +
                 "        }\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String stringConcatSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class StringConcatOnly {\n" +
+                "    public String message(String input, int count) {\n" +
+                "        return \"user=\" + input + \", count=\" + count;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String mixedInvokedynamicSource() {
+        return "package demo;\n" +
+                "\n" +
+                "import java.util.function.Function;\n" +
+                "\n" +
+                "public class MixedInvokedynamic {\n" +
+                "    public String format(String input) {\n" +
+                "        Function<String, String> normalizer = value -> value.trim();\n" +
+                "        Function<String, String> lowercase = value -> value.toLowerCase();\n" +
+                "        return \"user=\" + normalizer.apply(input) + \", lower=\" + lowercase.apply(input);\n" +
                 "    }\n" +
                 "}\n";
     }
