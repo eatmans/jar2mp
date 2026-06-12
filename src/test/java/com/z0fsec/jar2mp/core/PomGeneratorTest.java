@@ -310,6 +310,39 @@ class PomGeneratorTest {
                 "<move file=\"${jar2mp.package.bootloader.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />"));
     }
 
+    @Test
+    void springBootPackageRestoresOriginalManifestAfterRepackage() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactive-streams-1.0.4.jar");
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<manifestFile>"));
+        assertTrue(pomXml.contains("<id>restore-original-boot-manifest</id>"));
+        assertTrue(pomXml.contains(
+                "<zip destfile=\"${jar2mp.package.manifest.overlay}\" compress=\"false\" keepcompression=\"true\">"));
+        assertTrue(pomXml.contains(
+                "<zipfileset src=\"${jar2mp.package.artifact}\" excludes=\"META-INF/MANIFEST.MF\" />"));
+        assertTrue(pomXml.contains(
+                "<zipfileset dir=\"${project.basedir}/src/main/resources/META-INF\" includes=\"MANIFEST.MF\" prefix=\"META-INF\" />"));
+        assertTrue(pomXml.contains(
+                "<move file=\"${jar2mp.package.manifest.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />"));
+    }
+
+    @Test
+    void byteExactSpringBootPackageSkipsNormalManifestOverlay() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactive-streams-1.0.4.jar");
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        analysis.setSourceFile(new File("boot-app.jar"));
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertFalse(pomXml.contains("<id>restore-original-boot-manifest</id>"));
+        assertTrue(pomXml.contains("<id>restore-byte-exact-package-records</id>"));
+    }
+
 
     @Test
     void usesOriginalJarManifestWhenPresent() {

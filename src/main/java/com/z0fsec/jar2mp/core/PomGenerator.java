@@ -59,13 +59,16 @@ public class PomGenerator {
         boolean originalManifestPresent = hasMetaInfFile(analysis, "META-INF/MANIFEST.MF");
         boolean originalBuildInfoPresent = hasMetaInfFile(analysis, "META-INF/build-info.properties");
         boolean originalSbomPresent = hasMetaInfPathPrefix(analysis, "META-INF/sbom/");
+        boolean springBootExecutable = isSpringBootExecutable(analysis);
         String originalManifestPath = originalManifestPath(packaging,
-                originalManifestPresent && !isSpringBootExecutable(analysis));
+                originalManifestPresent && !springBootExecutable);
+        String originalBootManifestPackageOverlayPath = originalManifestPath(packaging,
+                originalManifestPresent && springBootExecutable);
         String originalCreatedBy = originalCreatedBy(analysis,
-                originalManifestPresent && isSpringBootExecutable(analysis));
+                originalManifestPresent && springBootExecutable);
         boolean useOriginalWarLibraries = "war".equals(packaging)
                 && hasResourcePathPrefix(analysis, "WEB-INF/lib/")
-                && !isSpringBootExecutable(analysis);
+                && !springBootExecutable;
         String byteExactArtifactFileName = null;
         if (config != null && config.isByteExactPackage() && analysis.getSourceFile() != null) {
             byteExactArtifactFileName = analysis.getSourceFile().getName();
@@ -195,12 +198,16 @@ public class PomGenerator {
         }
         boolean useOriginalBootLibraryPackageOverlay = includeOriginalSystemScopeInBootRepackage
                 && byteExactArtifactFileName == null;
-        boolean useOriginalBootLoaderPackageOverlay = isSpringBootExecutable(analysis)
+        boolean useOriginalBootLoaderPackageOverlay = springBootExecutable
+                && byteExactArtifactFileName == null;
+        boolean useOriginalBootManifestPackageOverlay = originalBootManifestPackageOverlayPath != null
                 && byteExactArtifactFileName == null;
         if (useOriginalClassOverlay || useOriginalResourceOverlay || useOriginalBootLibraryPackageOverlay
-                || useOriginalBootLoaderPackageOverlay || byteExactArtifactFileName != null) {
+                || useOriginalBootLoaderPackageOverlay || useOriginalBootManifestPackageOverlay
+                || byteExactArtifactFileName != null) {
             appendAntrunPlugin(sb, useOriginalClassOverlay, useOriginalResourceOverlay,
                     useOriginalBootLibraryPackageOverlay, useOriginalBootLoaderPackageOverlay,
+                    useOriginalBootManifestPackageOverlay ? originalBootManifestPackageOverlayPath : null,
                     byteExactArtifactFileName);
         }
         sb.append("        </plugins>\n");
@@ -1146,6 +1153,7 @@ public class PomGenerator {
                                     boolean useOriginalResourceOverlay,
                                     boolean useOriginalBootLibraryPackageOverlay,
                                     boolean useOriginalBootLoaderPackageOverlay,
+                                    String originalBootManifestPackageOverlayPath,
                                     String rawArtifactFileName) {
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
@@ -1163,6 +1171,9 @@ public class PomGenerator {
         }
         if (useOriginalBootLoaderPackageOverlay) {
             appendOriginalBootLoaderPackageOverlayExecution(sb);
+        }
+        if (originalBootManifestPackageOverlayPath != null) {
+            appendOriginalBootManifestPackageOverlayExecution(sb, originalBootManifestPackageOverlayPath);
         }
         if (rawArtifactFileName != null) {
             appendByteExactPackageRestoreExecution(sb, rawArtifactFileName);
@@ -1247,6 +1258,42 @@ public class PomGenerator {
         sb.append("                            </target>\n");
         sb.append("                        </configuration>\n");
         sb.append("                    </execution>\n");
+    }
+
+    private void appendOriginalBootManifestPackageOverlayExecution(StringBuilder sb, String manifestPath) {
+        String manifestDir = parentPath(manifestPath);
+        sb.append("                    <execution>\n");
+        sb.append("                        <id>restore-original-boot-manifest</id>\n");
+        sb.append("                        <phase>package</phase>\n");
+        sb.append("                        <goals>\n");
+        sb.append("                            <goal>run</goal>\n");
+        sb.append("                        </goals>\n");
+        sb.append("                        <configuration>\n");
+        sb.append("                            <target>\n");
+        sb.append("                                <property name=\"jar2mp.package.artifact\" value=\"${project.build.directory}/${project.build.finalName}.${project.packaging}\" />\n");
+        sb.append("                                <property name=\"jar2mp.package.manifest.overlay\" value=\"${project.build.directory}/jar2mp-package-manifest-overlay/${project.build.finalName}.${project.packaging}\" />\n");
+        sb.append("                                <mkdir dir=\"${project.build.directory}/jar2mp-package-manifest-overlay\" />\n");
+        sb.append("                                <zip destfile=\"${jar2mp.package.manifest.overlay}\" compress=\"false\" keepcompression=\"true\">\n");
+        sb.append("                                    <zipfileset src=\"${jar2mp.package.artifact}\" excludes=\"META-INF/MANIFEST.MF\" />\n");
+        sb.append("                                    <zipfileset dir=\"")
+                .append(escapeXml(manifestDir))
+                .append("\" includes=\"MANIFEST.MF\" prefix=\"META-INF\" />\n");
+        sb.append("                                </zip>\n");
+        sb.append("                                <move file=\"${jar2mp.package.manifest.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />\n");
+        sb.append("                            </target>\n");
+        sb.append("                        </configuration>\n");
+        sb.append("                    </execution>\n");
+    }
+
+    private String parentPath(String path) {
+        if (path == null) {
+            return "";
+        }
+        int slash = path.lastIndexOf('/');
+        if (slash <= 0) {
+            return "";
+        }
+        return path.substring(0, slash);
     }
 
     private void appendByteExactPackageRestoreExecution(StringBuilder sb, String rawArtifactFileName) {
