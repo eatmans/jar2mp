@@ -34,7 +34,7 @@ The script uses GitHub codeload ZIP archives instead of `git clone`. This keeps 
 Each pass-gate sample is marked `PASS` only when:
 
 - jar2mp exits successfully.
-- `restoration-score.md` exists and the overall score meets the sample threshold.
+- `restoration-score.md` exists and the overall source/resource/runtime-observation/build-verification score meets the sample threshold.
 - Source and resource buckets are both `100`.
 - `verification-report.md` reports `BUILD SUCCESS` and `Failure type: NONE`.
 - `decompile-failures.md` reports zero failed decompilations.

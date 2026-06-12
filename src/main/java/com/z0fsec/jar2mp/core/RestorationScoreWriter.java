@@ -19,6 +19,10 @@ public class RestorationScoreWriter {
 
         report.append("# Restoration score\n\n");
         report.append("- Overall: ").append(effectiveScore.getOverall()).append("/100\n\n");
+        report.append("> Overall score includes source, resource, runtime observation, and build verification. ")
+                .append("Byte-level package equality is reported separately in ")
+                .append("`target/byte-exact-package-check/` and ")
+                .append("`target/package-record-restore-check/` artifact fidelity reports.\n\n");
         report.append("| Bucket | Score | Weight | Contribution |\n");
         report.append("| --- | --- | --- | --- |\n");
         appendBucket(report, "source", 40, effectiveScore.getBreakdown().get("source"));

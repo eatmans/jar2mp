@@ -156,7 +156,9 @@ public class RestorationScorer {
     private int scoreRuntime(JarAnalysisResult analysis, RuntimeTraceResult runtimeTraceResult,
                              RestorationScore score) {
         if (runtimeTraceResult == null || runtimeTraceResult.getEvents().isEmpty()) {
-            score.addGap("reflection", "No runtime trace data captured.", RUNTIME_WEIGHT);
+            score.addGap("runtime_trace",
+                    "Runtime trace data has not been captured; this is an observation gap, not a byte-level package fidelity failure.",
+                    RUNTIME_WEIGHT);
             return 0;
         }
 

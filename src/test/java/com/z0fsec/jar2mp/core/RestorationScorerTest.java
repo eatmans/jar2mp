@@ -274,6 +274,18 @@ class RestorationScorerTest {
     }
 
     @Test
+    void missingRuntimeTraceIsReportedAsObservationGapNotReflectionGap() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_trace".equals(g.getCategory())
+                && g.getDetail().contains("Runtime trace data has not been captured")));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "reflection".equals(g.getCategory())
+                && g.getDetail().contains("No runtime trace data captured")));
+    }
+
+    @Test
     void missingInnerClassFindingLowersSourceFidelity() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.getClassFiles().add("demo/App.class");
