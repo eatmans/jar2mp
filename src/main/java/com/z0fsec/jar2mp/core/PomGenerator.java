@@ -74,6 +74,12 @@ public class PomGenerator {
             byteExactArtifactFileName = analysis.getSourceFile().getName();
         }
         boolean byteExactPackage = byteExactArtifactFileName != null;
+        String packageRecordArtifactFileName = null;
+        if (config != null && config.isRestorePackageRecords()
+                && !config.isByteExactPackage()
+                && analysis.getSourceFile() != null) {
+            packageRecordArtifactFileName = analysis.getSourceFile().getName();
+        }
         Map<String, String> originalWarLibraryPaths = originalWarLibraryPaths(analysis, useOriginalWarLibraries);
         Map<String, String> originalNestedLibraryPaths = originalNestedLibraryPaths(analysis);
         boolean includeOriginalSystemScopeInBootRepackage = isSpringBootExecutable(analysis)
@@ -204,11 +210,11 @@ public class PomGenerator {
                 && byteExactArtifactFileName == null;
         if (useOriginalClassOverlay || useOriginalResourceOverlay || useOriginalBootLibraryPackageOverlay
                 || useOriginalBootLoaderPackageOverlay || useOriginalBootManifestPackageOverlay
-                || byteExactArtifactFileName != null) {
+                || byteExactArtifactFileName != null || packageRecordArtifactFileName != null) {
             appendAntrunPlugin(sb, useOriginalClassOverlay, useOriginalResourceOverlay,
                     useOriginalBootLibraryPackageOverlay, useOriginalBootLoaderPackageOverlay,
                     useOriginalBootManifestPackageOverlay ? originalBootManifestPackageOverlayPath : null,
-                    byteExactArtifactFileName);
+                    byteExactArtifactFileName, packageRecordArtifactFileName);
         }
         sb.append("        </plugins>\n");
         sb.append("    </build>\n");
@@ -1154,7 +1160,8 @@ public class PomGenerator {
                                     boolean useOriginalBootLibraryPackageOverlay,
                                     boolean useOriginalBootLoaderPackageOverlay,
                                     String originalBootManifestPackageOverlayPath,
-                                    String rawArtifactFileName) {
+                                    String rawArtifactFileName,
+                                    String packageRecordArtifactFileName) {
         sb.append("            <plugin>\n");
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>maven-antrun-plugin</artifactId>\n");
@@ -1177,6 +1184,9 @@ public class PomGenerator {
         }
         if (rawArtifactFileName != null) {
             appendByteExactPackageRestoreExecution(sb, rawArtifactFileName);
+        }
+        if (packageRecordArtifactFileName != null) {
+            appendPackageRecordRestoreExecution(sb, packageRecordArtifactFileName);
         }
         sb.append("                </executions>\n");
         sb.append("            </plugin>\n");
@@ -1317,6 +1327,33 @@ public class PomGenerator {
                 .append("\" />\n");
         sb.append("                                    <arg value=\"${project.build.directory}/${project.build.finalName}.${project.packaging}\" />\n");
         sb.append("                                    <arg value=\"${project.build.directory}/byte-exact-package-restored/${project.build.finalName}.${project.packaging}\" />\n");
+        sb.append("                                </java>\n");
+        sb.append("                            </target>\n");
+        sb.append("                        </configuration>\n");
+        sb.append("                    </execution>\n");
+    }
+
+    private void appendPackageRecordRestoreExecution(StringBuilder sb, String rawArtifactFileName) {
+        sb.append("                    <execution>\n");
+        sb.append("                        <id>restore-package-records</id>\n");
+        sb.append("                        <phase>package</phase>\n");
+        sb.append("                        <goals>\n");
+        sb.append("                            <goal>run</goal>\n");
+        sb.append("                        </goals>\n");
+        sb.append("                        <configuration>\n");
+        sb.append("                            <target>\n");
+        sb.append("                                <mkdir dir=\"${project.build.directory}/package-record-helper-classes\" />\n");
+        sb.append("                                <javac srcdir=\"${project.basedir}/.jar2mp/package-records\" destdir=\"${project.build.directory}/package-record-helper-classes\" includeantruntime=\"false\" source=\"8\" target=\"8\" />\n");
+        sb.append("                                <mkdir dir=\"${project.build.directory}/package-record-restored\" />\n");
+        sb.append("                                <java classname=\"PackageRecordRestorer\" fork=\"true\" failonerror=\"true\">\n");
+        sb.append("                                    <classpath>\n");
+        sb.append("                                        <pathelement location=\"${project.build.directory}/package-record-helper-classes\" />\n");
+        sb.append("                                    </classpath>\n");
+        sb.append("                                    <arg value=\"${project.basedir}/.jar2mp/package-records/raw-artifact/")
+                .append(escapeXml(rawArtifactFileName))
+                .append("\" />\n");
+        sb.append("                                    <arg value=\"${project.build.directory}/${project.build.finalName}.${project.packaging}\" />\n");
+        sb.append("                                    <arg value=\"${project.build.directory}/package-record-restored/${project.build.finalName}.${project.packaging}\" />\n");
         sb.append("                                </java>\n");
         sb.append("                            </target>\n");
         sb.append("                        </configuration>\n");

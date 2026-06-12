@@ -313,6 +313,12 @@ public class CliRunner {
                         options.getConfig().setVerifyGoal("package");
                     }
                     break;
+                case "--restore-package-records":
+                    options.getConfig().setRestorePackageRecords(true);
+                    if (!verifyGoalExplicit) {
+                        options.getConfig().setVerifyGoal("package");
+                    }
+                    break;
                 case "--compare-artifact":
                     if (++i >= args.length) { System.err.println("Missing value for " + arg); return null; }
                     options.setCompareArtifactFile(args[i]);
@@ -522,6 +528,12 @@ public class CliRunner {
             System.out.println("    " + byteExactPackageReport.getAbsolutePath());
             System.out.println("    " + new File(outputDir,
                     "target/byte-exact-package-check/artifact-fidelity-summary.csv").getAbsolutePath());
+        }
+        File packageRecordReport = new File(outputDir, "target/package-record-restore-check/artifact-fidelity-report.md");
+        if (packageRecordReport.isFile()) {
+            System.out.println("    " + packageRecordReport.getAbsolutePath());
+            System.out.println("    " + new File(outputDir,
+                    "target/package-record-restore-check/artifact-fidelity-summary.csv").getAbsolutePath());
         }
     }
 

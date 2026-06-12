@@ -229,6 +229,69 @@ class CliRunnerTest {
     }
 
     @Test
+    void restorePackageRecordsInstallsGuardedPackageRecordHelper() throws Exception {
+        byte[] manifestBytes = ("Manifest-Version: 1.0\r\n"
+                + "Created-By: Maven JAR Plugin 3.4.2\r\n"
+                + "Build-Jdk-Spec: 21\r\n"
+                + "\r\n").getBytes(StandardCharsets.UTF_8);
+        Path jar = createJarWithRawManifest("sample-1.0.jar", manifestBytes,
+                "com/example/App.class", compiledClassBytes("com/example/App"),
+                "config.properties", "mode=package-records\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--restore-package-records",
+                "--no-decompile",
+                "--no-dependencies",
+                "--verify-build",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path projectDir = output.resolve("sample");
+        assertTrue(Files.exists(projectDir.resolve(".jar2mp/package-records/raw-artifact/sample-1.0.jar")));
+        assertTrue(Files.exists(projectDir.resolve(".jar2mp/package-records/PackageRecordRestorer.java")));
+        String pomXml = Files.readString(projectDir.resolve("pom.xml"));
+        assertTrue(pomXml.contains("restore-package-records"));
+        assertTrue(pomXml.contains(".jar2mp/package-records/raw-artifact/sample-1.0.jar"));
+        assertFalse(pomXml.contains("<finalName>sample-1.0</finalName>"));
+
+        Path rebuilt = projectDir.resolve("target/sample-1.0.jar");
+        ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(jar.toFile(), rebuilt.toFile());
+        assertTrue(fidelity.isExactMatch());
+        Path fidelityDir = projectDir.resolve("target/package-record-restore-check");
+        assertTrue(Files.exists(fidelityDir.resolve("artifact-fidelity-summary.csv")));
+        String csv = Files.readString(fidelityDir.resolve("artifact-fidelity-summary.csv"));
+        assertTrue(csv.contains("\ntrue,"));
+    }
+
+    @Test
+    void restorePackageRecordsFailsWhenPackageContentDiffers() throws Exception {
+        Path jar = createJarWithManifest("sample-1.0.jar", "com/example/App.class",
+                compiledClassBytes("com/example/App"),
+                "config.properties", "mode=original\n".getBytes(StandardCharsets.UTF_8));
+        Path output = tempDir.resolve("out");
+
+        int exitCode = new CliRunner().run(new String[]{
+                "--restore-package-records",
+                "--no-decompile",
+                "--no-dependencies",
+                "-o", output.toString(),
+                jar.toString()
+        });
+
+        assertEquals(0, exitCode);
+        Path projectDir = output.resolve("sample");
+        Files.writeString(projectDir.resolve("src/main/resources/config.properties"), "mode=changed\n",
+                StandardCharsets.UTF_8);
+
+        int packageExitCode = runMaven(projectDir, "clean package");
+
+        assertNotEquals(0, packageExitCode);
+    }
+
+    @Test
     void byteExactPackageMakesWarPackageOutputByteExact() throws Exception {
         Path war = createJarWithManifest("sample-web-1.0.war", "WEB-INF/classes/com/example/WebApp.class",
                 compiledClassBytes("com/example/WebApp"),
@@ -558,7 +621,9 @@ class CliRunnerTest {
         assertTrue(outputText.contains("--trace-timeout"));
         assertTrue(outputText.contains("--smoke-only"));
         assertTrue(outputText.contains("--byte-exact-package"));
+        assertTrue(outputText.contains("--restore-package-records"));
         assertTrue(outputText.contains("target/byte-exact-package-check"));
+        assertTrue(outputText.contains("target/package-record-restore-check"));
         assertTrue(outputText.contains("restoration-score.md"));
         assertTrue(outputText.contains("gap-summary.md"));
         assertTrue(outputText.contains("runtime-trace-report.md"));

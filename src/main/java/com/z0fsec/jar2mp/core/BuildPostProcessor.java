@@ -106,6 +106,17 @@ public class BuildPostProcessor {
                     result.setBlockingFailure("byte-exact package fidelity failed");
                 }
             }
+            if (config.isRestorePackageRecords()
+                    && !config.isByteExactPackage()
+                    && runsPackagePhase(config.getVerifyGoal())) {
+                ArtifactFidelityResult packageFidelity = verifyPackageRecordRestoredPackage(originalArtifact,
+                        outputDir);
+                result.setPackageFidelity(packageFidelity);
+                log(logger, "包记录回放保真: exact=" + packageFidelity.isExactMatch());
+                if (!packageFidelity.isExactMatch()) {
+                    result.setBlockingFailure("package record restoration fidelity failed");
+                }
+            }
         }
 
         return result;
@@ -247,6 +258,19 @@ public class BuildPostProcessor {
             }
         }
         File reportDir = new File(new File(outputDir, "target"), "byte-exact-package-check");
+        artifactFidelityReportWriter.write(reportDir, fidelity);
+        return fidelity;
+    }
+
+    private ArtifactFidelityResult verifyPackageRecordRestoredPackage(File originalArtifact, File outputDir)
+            throws IOException {
+        File packagedArtifact = findPackagedArtifact(outputDir, originalArtifact);
+        if (packagedArtifact == null) {
+            throw new IOException("package record restored artifact not found under "
+                    + new File(outputDir, "target").getAbsolutePath());
+        }
+        ArtifactFidelityResult fidelity = artifactFidelityComparator.compare(originalArtifact, packagedArtifact);
+        File reportDir = new File(new File(outputDir, "target"), "package-record-restore-check");
         artifactFidelityReportWriter.write(reportDir, fidelity);
         return fidelity;
     }

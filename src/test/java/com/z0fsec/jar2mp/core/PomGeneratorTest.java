@@ -599,6 +599,26 @@ class PomGeneratorTest {
     }
 
     @Test
+    void restorePackageRecordsAddsGuardedPackageRecordExecutionWithoutByteExactFinalName() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.setSourceFile(new File("demo-1.0.0-all.jar"));
+        ProjectConfig config = new ProjectConfig();
+        config.setRestorePackageRecords(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertTrue(pomXml.contains("<id>restore-package-records</id>"));
+        assertTrue(pomXml.contains(".jar2mp/package-records/raw-artifact/demo-1.0.0-all.jar"));
+        assertTrue(pomXml.contains("PackageRecordRestorer"));
+        assertFalse(pomXml.contains("<finalName>demo-1.0.0-all</finalName>"));
+        assertFalse(pomXml.contains("<id>restore-byte-exact-package-records</id>"));
+    }
+
+    @Test
     void sanitizesManifestDerivedMavenCoordinates() {
         JarAnalysisResult analysis = new JarAnalysisResult();
         analysis.setDetectedGroupId("Remko Popma");

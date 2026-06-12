@@ -34,6 +34,7 @@ public class ProjectBuilder {
     private final GapSummaryWriter gapSummaryWriter;
     private final CfrJarDecompiler cfrJarDecompiler;
     private final StandaloneByteExactPackageHelperWriter byteExactPackageHelperWriter;
+    private final StandalonePackageRecordRestoreHelperWriter packageRecordRestoreHelperWriter;
     private final NestedClassSourceMerger nestedClassSourceMerger;
 
     public interface ProgressCallback {
@@ -51,6 +52,7 @@ public class ProjectBuilder {
         this.gapSummaryWriter = new GapSummaryWriter();
         this.cfrJarDecompiler = new CfrJarDecompiler();
         this.byteExactPackageHelperWriter = new StandaloneByteExactPackageHelperWriter();
+        this.packageRecordRestoreHelperWriter = new StandalonePackageRecordRestoreHelperWriter();
         this.nestedClassSourceMerger = new NestedClassSourceMerger();
     }
 
@@ -411,6 +413,10 @@ public class ProjectBuilder {
             if (config != null && config.isByteExactPackage()) {
                 byteExactPackageHelperWriter.write(outputDir);
             }
+            if (config != null && config.isRestorePackageRecords() && !config.isByteExactPackage()) {
+                packageRecordRestoreHelperWriter.write(outputDir);
+                copyPackageRecordRestoreReference(jarFile, outputDir);
+            }
 
             RestorationScore restorationScore = restorationScorer.score(
                     analysis,
@@ -422,6 +428,13 @@ public class ProjectBuilder {
         }
 
         if (callback != null) callback.onProgress("Maven project generated successfully!", 100);
+    }
+
+    private void copyPackageRecordRestoreReference(File jarFile, File outputDir) throws IOException {
+        File rawDir = new File(outputDir, ".jar2mp/package-records/raw-artifact");
+        IoUtils.ensureDirectory(rawDir);
+        Files.copy(jarFile.toPath(), new File(rawDir, jarFile.getName()).toPath(),
+                StandardCopyOption.REPLACE_EXISTING);
     }
 
     private byte[] readAllBytes(InputStream is) throws IOException {

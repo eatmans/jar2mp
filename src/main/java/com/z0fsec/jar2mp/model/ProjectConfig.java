@@ -27,6 +27,7 @@ public class ProjectConfig {
     private boolean smokeOnly = false;
     private boolean emitRawArtifact = false;
     private boolean byteExactPackage = false;
+    private boolean restorePackageRecords = false;
 
     public String getOutputDir() { return outputDir; }
     public void setOutputDir(String outputDir) { this.outputDir = outputDir; }
@@ -83,4 +84,8 @@ public class ProjectConfig {
     public void setEmitRawArtifact(boolean emitRawArtifact) { this.emitRawArtifact = emitRawArtifact; }
     public boolean isByteExactPackage() { return byteExactPackage; }
     public void setByteExactPackage(boolean byteExactPackage) { this.byteExactPackage = byteExactPackage; }
+    public boolean isRestorePackageRecords() { return restorePackageRecords; }
+    public void setRestorePackageRecords(boolean restorePackageRecords) {
+        this.restorePackageRecords = restorePackageRecords;
+    }
 }

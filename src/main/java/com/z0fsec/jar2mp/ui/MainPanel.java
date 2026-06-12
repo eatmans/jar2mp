@@ -38,6 +38,7 @@ public class MainPanel extends BasePanel {
     private JList<File> fileJList;
     private JTextField outputDirField;
     private JCheckBox byteExactPackageCheckBox;
+    private JCheckBox restorePackageRecordsCheckBox;
     private JCheckBox emitRawArtifactCheckBox;
     private JCheckBox verifyBuildCheckBox;
     private JTextField verifyGoalField;
@@ -242,11 +243,13 @@ public class MainPanel extends BasePanel {
         c.fill = GridBagConstraints.HORIZONTAL;
 
         byteExactPackageCheckBox = new JCheckBox("字节级打包");
+        restorePackageRecordsCheckBox = new JCheckBox("回放包记录");
         emitRawArtifactCheckBox = new JCheckBox("输出原始构件");
         verifyBuildCheckBox = new JCheckBox("构建验证");
         traceRuntimeCheckBox = new JCheckBox("运行 Trace");
         smokeOnlyCheckBox = new JCheckBox("仅 Smoke");
         byteExactPackageCheckBox.addActionListener(e -> applyByteExactPackageDefaults());
+        restorePackageRecordsCheckBox.addActionListener(e -> applyRestorePackageRecordsDefaults());
         smokeOnlyCheckBox.addActionListener(e -> {
             if (smokeOnlyCheckBox.isSelected()) {
                 traceRuntimeCheckBox.setSelected(true);
@@ -259,15 +262,18 @@ public class MainPanel extends BasePanel {
         panel.add(byteExactPackageCheckBox, c);
 
         c.gridx = 1;
-        panel.add(emitRawArtifactCheckBox, c);
+        panel.add(restorePackageRecordsCheckBox, c);
 
         c.gridx = 2;
-        panel.add(verifyBuildCheckBox, c);
+        panel.add(emitRawArtifactCheckBox, c);
 
         c.gridx = 3;
-        panel.add(traceRuntimeCheckBox, c);
+        panel.add(verifyBuildCheckBox, c);
 
         c.gridx = 4;
+        panel.add(traceRuntimeCheckBox, c);
+
+        c.gridx = 5;
         panel.add(smokeOnlyCheckBox, c);
 
         c.gridx = 0;
@@ -295,7 +301,7 @@ public class MainPanel extends BasePanel {
         panel.add(new JLabel("Trace 参数:"), c);
 
         c.gridx = 1;
-        c.gridwidth = 4;
+        c.gridwidth = 5;
         c.weightx = 1;
         traceArgsField = new JTextField();
         panel.add(traceArgsField, c);
@@ -391,14 +397,16 @@ public class MainPanel extends BasePanel {
     ProjectConfig createBuildConfig(String outputDir) {
         ProjectConfig config = new ProjectConfig();
         boolean byteExactPackage = byteExactPackageCheckBox.isSelected();
+        boolean restorePackageRecords = restorePackageRecordsCheckBox.isSelected();
         boolean smokeOnly = smokeOnlyCheckBox.isSelected();
         String verifyGoal = normalizeVerifyGoal(verifyGoalField.getText());
-        if (byteExactPackage && "compile".equals(verifyGoal)) {
+        if ((byteExactPackage || restorePackageRecords) && "compile".equals(verifyGoal)) {
             verifyGoal = "package";
         }
 
         config.setOutputDir(outputDir);
         config.setByteExactPackage(byteExactPackage);
+        config.setRestorePackageRecords(restorePackageRecords);
         config.setEmitRawArtifact(emitRawArtifactCheckBox.isSelected() || byteExactPackage);
         config.setVerifyBuild(verifyBuildCheckBox.isSelected());
         config.setVerifyGoal(verifyGoal);
@@ -414,6 +422,16 @@ public class MainPanel extends BasePanel {
             return;
         }
         emitRawArtifactCheckBox.setSelected(true);
+        String verifyGoal = normalizeVerifyGoal(verifyGoalField.getText());
+        if ("compile".equals(verifyGoal)) {
+            verifyGoalField.setText("package");
+        }
+    }
+
+    private void applyRestorePackageRecordsDefaults() {
+        if (!restorePackageRecordsCheckBox.isSelected()) {
+            return;
+        }
         String verifyGoal = normalizeVerifyGoal(verifyGoalField.getText());
         if ("compile".equals(verifyGoal)) {
             verifyGoalField.setText("package");

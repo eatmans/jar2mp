@@ -120,6 +120,7 @@ Options:
       --smoke-only                启用运行时追踪并跳过 Maven 验证
       --emit-raw-artifact         在 target/raw-artifact/ 生成原始归档的字节保真副本
       --byte-exact-package        为 Maven package 产物安装字节级保真修复与验证
+      --restore-package-records   内容一致后回放原始 ZIP records 使 package 产物字节一致
       --compare-artifact <file>   将输入原始归档与指定重建归档做字节保真度对比
   -f, --force                     覆盖已存在的输出目录
   -q, --quiet                     静默模式
@@ -155,6 +156,7 @@ Options:
 - `decompile-failures.md` - 反编译失败条目和原始 class 退回位置；synthetic enum switch-map 等外层源码已覆盖的编译器支撑 class 会原样保留但不计为失败
 - `artifact-fidelity-report.md` / `artifact-fidelity-summary.csv` - 启用 `--compare-artifact` 时的原始/重建 artifact 对比；如果内容一致但 ZIP entry 顺序、空目录 entry 集合或可原位恢复的 ZIP 元数据不同，还会生成 `archive-order-restored/` 候选和对应保真报告
 - `target/byte-exact-package-check/artifact-fidelity-report.md` - 启用 `--byte-exact-package --verify-build` 且 package 生命周期运行时的最终产物保真报告
+- `target/package-record-restore-check/artifact-fidelity-report.md` - 启用 `--restore-package-records --verify-build` 且 package 生命周期运行时的受保护 ZIP record 回放产物保真报告
 
 当输入归档包含仅大小写不同的 class 路径时，jar2mp 不会把这些 class 展开到普通目录；它会生成 `target/compiler-fallback-classes.jar` 并在 `pom.xml` 中加入 system-scope 依赖，避免大小写不敏感文件系统破坏 Maven 编译类路径。
 
@@ -192,7 +194,7 @@ Options:
 
 汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven package 验证、raw artifact exact 与 byte-exact package 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警或源码分数未满分。
 
-严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、写入常见测试/质量插件的 skip properties，并跳过原 POM 中会在 `package` 阶段重写主 artifact 的 shade/assembly/repackage 等插件。jar2mp 还会在生成项目的 `.jar2mp/byte-exact/` 写入 standalone ZIP record helper 和 `.jar2mp/byte-exact/raw-artifact/<original-name>` 参考原包；后续 `mvn package` 或 `mvn clean package` 会先生成正常 package 产物作为 Maven 项目可打包性的门禁，再由 helper 以原始归档作为最终 ZIP record 的规范字节来源，回放原始 entry 顺序、空目录 entry、manifest/module-info/resource/class 字节、entry 集合和 ZIP 元数据，最终写入 `target/byte-exact-package-restored/<original-name>`。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。普通 `--emit-raw-artifact` 只保留 `target/raw-artifact/` 原始副本和报告，不改变 `mvn package` 的源码重构产物；普通源码重构包会在 `process-classes` 阶段回填原始 class bytes，用于隔离剩余 ZIP 容器层差异。Spring Boot 可执行 JAR 的普通 package 还会在 repackage 后用 `src/main/original-libs/BOOT-INF/lib` 重建最终 `BOOT-INF/lib` 集合，用 `src/main/original-boot-loader` 回填原始 root Spring Boot loader classes，并把原始 `META-INF/MANIFEST.MF` 覆盖回最终包，避免 system-scope 依赖被 Spring Boot 插件改名、补入传递依赖，或由当前插件版本注入不同 loader/manifest 字节。
+严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、写入常见测试/质量插件的 skip properties，并跳过原 POM 中会在 `package` 阶段重写主 artifact 的 shade/assembly/repackage 等插件。jar2mp 还会在生成项目的 `.jar2mp/byte-exact/` 写入 standalone ZIP record helper 和 `.jar2mp/byte-exact/raw-artifact/<original-name>` 参考原包；后续 `mvn package` 或 `mvn clean package` 会先生成正常 package 产物作为 Maven 项目可打包性的门禁，再由 helper 以原始归档作为最终 ZIP record 的规范字节来源，回放原始 entry 顺序、空目录 entry、manifest/module-info/resource/class 字节、entry 集合和 ZIP 元数据，最终写入 `target/byte-exact-package-restored/<original-name>`。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。若需要保留普通源码重构包语义、但在内容 entry 已一致时把最终 `mvn package` 产物提升到字节一致，可使用 `--restore-package-records`；该模式不会改 `finalName` 或跳过 package-transforming 插件，会在 `.jar2mp/package-records/` 写入受保护 helper 和参考原包，helper 先校验 Maven 产物的非目录 entry 集合与内容摘要一致，再回放原始 ZIP records，验证报告写入 `target/package-record-restore-check/`。普通 `--emit-raw-artifact` 只保留 `target/raw-artifact/` 原始副本和报告，不改变 `mvn package` 的源码重构产物；普通源码重构包会在 `process-classes` 阶段回填原始 class bytes，用于隔离剩余 ZIP 容器层差异。Spring Boot 可执行 JAR 的普通 package 还会在 repackage 后用 `src/main/original-libs/BOOT-INF/lib` 重建最终 `BOOT-INF/lib` 集合，用 `src/main/original-boot-loader` 回填原始 root Spring Boot loader classes，并把原始 `META-INF/MANIFEST.MF` 覆盖回最终包，避免 system-scope 依赖被 Spring Boot 插件改名、补入传递依赖，或由当前插件版本注入不同 loader/manifest 字节。
 
 对于已经下载到 `target/adhoc-github-release-assets/assets/` 的临时 GitHub Release 二进制样本，可以运行离线缓存矩阵来刷新当前源码的编译、raw artifact 与 byte-exact package 门禁结果：
 
@@ -232,10 +234,12 @@ Options:
 │   ├── verification-errors.md
 │   ├── decompile-failures.md
 │   ├── .jar2mp/
-│   │   └── byte-exact/          ← byte-exact package helper 与参考原包（启用 --byte-exact-package）
+│   │   ├── byte-exact/          ← byte-exact package helper 与参考原包（启用 --byte-exact-package）
+│   │   └── package-records/     ← 受保护 package record helper 与参考原包（启用 --restore-package-records）
 │   ├── target/
 │   │   ├── original-classes/   ← 反编译失败或编译器支撑 class 需要保留时的原始 class
 │   │   ├── byte-exact-package-check/  ← byte-exact package 保真报告
+│   │   ├── package-record-restore-check/  ← 受保护 package record 回放保真报告
 │   │   └── compiler-fallback-classes.jar  ← 大小写冲突 class 的编译 fallback jar
 │   └── src/
 │       ├── main/

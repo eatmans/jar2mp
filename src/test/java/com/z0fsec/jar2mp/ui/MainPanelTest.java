@@ -23,6 +23,7 @@ class MainPanelTest {
         MainPanel panel = new MainPanel(message -> { });
 
         checkBox(panel, "byteExactPackageCheckBox").setSelected(true);
+        checkBox(panel, "restorePackageRecordsCheckBox").setSelected(true);
         checkBox(panel, "emitRawArtifactCheckBox").setSelected(true);
         checkBox(panel, "verifyBuildCheckBox").setSelected(true);
         textField(panel, "verifyGoalField").setText("package");
@@ -35,6 +36,7 @@ class MainPanelTest {
 
         assertEquals("/tmp/out", config.getOutputDir());
         assertTrue(config.isByteExactPackage());
+        assertTrue(config.isRestorePackageRecords());
         assertTrue(config.isEmitRawArtifact());
         assertTrue(config.isVerifyBuild());
         assertEquals("package", config.getVerifyGoal());
@@ -52,6 +54,7 @@ class MainPanelTest {
 
         assertEquals("/tmp/out", config.getOutputDir());
         assertFalse(config.isByteExactPackage());
+        assertFalse(config.isRestorePackageRecords());
         assertFalse(config.isEmitRawArtifact());
         assertFalse(config.isVerifyBuild());
         assertEquals("compile", config.getVerifyGoal());
@@ -72,6 +75,21 @@ class MainPanelTest {
 
         assertTrue(config.isByteExactPackage());
         assertTrue(config.isEmitRawArtifact());
+        assertEquals("package", config.getVerifyGoal());
+    }
+
+    @Test
+    void restorePackageRecordsBuildConfigUsesPackageGoalWithoutRawArtifact() throws Exception {
+        MainPanel panel = new MainPanel(message -> { });
+        checkBox(panel, "restorePackageRecordsCheckBox").setSelected(true);
+        checkBox(panel, "emitRawArtifactCheckBox").setSelected(false);
+        textField(panel, "verifyGoalField").setText("compile");
+
+        ProjectConfig config = panel.createBuildConfig("/tmp/out");
+
+        assertTrue(config.isRestorePackageRecords());
+        assertFalse(config.isByteExactPackage());
+        assertFalse(config.isEmitRawArtifact());
         assertEquals("package", config.getVerifyGoal());
     }
 
@@ -104,6 +122,7 @@ class MainPanelTest {
         setCurrentResult(panel);
         textField(panel, "outputDirField").setText("/tmp/out");
         checkBox(panel, "byteExactPackageCheckBox").setSelected(true);
+        checkBox(panel, "restorePackageRecordsCheckBox").setSelected(true);
         checkBox(panel, "emitRawArtifactCheckBox").setSelected(true);
         checkBox(panel, "verifyBuildCheckBox").setSelected(true);
         textField(panel, "verifyGoalField").setText("package");
@@ -112,6 +131,7 @@ class MainPanelTest {
 
         ProjectConfig config = (ProjectConfig) field(panel, "currentConfig");
         assertTrue(config.isByteExactPackage());
+        assertTrue(config.isRestorePackageRecords());
         assertTrue(config.isEmitRawArtifact());
         assertTrue(config.isVerifyBuild());
         assertEquals("package", config.getVerifyGoal());
