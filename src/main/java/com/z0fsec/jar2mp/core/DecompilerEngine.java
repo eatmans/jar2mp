@@ -36,9 +36,7 @@ public interface DecompilerEngine {
         if (trimmed.contains("UnsupportedOperationException")) {
             score -= 10;
         }
-        if (trimmed.contains("Couldn't be decompiled")) {
-            score -= 30;
-        }
+        score -= 30 * countOccurrences(trimmed, "Couldn't be decompiled");
         if (trimmed.contains("Unavailable Anonymous Inner Class")) {
             score -= 40;
         }
@@ -61,6 +59,19 @@ public interface DecompilerEngine {
             score -= 5;
         }
         return Math.max(score, 0);
+    }
+
+    static int countOccurrences(String source, String token) {
+        if (source == null || token == null || token.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        int index = 0;
+        while ((index = source.indexOf(token, index)) >= 0) {
+            count++;
+            index += token.length();
+        }
+        return count;
     }
 
     static String stripLeadingComments(String source) {

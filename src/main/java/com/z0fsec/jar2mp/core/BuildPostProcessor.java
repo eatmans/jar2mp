@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.function.Consumer;
+import java.util.jar.JarFile;
 
 public class BuildPostProcessor {
 
@@ -30,6 +31,7 @@ public class BuildPostProcessor {
     private final RestorationScorer restorationScorer;
     private final RestorationScoreWriter restorationScoreWriter;
     private final GapSummaryWriter gapSummaryWriter;
+    private final DecompileParityReporter parityReporter;
 
     public BuildPostProcessor() {
         this.verifier = new ProjectVerifier();
@@ -41,6 +43,7 @@ public class BuildPostProcessor {
         this.restorationScorer = new RestorationScorer();
         this.restorationScoreWriter = new RestorationScoreWriter();
         this.gapSummaryWriter = new GapSummaryWriter();
+        this.parityReporter = new DecompileParityReporter();
     }
 
     public PostBuildResult postProcess(File originalArtifact, JarAnalysisResult analysis, File outputDir,
@@ -84,6 +87,7 @@ public class BuildPostProcessor {
             VerificationResult verification = verifier.verify(outputDir, config.getVerifyGoal());
             analysis.setVerificationResult(verification);
             verifier.writeReport(outputDir, verification);
+            rewriteParityReport(originalArtifact, analysis, outputDir);
             refreshRestorationScore(outputDir, analysis);
             result.setVerificationResult(verification);
             log(logger, "构建验证报告: " + new File(outputDir, "verification-report.md").getAbsolutePath());
@@ -122,6 +126,16 @@ public class BuildPostProcessor {
         result.setRestorationScore(score);
         restorationScoreWriter.write(outputDir, score);
         gapSummaryWriter.write(outputDir, score);
+    }
+
+    private void rewriteParityReport(File originalArtifact, JarAnalysisResult analysis, File outputDir)
+            throws IOException {
+        if (originalArtifact == null || analysis == null || outputDir == null || !originalArtifact.isFile()) {
+            return;
+        }
+        try (JarFile jarFile = new JarFile(originalArtifact)) {
+            parityReporter.writeReport(jarFile, analysis, outputDir);
+        }
     }
 
     private Path resolveTraceFile(ProjectConfig config, File outputDir) {

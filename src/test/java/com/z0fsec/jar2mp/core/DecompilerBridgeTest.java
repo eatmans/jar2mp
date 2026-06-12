@@ -79,6 +79,41 @@ class DecompilerBridgeTest {
     }
 
     @Test
+    void penalizesEveryFernflowerUndecompiledMethodMarker() {
+        String source = "package demo;\n\npublic class Sample {\n"
+                + "  void first() { // $FF: Couldn't be decompiled\n"
+                + "  }\n"
+                + "  void second() { // $FF: Couldn't be decompiled\n"
+                + "  }\n"
+                + "}\n";
+
+        assertTrue(DecompilerEngine.scoreSource(source) < 30);
+    }
+
+    @Test
+    void prefersLowerScoredStructuralSourceOverRepeatedUndecompiledMarkers() {
+        String cfrSource = "package demo;\n\npublic class Sample {\n"
+                + "  void first() { helper(); }\n"
+                + "  void second() { helper(); }\n"
+                + "  void helper() {}\n"
+                + "}\n";
+        String fernflowerSource = "package demo;\n\npublic class Sample {\n"
+                + "  void first() { // $FF: Couldn't be decompiled\n"
+                + "  }\n"
+                + "  void second() { // $FF: Couldn't be decompiled\n"
+                + "  }\n"
+                + "}\n";
+        DecompilerBridge bridge = new DecompilerBridge(new ProjectConfig(), engines(
+                new FixedEngine("cfr", DecompilerEngine.Result.success("cfr", cfrSource, 30)),
+                new FixedEngine("fernflower", DecompilerEngine.Result.success("fernflower", fernflowerSource, 70))
+        ));
+
+        DecompilerBridge.DecompileResult result = bridge.decompileDetailed(new byte[]{1, 2, 3}, "demo.Sample");
+
+        assertEquals("cfr", result.getSelectedEngine());
+    }
+
+    @Test
     void penalizesKnownUncompilablePlaceholders() {
         String source = "package demo;\n\npublic class Sample {\n"
                 + "  private static final Runnable R = new /* Unavailable Anonymous Inner Class!! */;\n"
