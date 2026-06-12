@@ -362,6 +362,9 @@ class CliRunnerTest {
         String csv = Files.readString(fidelityDir.resolve("artifact-fidelity-summary.csv"));
         assertTrue(csv.startsWith("exact_match,"));
         assertTrue(csv.contains("\ntrue,"));
+        String scoreReport = Files.readString(output.resolve("sample").resolve("restoration-score.md"));
+        assertTrue(scoreReport.contains("## Byte-level package fidelity"));
+        assertTrue(scoreReport.contains("| byte-exact package | true | true | true |"));
         Path rebuilt = output.resolve("sample").resolve("target/sample-1.0.jar");
         ArtifactFidelityResult fidelity = new ArtifactFidelityComparator().compare(jar.toFile(), rebuilt.toFile());
         assertTrue(fidelity.isExactMatch());
@@ -751,7 +754,7 @@ class CliRunnerTest {
 
     private int runMaven(Path projectDir, String goal) throws Exception {
         List<String> command = new ArrayList<>();
-        command.add("mvn");
+        command.add(findMavenExecutable());
         command.add("-q");
         for (String part : goal.trim().split("\\s+")) {
             if (!part.isEmpty()) {
@@ -768,6 +771,55 @@ class CliRunnerTest {
             }
         }
         return process.waitFor();
+    }
+
+    private String findMavenExecutable() {
+        String mavenHome = executableFromHome(System.getProperty("maven.home"));
+        if (mavenHome != null) {
+            return mavenHome;
+        }
+        String envMavenHome = executableFromHome(System.getenv("MAVEN_HOME"));
+        if (envMavenHome != null) {
+            return envMavenHome;
+        }
+        String envM2Home = executableFromHome(System.getenv("M2_HOME"));
+        if (envM2Home != null) {
+            return envM2Home;
+        }
+        String pathMaven = executableFromPath(System.getenv("PATH"));
+        return pathMaven == null ? "mvn" : pathMaven;
+    }
+
+    private String executableFromHome(String home) {
+        if (home == null || home.trim().isEmpty()) {
+            return null;
+        }
+        File executable = new File(new File(home.trim(), "bin"), mavenExecutableName());
+        return executable.isFile() && (isWindows() || executable.canExecute()) ? executable.getAbsolutePath() : null;
+    }
+
+    private String executableFromPath(String path) {
+        if (path == null || path.trim().isEmpty()) {
+            return null;
+        }
+        for (String part : path.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+            if (part == null || part.trim().isEmpty()) {
+                continue;
+            }
+            File executable = new File(part.trim(), mavenExecutableName());
+            if (executable.isFile() && (isWindows() || executable.canExecute())) {
+                return executable.getAbsolutePath();
+            }
+        }
+        return null;
+    }
+
+    private String mavenExecutableName() {
+        return isWindows() ? "mvn.cmd" : "mvn";
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
     }
 
     private Path createJar(String fileName, String classEntry, byte[] classBytes,
