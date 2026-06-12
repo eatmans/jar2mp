@@ -174,6 +174,34 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("| HIGH | 0 |"));
     }
 
+    @Test
+    void doesNotTreatNoDebugNoUserVariableMethodsAsMissingNameRisk() throws Exception {
+        Path classFile = compileNoUserVariablesClassWithoutDebug();
+        Path jarPath = tempDir.resolve("no-user-vars.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/NoUserVariables.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("no-user-vars-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/NoUserVariables.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, noUserVariablesSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/NoUserVariables.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; bytecode has no user parameters or local stores."));
+    }
+
     private Path compileReflectiveFlowClass() throws Exception {
         Path sourceDir = tempDir.resolve("compile-src/demo");
         Files.createDirectories(sourceDir);
@@ -281,6 +309,27 @@ class DecompileParityReporterTest {
         return classesDir.resolve("demo/NoBody.class");
     }
 
+    private Path compileNoUserVariablesClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("no-user-vars-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("NoUserVariables.java");
+        Files.write(sourceFile, noUserVariablesSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("no-user-vars-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/NoUserVariables.class");
+    }
+
     private String innerSource() {
         return "package demo;\n" +
                 "\n" +
@@ -299,6 +348,23 @@ class DecompileParityReporterTest {
                 "\n" +
                 "public interface NoBody {\n" +
                 "    String map(String input);\n" +
+                "}\n";
+    }
+
+    private String noUserVariablesSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class NoUserVariables {\n" +
+                "    static {\n" +
+                "        System.setProperty(\"demo.noUserVariables\", \"true\");\n" +
+                "    }\n" +
+                "\n" +
+                "    public NoUserVariables() {\n" +
+                "    }\n" +
+                "\n" +
+                "    public static int value() {\n" +
+                "        return 7;\n" +
+                "    }\n" +
                 "}\n";
     }
 

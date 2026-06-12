@@ -72,18 +72,21 @@ public class BytecodeFingerprint {
         private final Set<String> thrownExceptions;
         private final Set<String> invokedynamicCalls;
         private final Set<String> genericSignatures;
+        private final Set<Integer> localStoreSlots;
         private final int exceptionHandlerCount;
         private final int branchOpcodeCount;
         private final int lineNumberCount;
         private final boolean hasCode;
+        private final int accessFlags;
 
         private MethodFingerprint(String name, String descriptor, List<String> instructions,
                                   Set<String> methodCalls, Set<String> stringConstants,
                                   Set<String> localVariableNames, Set<String> fieldReferences,
                                   Set<String> annotations, Set<String> thrownExceptions,
                                   Set<String> invokedynamicCalls, Set<String> genericSignatures,
+                                  Set<Integer> localStoreSlots,
                                   int exceptionHandlerCount, int branchOpcodeCount,
-                                  int lineNumberCount, boolean hasCode) {
+                                  int lineNumberCount, boolean hasCode, int accessFlags) {
             this.name = name;
             this.descriptor = descriptor;
             this.instructions = instructions;
@@ -95,10 +98,12 @@ public class BytecodeFingerprint {
             this.thrownExceptions = thrownExceptions;
             this.invokedynamicCalls = invokedynamicCalls;
             this.genericSignatures = genericSignatures;
+            this.localStoreSlots = localStoreSlots;
             this.exceptionHandlerCount = exceptionHandlerCount;
             this.branchOpcodeCount = branchOpcodeCount;
             this.lineNumberCount = lineNumberCount;
             this.hasCode = hasCode;
+            this.accessFlags = accessFlags;
         }
 
         public String getKey() {
@@ -161,8 +166,54 @@ public class BytecodeFingerprint {
             return lineNumberCount;
         }
 
+        public boolean requiresLocalVariableNames() {
+            if (!hasCode) {
+                return false;
+            }
+            if (parameterSlotCount() > 0) {
+                return true;
+            }
+            int firstUserLocalSlot = isStatic() ? 0 : 1;
+            for (Integer slot : localStoreSlots) {
+                if (slot != null && slot >= firstUserLocalSlot) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public boolean hasCode() {
             return hasCode;
+        }
+
+        private boolean isStatic() {
+            return (accessFlags & 0x0008) != 0;
+        }
+
+        private int parameterSlotCount() {
+            int count = 0;
+            int cursor = descriptor.indexOf('(') + 1;
+            while (cursor > 0 && cursor < descriptor.length() && descriptor.charAt(cursor) != ')') {
+                char type = descriptor.charAt(cursor);
+                if (type == '[') {
+                    while (cursor < descriptor.length() && descriptor.charAt(cursor) == '[') {
+                        cursor++;
+                    }
+                    if (cursor < descriptor.length() && descriptor.charAt(cursor) == 'L') {
+                        cursor = descriptor.indexOf(';', cursor) + 1;
+                    } else {
+                        cursor++;
+                    }
+                    count++;
+                } else if (type == 'L') {
+                    cursor = descriptor.indexOf(';', cursor) + 1;
+                    count++;
+                } else {
+                    cursor++;
+                    count += type == 'J' || type == 'D' ? 2 : 1;
+                }
+            }
+            return count;
         }
     }
 
@@ -283,16 +334,16 @@ public class BytecodeFingerprint {
             Map<String, MethodFingerprint> methods = new LinkedHashMap<>();
             int methodsCount = readU2();
             for (int i = 0; i < methodsCount; i++) {
-                offset += 2; // access_flags
+                int accessFlags = readU2();
                 String name = utf8(readU2());
                 String descriptor = utf8(readU2());
-                MethodFingerprint method = readMethodAttributes(name, descriptor);
+                MethodFingerprint method = readMethodAttributes(name, descriptor, accessFlags);
                 methods.put(method.getKey(), method);
             }
             return methods;
         }
 
-        private MethodFingerprint readMethodAttributes(String name, String descriptor) {
+        private MethodFingerprint readMethodAttributes(String name, String descriptor, int accessFlags) {
             List<String> instructions = Collections.emptyList();
             Set<String> methodCalls = new LinkedHashSet<>();
             Set<String> stringConstants = new LinkedHashSet<>();
@@ -302,6 +353,7 @@ public class BytecodeFingerprint {
             Set<String> thrownExceptions = new LinkedHashSet<>();
             Set<String> invokedynamicCalls = new LinkedHashSet<>();
             Set<String> genericSignatures = new LinkedHashSet<>();
+            Set<Integer> localStoreSlots = new LinkedHashSet<>();
             int exceptionHandlerCount = 0;
             int branchOpcodeCount = 0;
             int lineNumberCount = 0;
@@ -322,6 +374,7 @@ public class BytecodeFingerprint {
                     localVariableNames.addAll(code.localVariableNames);
                     fieldReferences.addAll(code.fieldReferences);
                     invokedynamicCalls.addAll(code.invokedynamicCalls);
+                    localStoreSlots.addAll(code.localStoreSlots);
                     exceptionHandlerCount = code.exceptionHandlerCount;
                     branchOpcodeCount = code.branchOpcodeCount;
                     lineNumberCount = code.lineNumberCount;
@@ -342,7 +395,8 @@ public class BytecodeFingerprint {
 
             return new MethodFingerprint(name, descriptor, instructions, methodCalls, stringConstants,
                     localVariableNames, fieldReferences, annotations, thrownExceptions, invokedynamicCalls,
-                    genericSignatures, exceptionHandlerCount, branchOpcodeCount, lineNumberCount, hasCode);
+                    genericSignatures, localStoreSlots, exceptionHandlerCount, branchOpcodeCount, lineNumberCount,
+                    hasCode, accessFlags);
         }
 
         private CodeFingerprint readCodeAttribute() {
@@ -402,9 +456,56 @@ public class BytecodeFingerprint {
                         addConstantUsage(fingerprint, code[position + 1] & 0xFF);
                         position += 2;
                         break;
+                    case 0x36:
+                    case 0x37:
+                    case 0x38:
+                    case 0x39:
+                    case 0x3a:
+                        fingerprint.localStoreSlots.add(code[position + 1] & 0xFF);
+                        position += 2;
+                        break;
+                    case 0x3b:
+                    case 0x3c:
+                    case 0x3d:
+                    case 0x3e:
+                        fingerprint.localStoreSlots.add(opcode - 0x3b);
+                        position += 1;
+                        break;
+                    case 0x3f:
+                    case 0x40:
+                    case 0x41:
+                    case 0x42:
+                        fingerprint.localStoreSlots.add(opcode - 0x3f);
+                        position += 1;
+                        break;
+                    case 0x43:
+                    case 0x44:
+                    case 0x45:
+                    case 0x46:
+                        fingerprint.localStoreSlots.add(opcode - 0x43);
+                        position += 1;
+                        break;
+                    case 0x47:
+                    case 0x48:
+                    case 0x49:
+                    case 0x4a:
+                        fingerprint.localStoreSlots.add(opcode - 0x47);
+                        position += 1;
+                        break;
+                    case 0x4b:
+                    case 0x4c:
+                    case 0x4d:
+                    case 0x4e:
+                        fingerprint.localStoreSlots.add(opcode - 0x4b);
+                        position += 1;
+                        break;
                     case 0x13:
                     case 0x14:
                         addConstantUsage(fingerprint, BytecodeFingerprint.readU2(code, position + 1));
+                        position += 3;
+                        break;
+                    case 0x84:
+                        fingerprint.localStoreSlots.add(code[position + 1] & 0xFF);
                         position += 3;
                         break;
                     case 0xb6:
@@ -437,6 +538,7 @@ public class BytecodeFingerprint {
                         position = skipLookupSwitch(code, position);
                         break;
                     case 0xc4:
+                        recordWideLocalStore(fingerprint, code, position);
                         position += wideInstructionLength(code, position);
                         break;
                     default:
@@ -445,6 +547,13 @@ public class BytecodeFingerprint {
                 }
             }
             return fingerprint;
+        }
+
+        private void recordWideLocalStore(CodeFingerprint fingerprint, byte[] code, int position) {
+            int modifiedOpcode = code[position + 1] & 0xFF;
+            if ((modifiedOpcode >= 0x36 && modifiedOpcode <= 0x3a) || modifiedOpcode == 0x84) {
+                fingerprint.localStoreSlots.add(BytecodeFingerprint.readU2(code, position + 2));
+            }
         }
 
         private void addConstantUsage(CodeFingerprint fingerprint, int constantIndex) {
@@ -650,6 +759,7 @@ public class BytecodeFingerprint {
         private final Set<String> localVariableNames = new LinkedHashSet<>();
         private final Set<String> fieldReferences = new LinkedHashSet<>();
         private final Set<String> invokedynamicCalls = new LinkedHashSet<>();
+        private final Set<Integer> localStoreSlots = new LinkedHashSet<>();
         private int exceptionHandlerCount;
         private int branchOpcodeCount;
         private int lineNumberCount;

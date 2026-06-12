@@ -101,8 +101,10 @@ public class DecompileParityReporter {
                     .append(method.getExceptionHandlerCount())
                     .append("\n");
 
-            if (method.getLocalVariableNames().isEmpty()) {
+            if (method.getLocalVariableNames().isEmpty() && method.requiresLocalVariableNames()) {
                 report.append("- Variable names: unavailable; original class has no LocalVariableTable debug metadata.\n");
+            } else if (method.getLocalVariableNames().isEmpty()) {
+                report.append("- Variable names: not required; bytecode has no user parameters or local stores.\n");
             } else if (allNamesPresent(source, method.getLocalVariableNames())) {
                 report.append("- Variable names: present in source (")
                         .append(join(method.getLocalVariableNames()))
@@ -135,6 +137,8 @@ public class DecompileParityReporter {
         report.append("- Methods with invokedynamic: ").append(summary.invokedynamicMethods).append("\n");
         report.append("- Methods without LocalVariableTable names: ")
                 .append(summary.missingDebugNameMethods).append("\n\n");
+        report.append("Methods without LocalVariableTable names excludes bytecode bodies with no ")
+                .append("user parameters and no local-variable stores.\n\n");
         report.append("| Risk | Methods |\n");
         report.append("| --- | ---: |\n");
         report.append("| HIGH | ").append(summary.highMethods).append(" |\n");
@@ -169,7 +173,8 @@ public class DecompileParityReporter {
         if (hasReflection(method)) {
             return "HIGH (reflection call detected)";
         }
-        if (!method.getInvokedynamicCalls().isEmpty() || method.getLocalVariableNames().isEmpty()) {
+        if (!method.getInvokedynamicCalls().isEmpty()
+                || (method.requiresLocalVariableNames() && method.getLocalVariableNames().isEmpty())) {
             return "MEDIUM (dynamic bytecode or missing debug names)";
         }
         return "LOW (source and bytecode facts align for basic checks)";
@@ -302,7 +307,9 @@ public class DecompileParityReporter {
             if (!method.getInvokedynamicCalls().isEmpty()) {
                 invokedynamicMethods++;
             }
-            if (method.hasCode() && method.getLocalVariableNames().isEmpty()) {
+            if (method.hasCode()
+                    && method.requiresLocalVariableNames()
+                    && method.getLocalVariableNames().isEmpty()) {
                 missingDebugNameMethods++;
             }
             for (String call : method.getMethodCalls()) {
