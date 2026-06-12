@@ -2,6 +2,7 @@ package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.DecompileFinding;
+import com.z0fsec.jar2mp.util.ClassFileUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -265,9 +266,39 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Selected engine: synthetic-switch-map"));
         assertTrue(report.contains("Risk level: LOW (compiler-generated synthetic switch-map support class)"));
         assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
-        assertTrue(report.contains("synthetic switch-map support classes."));
+        assertTrue(report.contains("synthetic switch-map support classes and bridge methods."));
         assertTrue(report.contains("| MEDIUM | 0 |"));
         assertTrue(report.contains("Variable names: not required; compiler-generated synthetic switch-map support class."));
+    }
+
+    @Test
+    void treatsCompilerGeneratedBridgeMethodsAsLowRisk() throws Exception {
+        Path classFile = compileBridgeMethodClassWithoutDebug();
+        byte[] bridgeClass = withBridgeSyntheticMethodFlags(Files.readAllBytes(classFile), "bridge");
+        Path jarPath = tempDir.resolve("bridge-method.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/BridgeMethodSample.class"));
+            jar.write(bridgeClass);
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("bridge-method-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/BridgeMethodSample.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, bridgeMethodSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/BridgeMethodSample.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated bridge method)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated bridge method."));
     }
 
     private Path compileReflectiveFlowClass() throws Exception {
@@ -419,6 +450,27 @@ class DecompileParityReporterTest {
         return classesDir.resolve("demo/Outer$1.class");
     }
 
+    private Path compileBridgeMethodClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("bridge-method-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("BridgeMethodSample.java");
+        Files.write(sourceFile, bridgeMethodSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("bridge-method-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/BridgeMethodSample.class");
+    }
+
     private Path compileUserVariablesClassWithoutDebug() throws Exception {
         Path sourceDir = tempDir.resolve("missing-debug-names-src/demo");
         Files.createDirectories(sourceDir);
@@ -505,6 +557,16 @@ class DecompileParityReporterTest {
                 "}\n";
     }
 
+    private String bridgeMethodSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class BridgeMethodSample {\n" +
+                "    public void bridge(Object value) {\n" +
+                "        System.setProperty(\"demo.bridge\", String.valueOf(value));\n" +
+                "    }\n" +
+                "}\n";
+    }
+
     private String missingDebugNamesSource() {
         return "package demo;\n" +
                 "\n" +
@@ -539,6 +601,93 @@ class DecompileParityReporterTest {
                 "        }\n" +
                 "    }\n" +
                 "}\n";
+    }
+
+    private byte[] withBridgeSyntheticMethodFlags(byte[] classBytes, String methodName) {
+        byte[] patched = classBytes.clone();
+        String[] constantPool = new String[ClassFileUtils.readU2(classBytes, 8)];
+        int offset = 10;
+        for (int i = 1; i < constantPool.length; i++) {
+            int tag = ClassFileUtils.readU1(classBytes, offset);
+            switch (tag) {
+                case 1:
+                    int length = ClassFileUtils.readU2(classBytes, offset + 1);
+                    constantPool[i] = new String(classBytes, offset + 3, length, StandardCharsets.UTF_8);
+                    offset += 3 + length;
+                    break;
+                case 3:
+                case 4:
+                case 9:
+                case 10:
+                case 11:
+                case 12:
+                case 17:
+                case 18:
+                    offset += 5;
+                    break;
+                case 5:
+                case 6:
+                    offset += 9;
+                    i++;
+                    break;
+                case 7:
+                case 8:
+                case 16:
+                case 19:
+                case 20:
+                    offset += 3;
+                    break;
+                case 15:
+                    offset += 4;
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported constant-pool tag: " + tag);
+            }
+        }
+
+        offset += 6;
+        int interfaces = ClassFileUtils.readU2(classBytes, offset);
+        offset += 2 + interfaces * 2;
+        offset = skipMembers(classBytes, offset);
+
+        int methods = ClassFileUtils.readU2(classBytes, offset);
+        offset += 2;
+        for (int i = 0; i < methods; i++) {
+            int accessOffset = offset;
+            int accessFlags = ClassFileUtils.readU2(classBytes, offset);
+            String name = constantPool[ClassFileUtils.readU2(classBytes, offset + 2)];
+            offset += 6;
+            if (methodName.equals(name)) {
+                writeU2(patched, accessOffset, accessFlags | 0x0040 | 0x1000);
+            }
+            int attributes = ClassFileUtils.readU2(classBytes, offset);
+            offset += 2;
+            for (int j = 0; j < attributes; j++) {
+                offset += 2;
+                offset += 4 + ClassFileUtils.readU4(classBytes, offset);
+            }
+        }
+        return patched;
+    }
+
+    private int skipMembers(byte[] classBytes, int offset) {
+        int members = ClassFileUtils.readU2(classBytes, offset);
+        offset += 2;
+        for (int i = 0; i < members; i++) {
+            offset += 6;
+            int attributes = ClassFileUtils.readU2(classBytes, offset);
+            offset += 2;
+            for (int j = 0; j < attributes; j++) {
+                offset += 2;
+                offset += 4 + ClassFileUtils.readU4(classBytes, offset);
+            }
+        }
+        return offset;
+    }
+
+    private void writeU2(byte[] bytes, int offset, int value) {
+        bytes[offset] = (byte)((value >>> 8) & 0xFF);
+        bytes[offset + 1] = (byte)(value & 0xFF);
     }
 
     private static class CompiledClass {

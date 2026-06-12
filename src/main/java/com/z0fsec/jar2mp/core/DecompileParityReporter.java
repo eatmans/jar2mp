@@ -105,6 +105,8 @@ public class DecompileParityReporter {
 
             if (syntheticSwitchMap && method.getLocalVariableNames().isEmpty()) {
                 report.append("- Variable names: not required; compiler-generated synthetic switch-map support class.\n");
+            } else if (isCompilerGeneratedBridgeMethod(method) && method.getLocalVariableNames().isEmpty()) {
+                report.append("- Variable names: not required; compiler-generated bridge method.\n");
             } else if (method.getLocalVariableNames().isEmpty() && method.requiresLocalVariableNames()) {
                 report.append("- Variable names: unavailable; original class has no LocalVariableTable debug metadata.\n");
             } else if (method.getLocalVariableNames().isEmpty()) {
@@ -143,7 +145,7 @@ public class DecompileParityReporter {
                 .append(summary.missingDebugNameMethods).append("\n\n");
         report.append("Methods without LocalVariableTable names excludes bytecode bodies with no ")
                 .append("user parameters and no local-variable stores, plus compiler-generated ")
-                .append("synthetic switch-map support classes.\n\n");
+                .append("synthetic switch-map support classes and bridge methods.\n\n");
         report.append("| Risk | Methods |\n");
         report.append("| --- | ---: |\n");
         report.append("| HIGH | ").append(summary.highMethods).append(" |\n");
@@ -200,6 +202,9 @@ public class DecompileParityReporter {
         }
         if (syntheticSwitchMap) {
             return "LOW (compiler-generated synthetic switch-map support class)";
+        }
+        if (isCompilerGeneratedBridgeMethod(method)) {
+            return "LOW (compiler-generated bridge method)";
         }
         if (hasReflection(method)) {
             return "HIGH (reflection call detected)";
@@ -319,6 +324,10 @@ public class DecompileParityReporter {
         return "synthetic-switch-map".equals(selectedEngine(finding));
     }
 
+    private static boolean isCompilerGeneratedBridgeMethod(BytecodeFingerprint.MethodFingerprint method) {
+        return method.isBridge() && method.isSynthetic();
+    }
+
     private byte[] readAllBytes(JarFile jarFile, JarEntry entry) throws IOException {
         try (InputStream is = jarFile.getInputStream(entry)) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -365,6 +374,7 @@ public class DecompileParityReporter {
             if (method.hasCode()
                     && method.requiresLocalVariableNames()
                     && method.getLocalVariableNames().isEmpty()
+                    && !isCompilerGeneratedBridgeMethod(method)
                     && !syntheticSwitchMap) {
                 missingDebugNameMethods++;
             }

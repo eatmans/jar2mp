@@ -186,6 +186,14 @@ public class BytecodeFingerprint {
             return hasCode;
         }
 
+        public boolean isBridge() {
+            return (accessFlags & 0x0040) != 0;
+        }
+
+        public boolean isSynthetic() {
+            return (accessFlags & 0x1000) != 0;
+        }
+
         private boolean isStatic() {
             return (accessFlags & 0x0008) != 0;
         }
