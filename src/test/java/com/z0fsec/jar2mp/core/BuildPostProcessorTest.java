@@ -1,6 +1,7 @@
 package com.z0fsec.jar2mp.core;
 
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.ManifestInfo;
 import com.z0fsec.jar2mp.model.ProjectConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -10,10 +11,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 import javax.tools.ToolProvider;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BuildPostProcessorTest {
@@ -73,6 +77,27 @@ class BuildPostProcessorTest {
         assertTrue(report.contains("- Source: missing or not generated"));
     }
 
+    @Test
+    void postProcessLogsWarningWhenTraceEventsAreCollectedBeforeTimeout() throws Exception {
+        Path jar = createSlowTraceJar();
+        Path outputDir = tempDir.resolve("project-with-trace-timeout");
+        Files.createDirectories(outputDir);
+
+        ProjectConfig config = new ProjectConfig();
+        config.setTraceRuntime(true);
+        config.setTraceTimeoutSeconds(1L);
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("demo.SlowTraceMain");
+        analysis.setManifestInfo(manifestInfo);
+        List<String> messages = new ArrayList<>();
+
+        new BuildPostProcessor().postProcess(jar.toFile(), analysis, outputDir.toFile(), config, messages::add);
+
+        assertTrue(messages.stream().anyMatch(message -> message.contains("运行时追踪: WARN (")));
+        assertFalse(messages.stream().anyMatch(message -> message.contains("运行时追踪: FAILED")));
+    }
+
     private void createJar(Path jar) throws Exception {
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
             JarEntry entry = new JarEntry("config.properties");
@@ -89,6 +114,50 @@ class BuildPostProcessorTest {
             out.write(Files.readAllBytes(classFile));
             out.closeEntry();
         }
+    }
+
+    private Path createSlowTraceJar() throws Exception {
+        Path sourceDir = tempDir.resolve("slow-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("SlowTraceMain.java");
+        Files.write(sourceFile, ("package demo;\n"
+                + "import java.nio.charset.StandardCharsets;\n"
+                + "import java.nio.file.Files;\n"
+                + "import java.nio.file.Paths;\n"
+                + "public class SlowTraceMain {\n"
+                + "  public static void main(String[] args) throws Exception {\n"
+                + "    String traceFile = System.getProperty(\"jar2mp.traceFile\");\n"
+                + "    String event = \"{\\\"kind\\\":\\\"reflection\\\",\\\"owner\\\":\\\"demo.SlowTraceMain\\\",\\\"target\\\":\\\"main\\\",\\\"value\\\":\\\"startup\\\",\\\"thread\\\":\\\"main\\\",\\\"stack\\\":[\\\"demo.SlowTraceMain.main\\\"]}\\n\";\n"
+                + "    Files.write(Paths.get(traceFile), event.getBytes(StandardCharsets.UTF_8));\n"
+                + "    Thread.sleep(30000L);\n"
+                + "  }\n"
+                + "}\n").getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("slow-classes");
+        Files.createDirectories(classesDir);
+        int compileResult = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        if (compileResult != 0) {
+            throw new IllegalStateException("javac failed with exit code " + compileResult);
+        }
+
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "demo.SlowTraceMain");
+
+        Path jar = tempDir.resolve("slow-trace.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("demo/SlowTraceMain.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/SlowTraceMain.class")));
+            out.closeEntry();
+        }
+        return jar;
     }
 
     private void compileRawClass(Path rawClassesDir, String className, String source) throws Exception {

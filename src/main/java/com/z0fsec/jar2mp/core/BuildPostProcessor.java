@@ -113,11 +113,25 @@ public class BuildPostProcessor {
 
     private void logSmokeSummary(Consumer<String> logger, RuntimeSmokeRunner.SmokeRunResult smokeResult) {
         int eventCount = smokeResult.getTraceResult() == null ? 0 : smokeResult.getTraceResult().getEvents().size();
-        String status = smokeResult.isSuccessful() ? "OK" : "FAILED";
+        String status = runtimeTraceSummaryStatus(smokeResult);
         log(logger, "运行时追踪: " + status + " (" + eventCount + " events)");
         if (smokeResult.getFailureMessage() != null && !smokeResult.getFailureMessage().trim().isEmpty()) {
             log(logger, "  " + smokeResult.getFailureMessage());
         }
+    }
+
+    private String runtimeTraceSummaryStatus(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        if (smokeResult == null) {
+            return "FAILED";
+        }
+        if (smokeResult.isSuccessful()) {
+            return "OK";
+        }
+        String runStatus = smokeResult.getRunStatus() == null ? "" : smokeResult.getRunStatus().toUpperCase(Locale.ROOT);
+        if ("TRACE_COLLECTED_TIMEOUT".equals(runStatus)) {
+            return "WARN";
+        }
+        return "FAILED";
     }
 
     private void refreshRestorationScore(File outputDir, JarAnalysisResult result) throws IOException {
