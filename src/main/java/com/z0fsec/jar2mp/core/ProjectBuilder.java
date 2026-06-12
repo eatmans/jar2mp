@@ -98,6 +98,8 @@ public class ProjectBuilder {
             Map<String, String> contextSources = shouldDecompile()
                     ? cfrJarDecompiler.decompile(jarFile)
                     : Collections.emptyMap();
+            Map<String, Map<String, String>> mapstructInputTypes =
+                    SourcePostProcessor.indexMapstructInputTypes(contextSources);
             Map<String, Map<Integer, String>> syntheticSwitchMaps = shouldDecompile()
                     ? SyntheticSwitchMapIndex.fromJar(jf)
                     : Collections.emptyMap();
@@ -232,7 +234,8 @@ public class ProjectBuilder {
                 String contextSource = findContextSource(contextSources, classPath, rawEntryPath);
                 if (contextSource != null && isContextSourceUsable(contextSource)) {
                     String className = classPath.replace('/', '.').replace(".class", "");
-                    String javaSource = sourcePostProcessor.process(contextSource, className, syntheticSwitchMaps);
+                    String javaSource = sourcePostProcessor.process(contextSource, className, syntheticSwitchMaps,
+                            mapstructInputTypes);
                     if (hasMissingSelfInnerReferences(javaSource, classPath, analysis.getClassFiles())) {
                         DecompileFinding finding = rawClassFallbackFinding(
                                 classPath,
@@ -282,7 +285,7 @@ public class ProjectBuilder {
                         finding.setEngineSummary(decompileResult.getEngineSummary());
                         if (decompileResult.isSuccess()) {
                             String javaSource = sourcePostProcessor.process(
-                                    decompileResult.getSource(), className, syntheticSwitchMaps);
+                                    decompileResult.getSource(), className, syntheticSwitchMaps, mapstructInputTypes);
                             if (hasMissingSelfInnerReferences(javaSource, classPath, analysis.getClassFiles())) {
                                 finding = rawClassFallbackFinding(
                                         classPath,
