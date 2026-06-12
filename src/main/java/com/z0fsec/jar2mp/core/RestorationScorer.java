@@ -155,6 +155,12 @@ public class RestorationScorer {
 
     private int scoreRuntime(JarAnalysisResult analysis, RuntimeTraceResult runtimeTraceResult,
                              RestorationScore score) {
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = analysis == null ? null : analysis.getRuntimeSmokeResult();
+        if (isStartupFailureStatus(smokeResult)) {
+            score.addGap("runtime_status", runtimeStartupFailureDetail(smokeResult), RUNTIME_WEIGHT);
+            return 0;
+        }
+
         if (runtimeTraceResult == null || runtimeTraceResult.getEvents().isEmpty()) {
             score.addGap("runtime_trace",
                     "Runtime trace data has not been captured; this is an observation gap, not a byte-level package fidelity failure.",
@@ -212,6 +218,11 @@ public class RestorationScorer {
                 "Runtime smoke run did not complete successfully: " + safeValue(smokeResult.getRunStatus()) + ".",
                 RUNTIME_WEIGHT);
         return 0;
+    }
+
+    private boolean isStartupFailureStatus(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        String status = smokeResult == null ? "" : safeValue(smokeResult.getRunStatus()).toUpperCase(Locale.ROOT);
+        return "STARTUP_FAILED_TIMEOUT".equals(status) || "STARTUP_FAILED_EXIT".equals(status);
     }
 
     private String runtimeStartupFailureDetail(RuntimeSmokeRunner.SmokeRunResult smokeResult) {

@@ -377,6 +377,37 @@ class RestorationScorerTest {
     }
 
     @Test
+    void runtimeScoreSuppressesMissingStaticKindGapsWhenStartupFailed() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "    new java.net.Socket(\"127.0.0.1\", 1).close();\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(0, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
+        assertFalse(score.getGaps().stream().anyMatch(g -> "socket".equals(g.getCategory())));
+    }
+
+    @Test
     void missingRuntimeTraceIsReportedAsObservationGapNotReflectionGap() {
         JarAnalysisResult analysis = new JarAnalysisResult();
 
