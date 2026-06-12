@@ -44,7 +44,7 @@ public class DecompileParityReporter {
                 continue;
             }
 
-            File sourceFile = new File(outputDir, "src/main/java/" + classPath.replace(".class", ".java"));
+            File sourceFile = resolveSourceFile(outputDir, classPath);
             String source = sourceFile.isFile() ? IoUtils.readFileToString(sourceFile) : "";
             DecompileFinding finding = findFinding(analysis, classPath);
 
@@ -140,6 +140,23 @@ public class DecompileParityReporter {
         report.append("| HIGH | ").append(summary.highMethods).append(" |\n");
         report.append("| MEDIUM | ").append(summary.mediumMethods).append(" |\n");
         report.append("| LOW | ").append(summary.lowMethods).append(" |\n\n");
+    }
+
+    private File resolveSourceFile(File outputDir, String classPath) {
+        File exactSource = new File(outputDir, "src/main/java/" + classPath.replace(".class", ".java"));
+        if (exactSource.isFile()) {
+            return exactSource;
+        }
+
+        int slash = classPath.lastIndexOf('/');
+        int dollar = classPath.indexOf('$', slash + 1);
+        if (dollar < 0) {
+            return exactSource;
+        }
+
+        String outerClassPath = classPath.substring(0, dollar) + ".class";
+        File outerSource = new File(outputDir, "src/main/java/" + outerClassPath.replace(".class", ".java"));
+        return outerSource.isFile() ? outerSource : exactSource;
     }
 
     private String riskLevel(BytecodeFingerprint.MethodFingerprint method, String source) {

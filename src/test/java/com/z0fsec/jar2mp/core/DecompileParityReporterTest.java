@@ -116,6 +116,35 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Risk level: MEDIUM"));
     }
 
+    @Test
+    void mapsInnerClassBytecodeToOuterSourceFile() throws Exception {
+        Path innerClassFile = compileInnerClass();
+        Path jarPath = tempDir.resolve("inner.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/Outer$Inner.class"));
+            jar.write(Files.readAllBytes(innerClassFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("inner-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/Outer.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, innerSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/Outer$Inner.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("## demo/Outer$Inner"));
+        assertTrue(report.contains("Source coverage: present"));
+        assertTrue(report.contains("Source: " + sourcePath));
+        assertTrue(report.contains("Methods with missing source: 0"));
+    }
+
     private Path compileReflectiveFlowClass() throws Exception {
         Path sourceDir = tempDir.resolve("compile-src/demo");
         Files.createDirectories(sourceDir);
@@ -179,6 +208,40 @@ class DecompileParityReporterTest {
         assertEquals(0, result);
         return new CompiledClass(classesDir.resolve("demo/AdvancedParity.class"),
                 classesDir.resolve("demo/AuditMarker.class"));
+    }
+
+    private Path compileInnerClass() throws Exception {
+        Path sourceDir = tempDir.resolve("inner-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("Outer.java");
+        Files.write(sourceFile, innerSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("inner-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/Outer$Inner.class");
+    }
+
+    private String innerSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class Outer {\n" +
+                "    public static class Inner {\n" +
+                "        public String value(String input) {\n" +
+                "            String trimmed = input.trim();\n" +
+                "            return trimmed;\n" +
+                "        }\n" +
+                "    }\n" +
+                "}\n";
     }
 
     private String advancedParitySource() {
