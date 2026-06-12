@@ -197,9 +197,17 @@ public class DecompileParityReporter {
         if (hasReflection(method)) {
             return "HIGH (reflection call detected)";
         }
-        if (!method.getInvokedynamicCalls().isEmpty()
-                || (method.requiresLocalVariableNames() && method.getLocalVariableNames().isEmpty())) {
-            return "MEDIUM (dynamic bytecode or missing debug names)";
+        boolean hasInvokedynamic = !method.getInvokedynamicCalls().isEmpty();
+        boolean missingDebugNames = method.requiresLocalVariableNames()
+                && method.getLocalVariableNames().isEmpty();
+        if (hasInvokedynamic && missingDebugNames) {
+            return "MEDIUM (invokedynamic and missing debug names)";
+        }
+        if (hasInvokedynamic) {
+            return "MEDIUM (invokedynamic)";
+        }
+        if (missingDebugNames) {
+            return "MEDIUM (missing debug names)";
         }
         return "LOW (source and bytecode facts align for basic checks)";
     }

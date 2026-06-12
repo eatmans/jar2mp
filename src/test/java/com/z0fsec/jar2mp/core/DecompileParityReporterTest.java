@@ -116,7 +116,37 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Annotations"));
         assertTrue(report.contains("Generic signatures"));
         assertTrue(report.contains("Thrown exceptions"));
-        assertTrue(report.contains("Risk level: MEDIUM"));
+        assertTrue(report.contains("Risk level: MEDIUM (invokedynamic)"));
+        assertTrue(report.contains("| MEDIUM | `demo/AdvancedParity` | `run(Ljava/lang/Number;)Ljava/lang/String;` | invokedynamic |"));
+    }
+
+    @Test
+    void explainsMissingDebugNameRiskSeparatelyFromInvokedynamic() throws Exception {
+        Path classFile = compileUserVariablesClassWithoutDebug();
+        Path jarPath = tempDir.resolve("missing-debug-names.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/MissingDebugNames.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("missing-debug-names-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/MissingDebugNames.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, missingDebugNamesSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/MissingDebugNames.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: MEDIUM (missing debug names)"));
+        assertTrue(report.contains("| MEDIUM | `demo/MissingDebugNames` | `add(I)I` | missing debug names |"));
+        assertTrue(report.contains("Methods with invokedynamic: 0"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 1"));
     }
 
     @Test
@@ -333,6 +363,27 @@ class DecompileParityReporterTest {
         return classesDir.resolve("demo/NoUserVariables.class");
     }
 
+    private Path compileUserVariablesClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("missing-debug-names-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("MissingDebugNames.java");
+        Files.write(sourceFile, missingDebugNamesSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("missing-debug-names-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/MissingDebugNames.class");
+    }
+
     private String innerSource() {
         return "package demo;\n" +
                 "\n" +
@@ -367,6 +418,17 @@ class DecompileParityReporterTest {
                 "\n" +
                 "    public static int value() {\n" +
                 "        return 7;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String missingDebugNamesSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class MissingDebugNames {\n" +
+                "    public int add(int input) {\n" +
+                "        int doubled = input * 2;\n" +
+                "        return doubled + 1;\n" +
                 "    }\n" +
                 "}\n";
     }
