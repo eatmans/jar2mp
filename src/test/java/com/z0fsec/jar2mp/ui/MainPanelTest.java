@@ -166,6 +166,29 @@ class MainPanelTest {
         assertTrue(output.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
     }
 
+    @Test
+    void appendReportPathsIncludesExpectedByteLevelReportsFromConfig(@TempDir Path outputDir) throws Exception {
+        MainPanel panel = new MainPanel(message -> { });
+        ProjectConfig config = new ProjectConfig();
+        config.setVerifyBuild(true);
+        config.setEmitRawArtifact(true);
+        config.setByteExactPackage(true);
+        config.setRestorePackageRecords(true);
+        setField(panel, "currentConfig", config);
+
+        invokeAppendReportPaths(panel, outputDir.toFile());
+
+        String output = logDocumentText(panel);
+        assertTrue(output.contains("verification-report.md"));
+        assertTrue(output.contains("verification-errors.md"));
+        assertTrue(output.contains("target/raw-artifact/artifact-fidelity-report.md"));
+        assertTrue(output.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
+        assertTrue(output.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
+        assertTrue(output.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
+        assertTrue(output.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
+        assertTrue(output.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
+    }
+
     private JCheckBox checkBox(MainPanel panel, String name) throws Exception {
         return (JCheckBox) field(panel, name);
     }

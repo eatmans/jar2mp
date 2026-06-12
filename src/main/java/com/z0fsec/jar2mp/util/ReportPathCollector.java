@@ -29,9 +29,13 @@ public final class ReportPathCollector {
         addIfExpectedOrPresent(reports, outputDir, "verification-report.md", verificationExpected);
         addIfExpectedOrPresent(reports, outputDir, "verification-errors.md", verificationExpected);
 
-        addFidelityPairIfPresent(reports, outputDir, "target/raw-artifact");
-        addFidelityPairIfPresent(reports, outputDir, "target/byte-exact-package-check");
-        addFidelityPairIfPresent(reports, outputDir, "target/package-record-restore-check");
+        boolean rawArtifactExpected = config != null
+                && (config.isEmitRawArtifact() || config.isByteExactPackage());
+        boolean byteExactExpected = config != null && config.isByteExactPackage();
+        boolean packageRecordExpected = config != null && config.isRestorePackageRecords();
+        addFidelityPairIfExpectedOrPresent(reports, outputDir, "target/raw-artifact", rawArtifactExpected);
+        addFidelityPairIfExpectedOrPresent(reports, outputDir, "target/byte-exact-package-check", byteExactExpected);
+        addFidelityPairIfExpectedOrPresent(reports, outputDir, "target/package-record-restore-check", packageRecordExpected);
         return reports;
     }
 
@@ -49,10 +53,13 @@ public final class ReportPathCollector {
         }
     }
 
-    private static void addFidelityPairIfPresent(List<File> reports, File outputDir, String relativeDir) {
+    private static void addFidelityPairIfExpectedOrPresent(List<File> reports,
+                                                           File outputDir,
+                                                           String relativeDir,
+                                                           boolean expected) {
         File report = new File(outputDir, relativeDir + "/artifact-fidelity-report.md");
         File summary = new File(outputDir, relativeDir + "/artifact-fidelity-summary.csv");
-        if (report.isFile() || summary.isFile()) {
+        if (expected || report.isFile() || summary.isFile()) {
             reports.add(report);
             reports.add(summary);
         }

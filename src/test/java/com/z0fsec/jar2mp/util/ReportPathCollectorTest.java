@@ -47,6 +47,27 @@ class ReportPathCollectorTest {
         assertTrue(reports.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
     }
 
+    @Test
+    void collectProjectReportsIncludesExpectedFidelityReportsFromConfig() {
+        ProjectConfig config = new ProjectConfig();
+        config.setVerifyBuild(true);
+        config.setEmitRawArtifact(true);
+        config.setByteExactPackage(true);
+        config.setRestorePackageRecords(true);
+
+        List<String> reports = relativePaths(ReportPathCollector.collectProjectReports(
+                outputDir.toFile(), config, true));
+
+        assertTrue(reports.contains("verification-report.md"));
+        assertTrue(reports.contains("verification-errors.md"));
+        assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-report.md"));
+        assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
+        assertTrue(reports.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
+        assertTrue(reports.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
+        assertTrue(reports.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
+        assertTrue(reports.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
+    }
+
     private void createReport(String relativePath) throws Exception {
         Path report = outputDir.resolve(relativePath);
         Files.createDirectories(report.getParent());
