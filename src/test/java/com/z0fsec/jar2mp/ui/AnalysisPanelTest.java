@@ -41,6 +41,9 @@ class AnalysisPanelTest {
         RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
         smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
         smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setStdout("APPLICATION FAILED TO START\n"
+                + "Caused by: org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379\n");
         smokeResult.setTraceResult(traceResult);
         result.setRuntimeSmokeResult(smokeResult);
         result.setRuntimeTraceResult(traceResult);
@@ -61,6 +64,11 @@ class AnalysisPanelTest {
                 valueFor(model, "恢复评分"));
         assertEquals("BUILD SUCCESS (NONE, exit 0)", valueFor(model, "构建验证"));
         assertEquals("STARTUP_FAILED_EXIT (events=2)", valueFor(model, "运行状态"));
+        assertEquals("Runtime startup failure was detected before non-zero exit.",
+                valueFor(model, "运行失败信息"));
+        assertEquals("org.redisson.client.RedisConnectionException: "
+                        + "Unable to connect to Redis server: localhost/127.0.0.1:6379",
+                valueFor(model, "运行失败原因"));
         assertEquals("runtime_status=20", valueFor(model, "剩余缺口"));
     }
 

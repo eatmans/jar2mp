@@ -117,6 +117,17 @@ public class AnalysisPanel extends BasePanel {
         RuntimeSmokeRunner.SmokeRunResult smokeResult = result.getRuntimeSmokeResult();
         if (smokeResult != null) {
             summaryModel.addRow(new Object[]{"运行状态", runtimeStatusText(smokeResult)});
+            String failureMessage = trimToNull(smokeResult.getFailureMessage());
+            if (failureMessage != null) {
+                summaryModel.addRow(new Object[]{"运行失败信息", failureMessage});
+            }
+            String failureCause = firstCausedBy(smokeResult.getStdout());
+            if (failureCause == null) {
+                failureCause = firstCausedBy(smokeResult.getStderr());
+            }
+            if (failureCause != null) {
+                summaryModel.addRow(new Object[]{"运行失败原因", failureCause});
+            }
         }
 
         RestorationScore score = result.getRestorationScore();
@@ -140,6 +151,21 @@ public class AnalysisPanel extends BasePanel {
         String status = safeValue(smokeResult.getRunStatus(), "UNKNOWN");
         int eventCount = smokeResult.getTraceResult() == null ? 0 : smokeResult.getTraceResult().getEvents().size();
         return status + " (events=" + eventCount + ")";
+    }
+
+    private String firstCausedBy(String content) {
+        if (content == null || content.trim().isEmpty()) {
+            return null;
+        }
+        String[] lines = content.split("\\R");
+        for (String line : lines) {
+            String value = trimToNull(line);
+            if (value == null || !value.startsWith("Caused by:")) {
+                continue;
+            }
+            return trimToNull(value.substring("Caused by:".length()));
+        }
+        return null;
     }
 
     private String restorationScoreText(RestorationScore score) {
@@ -172,10 +198,19 @@ public class AnalysisPanel extends BasePanel {
     }
 
     private String safeValue(String value, String fallback) {
-        if (value == null || value.trim().isEmpty()) {
+        String trimmed = trimToNull(value);
+        if (trimmed == null) {
             return fallback;
         }
-        return value.trim();
+        return trimmed;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     public void clearData() {
