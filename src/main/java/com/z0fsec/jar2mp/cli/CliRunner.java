@@ -4,6 +4,7 @@ import com.z0fsec.jar2mp.core.*;
 import com.z0fsec.jar2mp.db.PackagePrefixDatabase;
 import com.z0fsec.jar2mp.model.*;
 import com.z0fsec.jar2mp.util.Jar2MpConstants;
+import com.z0fsec.jar2mp.util.ReportPathCollector;
 import com.z0fsec.jar2mp.util.TraceArgsParser;
 
 import java.io.*;
@@ -508,32 +509,8 @@ public class CliRunner {
 
     private void printReportPaths(File outputDir, ProjectConfig config, boolean includeVerification) {
         System.out.println("  Reports:");
-        System.out.println("    " + new File(outputDir, "restoration-report.md").getAbsolutePath());
-        System.out.println("    " + new File(outputDir, "resource-inventory.md").getAbsolutePath());
-        System.out.println("    " + new File(outputDir, "decompile-parity-report.md").getAbsolutePath());
-        System.out.println("    " + new File(outputDir, "restoration-score.md").getAbsolutePath());
-        System.out.println("    " + new File(outputDir, "gap-summary.md").getAbsolutePath());
-        System.out.println("    " + new File(outputDir, "RUNBOOK.md").getAbsolutePath());
-        System.out.println("    " + new File(outputDir, "decompile-failures.md").getAbsolutePath());
-        File traceReport = new File(outputDir, "runtime-trace-report.md");
-        if (traceReport.isFile() || config.isTraceRuntime() || config.isSmokeOnly()) {
-            System.out.println("    " + traceReport.getAbsolutePath());
-        }
-        if (includeVerification && config.isVerifyBuild()) {
-            System.out.println("    " + new File(outputDir, "verification-report.md").getAbsolutePath());
-            System.out.println("    " + new File(outputDir, "verification-errors.md").getAbsolutePath());
-        }
-        File byteExactPackageReport = new File(outputDir, "target/byte-exact-package-check/artifact-fidelity-report.md");
-        if (byteExactPackageReport.isFile()) {
-            System.out.println("    " + byteExactPackageReport.getAbsolutePath());
-            System.out.println("    " + new File(outputDir,
-                    "target/byte-exact-package-check/artifact-fidelity-summary.csv").getAbsolutePath());
-        }
-        File packageRecordReport = new File(outputDir, "target/package-record-restore-check/artifact-fidelity-report.md");
-        if (packageRecordReport.isFile()) {
-            System.out.println("    " + packageRecordReport.getAbsolutePath());
-            System.out.println("    " + new File(outputDir,
-                    "target/package-record-restore-check/artifact-fidelity-summary.csv").getAbsolutePath());
+        for (File report : ReportPathCollector.collectProjectReports(outputDir, config, includeVerification)) {
+            System.out.println("    " + report.getAbsolutePath());
         }
     }
 

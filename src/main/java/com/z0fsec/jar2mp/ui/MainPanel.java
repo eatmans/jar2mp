@@ -9,6 +9,7 @@ import com.z0fsec.jar2mp.db.PackagePrefixDatabase;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ProjectConfig;
 import com.z0fsec.jar2mp.util.IoUtils;
+import com.z0fsec.jar2mp.util.ReportPathCollector;
 import com.z0fsec.jar2mp.util.TraceArgsParser;
 
 import javax.swing.*;
@@ -779,36 +780,7 @@ public class MainPanel extends BasePanel {
 
     private void appendReportPaths(File outDir) {
         appendInfo("Reports:");
-        appendInfo("  " + new File(outDir, "restoration-report.md").getAbsolutePath());
-        appendInfo("  " + new File(outDir, "resource-inventory.md").getAbsolutePath());
-        appendInfo("  " + new File(outDir, "decompile-parity-report.md").getAbsolutePath());
-        appendInfo("  " + new File(outDir, "restoration-score.md").getAbsolutePath());
-        appendInfo("  " + new File(outDir, "gap-summary.md").getAbsolutePath());
-        File runtimeTraceReport = new File(outDir, "runtime-trace-report.md");
-        if (runtimeTraceReport.exists()) {
-            appendInfo("  " + runtimeTraceReport.getAbsolutePath());
-        }
-        File verificationReport = new File(outDir, "verification-report.md");
-        if (verificationReport.exists()) {
-            appendInfo("  " + verificationReport.getAbsolutePath());
-        }
-        File verificationErrors = new File(outDir, "verification-errors.md");
-        if (verificationErrors.exists()) {
-            appendInfo("  " + verificationErrors.getAbsolutePath());
-        }
-        appendReportFileIfExists(outDir, "target/raw-artifact/artifact-fidelity-report.md");
-        appendReportFileIfExists(outDir, "target/raw-artifact/artifact-fidelity-summary.csv");
-        appendReportFileIfExists(outDir, "target/byte-exact-package-check/artifact-fidelity-report.md");
-        appendReportFileIfExists(outDir, "target/byte-exact-package-check/artifact-fidelity-summary.csv");
-        appendReportFileIfExists(outDir, "target/package-record-restore-check/artifact-fidelity-report.md");
-        appendReportFileIfExists(outDir, "target/package-record-restore-check/artifact-fidelity-summary.csv");
-        appendInfo("  " + new File(outDir, "RUNBOOK.md").getAbsolutePath());
-        appendInfo("  " + new File(outDir, "decompile-failures.md").getAbsolutePath());
-    }
-
-    private void appendReportFileIfExists(File outDir, String relativePath) {
-        File report = new File(outDir, relativePath);
-        if (report.exists()) {
+        for (File report : ReportPathCollector.collectProjectReports(outDir, currentConfig, true)) {
             appendInfo("  " + report.getAbsolutePath());
         }
     }
