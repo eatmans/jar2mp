@@ -170,6 +170,7 @@ class DecompileParityReporterTest {
         String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
         assertTrue(report.contains("Risk level: LOW (no bytecode body; signature-only method)"));
         assertTrue(report.contains("No Code attribute; abstract/native/synthetic-only method."));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
         assertTrue(report.contains("| HIGH | 0 |"));
     }
 

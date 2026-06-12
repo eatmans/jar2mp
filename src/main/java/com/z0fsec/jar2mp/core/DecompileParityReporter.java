@@ -302,7 +302,7 @@ public class DecompileParityReporter {
             if (!method.getInvokedynamicCalls().isEmpty()) {
                 invokedynamicMethods++;
             }
-            if (method.getLocalVariableNames().isEmpty()) {
+            if (method.hasCode() && method.getLocalVariableNames().isEmpty()) {
                 missingDebugNameMethods++;
             }
             for (String call : method.getMethodCalls()) {
