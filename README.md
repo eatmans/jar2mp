@@ -235,16 +235,16 @@ Options:
 │   ├── gap-summary.md
 │   ├── runtime-trace-report.md   ← 启用运行时追踪时生成
 │   ├── RUNBOOK.md
-│   ├── verification-report.md
-│   ├── verification-errors.md
+│   ├── verification-report.md   ← 启用构建验证时生成
+│   ├── verification-errors.md   ← 启用构建验证且存在可解析错误时生成
 │   ├── decompile-failures.md
 │   ├── .jar2mp/
 │   │   ├── byte-exact/          ← byte-exact package helper 与参考原包（启用 --byte-exact-package）
 │   │   └── package-records/     ← 受保护 package record helper 与参考原包（启用 --restore-package-records）
 │   ├── target/
 │   │   ├── original-classes/   ← 反编译失败或编译器支撑 class 需要保留时的原始 class
-│   │   ├── byte-exact-package-check/  ← byte-exact package 保真报告
-│   │   ├── package-record-restore-check/  ← 受保护 package record 回放保真报告
+│   │   ├── byte-exact-package-check/  ← byte-exact + 构建验证 package 阶段保真报告
+│   │   ├── package-record-restore-check/  ← package-record + 构建验证 package 阶段保真报告
 │   │   └── compiler-fallback-classes.jar  ← 大小写冲突 class 的编译 fallback jar
 │   └── src/
 │       ├── main/

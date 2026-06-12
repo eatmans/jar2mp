@@ -171,6 +171,7 @@ class MainPanelTest {
         MainPanel panel = new MainPanel(message -> { });
         ProjectConfig config = new ProjectConfig();
         config.setVerifyBuild(true);
+        config.setVerifyGoal("package");
         config.setEmitRawArtifact(true);
         config.setByteExactPackage(true);
         config.setRestorePackageRecords(true);
@@ -185,6 +186,49 @@ class MainPanelTest {
         assertTrue(output.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
         assertTrue(output.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
         assertTrue(output.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
+        assertFalse(output.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
+        assertFalse(output.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
+    }
+
+    @Test
+    void appendReportPathsDoesNotListPackageVerificationReportsWithoutVerification(
+            @TempDir Path outputDir) throws Exception {
+        MainPanel panel = new MainPanel(message -> { });
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+        config.setRestorePackageRecords(true);
+        setField(panel, "currentConfig", config);
+
+        invokeAppendReportPaths(panel, outputDir.toFile());
+
+        String output = logDocumentText(panel);
+        assertTrue(output.contains("target/raw-artifact/artifact-fidelity-report.md"));
+        assertTrue(output.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
+        assertFalse(output.contains("verification-report.md"));
+        assertFalse(output.contains("verification-errors.md"));
+        assertFalse(output.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
+        assertFalse(output.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
+        assertFalse(output.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
+        assertFalse(output.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
+    }
+
+    @Test
+    void appendReportPathsListsPackageRecordReportsForStandalonePackageRecordMode(
+            @TempDir Path outputDir) throws Exception {
+        MainPanel panel = new MainPanel(message -> { });
+        ProjectConfig config = new ProjectConfig();
+        config.setVerifyBuild(true);
+        config.setVerifyGoal("package");
+        config.setRestorePackageRecords(true);
+        setField(panel, "currentConfig", config);
+
+        invokeAppendReportPaths(panel, outputDir.toFile());
+
+        String output = logDocumentText(panel);
+        assertTrue(output.contains("verification-report.md"));
+        assertTrue(output.contains("verification-errors.md"));
+        assertFalse(output.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
+        assertFalse(output.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
         assertTrue(output.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
         assertTrue(output.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
     }

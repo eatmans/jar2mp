@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReportPathCollectorTest {
@@ -51,9 +52,9 @@ class ReportPathCollectorTest {
     void collectProjectReportsIncludesExpectedFidelityReportsFromConfig() {
         ProjectConfig config = new ProjectConfig();
         config.setVerifyBuild(true);
+        config.setVerifyGoal("package");
         config.setEmitRawArtifact(true);
         config.setByteExactPackage(true);
-        config.setRestorePackageRecords(true);
 
         List<String> reports = relativePaths(ReportPathCollector.collectProjectReports(
                 outputDir.toFile(), config, true));
@@ -64,8 +65,64 @@ class ReportPathCollectorTest {
         assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
         assertTrue(reports.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
         assertTrue(reports.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
+        assertFalse(reports.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
+        assertFalse(reports.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
+    }
+
+    @Test
+    void collectProjectReportsIncludesPackageRecordReportsForStandalonePackageRecordMode() {
+        ProjectConfig config = new ProjectConfig();
+        config.setVerifyBuild(true);
+        config.setVerifyGoal("package");
+        config.setRestorePackageRecords(true);
+
+        List<String> reports = relativePaths(ReportPathCollector.collectProjectReports(
+                outputDir.toFile(), config, true));
+
+        assertTrue(reports.contains("verification-report.md"));
+        assertTrue(reports.contains("verification-errors.md"));
+        assertFalse(reports.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
+        assertFalse(reports.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
         assertTrue(reports.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
         assertTrue(reports.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
+    }
+
+    @Test
+    void collectProjectReportsDoesNotExpectPackageVerificationReportsWithoutVerification() {
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+        config.setRestorePackageRecords(true);
+
+        List<String> reports = relativePaths(ReportPathCollector.collectProjectReports(
+                outputDir.toFile(), config, true));
+
+        assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-report.md"));
+        assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
+        assertFalse(reports.contains("verification-report.md"));
+        assertFalse(reports.contains("verification-errors.md"));
+        assertFalse(reports.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
+        assertFalse(reports.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
+        assertFalse(reports.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
+        assertFalse(reports.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
+    }
+
+    @Test
+    void collectProjectReportsDoesNotExpectPackageReportsForNonPackageVerificationGoals() {
+        ProjectConfig config = new ProjectConfig();
+        config.setVerifyBuild(true);
+        config.setVerifyGoal("compile");
+        config.setByteExactPackage(true);
+        config.setRestorePackageRecords(true);
+
+        List<String> reports = relativePaths(ReportPathCollector.collectProjectReports(
+                outputDir.toFile(), config, true));
+
+        assertTrue(reports.contains("verification-report.md"));
+        assertTrue(reports.contains("verification-errors.md"));
+        assertFalse(reports.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
+        assertFalse(reports.contains("target/byte-exact-package-check/artifact-fidelity-summary.csv"));
+        assertFalse(reports.contains("target/package-record-restore-check/artifact-fidelity-report.md"));
+        assertFalse(reports.contains("target/package-record-restore-check/artifact-fidelity-summary.csv"));
     }
 
     private void createReport(String relativePath) throws Exception {
