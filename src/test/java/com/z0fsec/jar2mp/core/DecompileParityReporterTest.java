@@ -15,6 +15,7 @@ import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -266,7 +267,8 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Selected engine: synthetic-switch-map"));
         assertTrue(report.contains("Risk level: LOW (compiler-generated synthetic switch-map support class)"));
         assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
-        assertTrue(report.contains("synthetic switch-map support classes and bridge methods."));
+        assertTrue(report.contains("synthetic switch-map support classes, bridge methods, enum support methods, "
+                + "and outer-this constructors."));
         assertTrue(report.contains("| MEDIUM | 0 |"));
         assertTrue(report.contains("Variable names: not required; compiler-generated synthetic switch-map support class."));
     }
@@ -299,6 +301,122 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
         assertTrue(report.contains("| MEDIUM | 0 |"));
         assertTrue(report.contains("Variable names: not required; compiler-generated bridge method."));
+    }
+
+    @Test
+    void detectsSyntheticSwitchMapSupportClassWithoutSelectedEngineHint() throws Exception {
+        Path classFile = compileSyntheticSwitchMapClassWithoutDebug();
+        Path jarPath = tempDir.resolve("switch-map-no-hint.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/Outer$1.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("switch-map-no-hint-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/Outer.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, outerSwitchSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/Outer$1.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated synthetic switch-map support class)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated synthetic switch-map support class."));
+    }
+
+    @Test
+    void treatsImplicitEnumConstructorsAsLowRisk() throws Exception {
+        Path classFile = compileEnumClassWithoutDebug();
+        Path jarPath = tempDir.resolve("enum-constructor.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/EnumOwner$EmptyTask.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("enum-constructor-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/EnumOwner.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, enumOwnerSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/EnumOwner$EmptyTask.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated enum constructor)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated enum constructor."));
+    }
+
+    @Test
+    void treatsOuterThisOnlyInnerClassConstructorsAsLowRisk() throws Exception {
+        Path classFile = compileOuterThisInnerClassWithoutDebug();
+        Path jarPath = tempDir.resolve("outer-this-inner.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/OuterThisOnly$Inner.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("outer-this-inner-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/OuterThisOnly.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, outerThisOnlySource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/OuterThisOnly$Inner.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated outer-this constructor)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated outer-this constructor."));
+    }
+
+    @Test
+    void keepsInnerClassConstructorsWithUserFieldWritesAsMissingDebugRisk() throws Exception {
+        Path classFile = compileOuterThisInnerClassWithUserFieldWriteWithoutDebug();
+        Path jarPath = tempDir.resolve("outer-this-inner-user-work.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/OuterThisWithWork$Inner.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("outer-this-inner-user-work-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/OuterThisWithWork.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, outerThisWithWorkSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/OuterThisWithWork$Inner.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: MEDIUM (missing debug names)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 1"));
+        assertTrue(report.contains("| MEDIUM | 1 |"));
+        assertFalse(report.contains("compiler-generated outer-this constructor"));
     }
 
     private Path compileReflectiveFlowClass() throws Exception {
@@ -471,6 +589,75 @@ class DecompileParityReporterTest {
         return classesDir.resolve("demo/BridgeMethodSample.class");
     }
 
+    private Path compileEnumClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("enum-constructor-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("EnumOwner.java");
+        Files.write(sourceFile, enumOwnerSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("enum-constructor-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        Path classFile = classesDir.resolve("demo/EnumOwner$EmptyTask.class");
+        assertEquals(0, result);
+        assertTrue(Files.exists(classFile));
+        return classFile;
+    }
+
+    private Path compileOuterThisInnerClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("outer-this-inner-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("OuterThisOnly.java");
+        Files.write(sourceFile, outerThisOnlySource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("outer-this-inner-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        Path classFile = classesDir.resolve("demo/OuterThisOnly$Inner.class");
+        assertEquals(0, result);
+        assertTrue(Files.exists(classFile));
+        return classFile;
+    }
+
+    private Path compileOuterThisInnerClassWithUserFieldWriteWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("outer-this-inner-user-work-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("OuterThisWithWork.java");
+        Files.write(sourceFile, outerThisWithWorkSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("outer-this-inner-user-work-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        Path classFile = classesDir.resolve("demo/OuterThisWithWork$Inner.class");
+        assertEquals(0, result);
+        assertTrue(Files.exists(classFile));
+        return classFile;
+    }
+
     private Path compileUserVariablesClassWithoutDebug() throws Exception {
         Path sourceDir = tempDir.resolve("missing-debug-names-src/demo");
         Files.createDirectories(sourceDir);
@@ -563,6 +750,43 @@ class DecompileParityReporterTest {
                 "public class BridgeMethodSample {\n" +
                 "    public void bridge(Object value) {\n" +
                 "        System.setProperty(\"demo.bridge\", String.valueOf(value));\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String enumOwnerSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class EnumOwner {\n" +
+                "    enum EmptyTask { FIRST, SECOND }\n" +
+                "}\n";
+    }
+
+    private String outerThisOnlySource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class OuterThisOnly {\n" +
+                "    class Inner {\n" +
+                "        Inner() {\n" +
+                "        }\n" +
+                "\n" +
+                "        int value() {\n" +
+                "            return 7;\n" +
+                "        }\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String outerThisWithWorkSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class OuterThisWithWork {\n" +
+                "    class Inner {\n" +
+                "        private int value;\n" +
+                "\n" +
+                "        Inner() {\n" +
+                "            value = 7;\n" +
+                "        }\n" +
                 "    }\n" +
                 "}\n";
     }

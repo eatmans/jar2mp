@@ -83,10 +83,11 @@ public class DecompileParityReporter {
         appendSet(report, "Bootstrap methods", fingerprint.getBootstrapMethods());
         report.append("\n");
 
-        boolean syntheticSwitchMap = isSyntheticSwitchMapFinding(finding);
+        boolean syntheticSwitchMap = isSyntheticSwitchMapFinding(finding) || isSyntheticSwitchMapClass(fingerprint);
         for (BytecodeFingerprint.MethodFingerprint method : fingerprint.getMethodsByKey().values()) {
-            String riskLevel = riskLevel(method, source, syntheticSwitchMap);
-            riskSummary.record(fingerprint.getClassName(), method, source, riskLevel, syntheticSwitchMap);
+            String supportReason = compilerGeneratedSupportReason(fingerprint, method, syntheticSwitchMap);
+            String riskLevel = riskLevel(method, source, supportReason);
+            riskSummary.record(fingerprint.getClassName(), method, source, riskLevel, supportReason);
             report.append("### ").append(method.getKey()).append("\n\n");
             report.append("- Risk level: ").append(riskLevel).append("\n");
             if (!method.hasCode()) {
@@ -103,10 +104,8 @@ public class DecompileParityReporter {
                     .append(method.getExceptionHandlerCount())
                     .append("\n");
 
-            if (syntheticSwitchMap && method.getLocalVariableNames().isEmpty()) {
-                report.append("- Variable names: not required; compiler-generated synthetic switch-map support class.\n");
-            } else if (isCompilerGeneratedBridgeMethod(method) && method.getLocalVariableNames().isEmpty()) {
-                report.append("- Variable names: not required; compiler-generated bridge method.\n");
+            if (supportReason != null && method.getLocalVariableNames().isEmpty()) {
+                report.append("- Variable names: not required; ").append(supportReason).append(".\n");
             } else if (method.getLocalVariableNames().isEmpty() && method.requiresLocalVariableNames()) {
                 report.append("- Variable names: unavailable; original class has no LocalVariableTable debug metadata.\n");
             } else if (method.getLocalVariableNames().isEmpty()) {
@@ -145,7 +144,8 @@ public class DecompileParityReporter {
                 .append(summary.missingDebugNameMethods).append("\n\n");
         report.append("Methods without LocalVariableTable names excludes bytecode bodies with no ")
                 .append("user parameters and no local-variable stores, plus compiler-generated ")
-                .append("synthetic switch-map support classes and bridge methods.\n\n");
+                .append("synthetic switch-map support classes, bridge methods, enum support methods, ")
+                .append("and outer-this constructors.\n\n");
         report.append("| Risk | Methods |\n");
         report.append("| --- | ---: |\n");
         report.append("| HIGH | ").append(summary.highMethods).append(" |\n");
@@ -193,18 +193,15 @@ public class DecompileParityReporter {
         return outerSource.isFile() ? outerSource : exactSource;
     }
 
-    private String riskLevel(BytecodeFingerprint.MethodFingerprint method, String source, boolean syntheticSwitchMap) {
+    private String riskLevel(BytecodeFingerprint.MethodFingerprint method, String source, String supportReason) {
         if (source.isEmpty()) {
             return "HIGH (source missing)";
         }
         if (!method.hasCode()) {
             return "LOW (no bytecode body; signature-only method)";
         }
-        if (syntheticSwitchMap) {
-            return "LOW (compiler-generated synthetic switch-map support class)";
-        }
-        if (isCompilerGeneratedBridgeMethod(method)) {
-            return "LOW (compiler-generated bridge method)";
+        if (supportReason != null) {
+            return "LOW (" + supportReason + ")";
         }
         if (hasReflection(method)) {
             return "HIGH (reflection call detected)";
@@ -324,8 +321,100 @@ public class DecompileParityReporter {
         return "synthetic-switch-map".equals(selectedEngine(finding));
     }
 
+    private static String compilerGeneratedSupportReason(BytecodeFingerprint fingerprint,
+                                                         BytecodeFingerprint.MethodFingerprint method,
+                                                         boolean syntheticSwitchMap) {
+        if (syntheticSwitchMap) {
+            return "compiler-generated synthetic switch-map support class";
+        }
+        if (isCompilerGeneratedBridgeMethod(method)) {
+            return "compiler-generated bridge method";
+        }
+        if (isCompilerGeneratedEnumMethod(fingerprint, method)) {
+            if ("<init>".equals(method.getName())) {
+                return "compiler-generated enum constructor";
+            }
+            return "compiler-generated enum support method";
+        }
+        if (isOuterThisOnlyConstructor(fingerprint, method)) {
+            return "compiler-generated outer-this constructor";
+        }
+        return null;
+    }
+
+    private static boolean isSyntheticSwitchMapClass(BytecodeFingerprint fingerprint) {
+        boolean hasSwitchMapField = false;
+        for (String field : fingerprint.getFields()) {
+            if (field.startsWith("$SwitchMap$") && field.endsWith("[I")) {
+                hasSwitchMapField = true;
+                break;
+            }
+        }
+        if (!hasSwitchMapField) {
+            return false;
+        }
+        for (String methodKey : fingerprint.getMethodsByKey().keySet()) {
+            if (!"<clinit>()V".equals(methodKey) && !"<init>()V".equals(methodKey)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean isCompilerGeneratedBridgeMethod(BytecodeFingerprint.MethodFingerprint method) {
         return method.isBridge() && method.isSynthetic();
+    }
+
+    private static boolean isCompilerGeneratedEnumMethod(BytecodeFingerprint fingerprint,
+                                                         BytecodeFingerprint.MethodFingerprint method) {
+        if (!fingerprint.isEnumClass()) {
+            return false;
+        }
+        String descriptor = method.getDescriptor();
+        if ("<init>".equals(method.getName())) {
+            return "(Ljava/lang/String;I)V".equals(descriptor);
+        }
+        String enumDescriptor = "L" + fingerprint.getClassName() + ";";
+        if ("values".equals(method.getName())) {
+            return ("()[" + enumDescriptor).equals(descriptor);
+        }
+        if ("valueOf".equals(method.getName())) {
+            return ("(Ljava/lang/String;)" + enumDescriptor).equals(descriptor);
+        }
+        return "$values".equals(method.getName())
+                && ("()[" + enumDescriptor).equals(descriptor);
+    }
+
+    private static boolean isOuterThisOnlyConstructor(BytecodeFingerprint fingerprint,
+                                                      BytecodeFingerprint.MethodFingerprint method) {
+        if (!"<init>".equals(method.getName())
+                || !method.getDescriptor().startsWith("(L")
+                || !method.getDescriptor().endsWith(";)V")) {
+            return false;
+        }
+        String outerDescriptor = method.getDescriptor().substring(1, method.getDescriptor().length() - 2);
+        if (!fingerprint.getFields().contains("this$0" + outerDescriptor)) {
+            return false;
+        }
+        if (method.getBranchOpcodeCount() != 0
+                || !method.getStringConstants().isEmpty()
+                || !method.getInvokedynamicCalls().isEmpty()) {
+            return false;
+        }
+        if (method.getMethodCalls().size() != 1
+                || !method.getMethodCalls().contains("java/lang/Object.<init>()V")) {
+            return false;
+        }
+        if (method.getFieldReferences().isEmpty()) {
+            return false;
+        }
+        String outerThisField = ".this$0" + outerDescriptor;
+        for (String fieldReference : method.getFieldReferences()) {
+            if (!fieldReference.endsWith(outerThisField)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private byte[] readAllBytes(JarFile jarFile, JarEntry entry) throws IOException {
@@ -354,7 +443,7 @@ public class DecompileParityReporter {
         private final List<RiskMethod> riskMethods = new ArrayList<>();
 
         private void record(String className, BytecodeFingerprint.MethodFingerprint method,
-                            String source, String riskLevel, boolean syntheticSwitchMap) {
+                            String source, String riskLevel, String supportReason) {
             methodCount++;
             if (riskLevel.startsWith("HIGH")) {
                 highMethods++;
@@ -374,8 +463,7 @@ public class DecompileParityReporter {
             if (method.hasCode()
                     && method.requiresLocalVariableNames()
                     && method.getLocalVariableNames().isEmpty()
-                    && !isCompilerGeneratedBridgeMethod(method)
-                    && !syntheticSwitchMap) {
+                    && supportReason == null) {
                 missingDebugNameMethods++;
             }
             for (String call : method.getMethodCalls()) {

@@ -19,16 +19,18 @@ public class BytecodeFingerprint {
     private final Set<String> genericSignatures;
     private final Set<String> bootstrapMethods;
     private final Map<String, MethodFingerprint> methodsByKey;
+    private final int accessFlags;
 
     private BytecodeFingerprint(String className, List<String> fields, Set<String> annotations,
                                 Set<String> genericSignatures, Set<String> bootstrapMethods,
-                                Map<String, MethodFingerprint> methodsByKey) {
+                                Map<String, MethodFingerprint> methodsByKey, int accessFlags) {
         this.className = className;
         this.fields = fields;
         this.annotations = annotations;
         this.genericSignatures = genericSignatures;
         this.bootstrapMethods = bootstrapMethods;
         this.methodsByKey = methodsByKey;
+        this.accessFlags = accessFlags;
     }
 
     public static BytecodeFingerprint fromClassFile(byte[] classBytes) {
@@ -58,6 +60,10 @@ public class BytecodeFingerprint {
 
     public Map<String, MethodFingerprint> getMethodsByKey() {
         return methodsByKey;
+    }
+
+    public boolean isEnumClass() {
+        return (accessFlags & 0x4000) != 0;
     }
 
     public static class MethodFingerprint {
@@ -241,7 +247,7 @@ public class BytecodeFingerprint {
 
             offset = 8;
             readConstantPool();
-            offset += 2; // access_flags
+            int accessFlags = readU2();
             int thisClassIndex = readU2();
             offset += 2; // super_class
 
@@ -250,7 +256,7 @@ public class BytecodeFingerprint {
             Map<String, MethodFingerprint> methods = readMethods();
             ClassAttributes attributes = readClassAttributes();
             return new BytecodeFingerprint(resolveClassName(thisClassIndex), fields, attributes.annotations,
-                    attributes.genericSignatures, attributes.bootstrapMethods, methods);
+                    attributes.genericSignatures, attributes.bootstrapMethods, methods, accessFlags);
         }
 
         private void readConstantPool() {
