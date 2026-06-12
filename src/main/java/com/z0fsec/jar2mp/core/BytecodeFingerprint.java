@@ -267,7 +267,7 @@ public class BytecodeFingerprint {
     private static class ClassReader {
         private final byte[] data;
         private CpInfo[] constantPool;
-        private List<String> bootstrapMethodReferences = Collections.emptyList();
+        private List<BootstrapMethodInfo> bootstrapMethodsByIndex = Collections.emptyList();
         private int offset;
 
         private ClassReader(byte[] data) {
@@ -302,12 +302,12 @@ public class BytecodeFingerprint {
             skipInterfaces();
             skipMembers(); // fields
             skipMembers(); // methods
-            bootstrapMethodReferences = readBootstrapMethodReferencesFromClassAttributes();
+            bootstrapMethodsByIndex = readBootstrapMethodsFromClassAttributes();
             offset = savedOffset;
         }
 
-        private List<String> readBootstrapMethodReferencesFromClassAttributes() {
-            List<String> references = new ArrayList<>();
+        private List<BootstrapMethodInfo> readBootstrapMethodsFromClassAttributes() {
+            List<BootstrapMethodInfo> methods = new ArrayList<>();
             int attributesCount = readU2();
             for (int i = 0; i < attributesCount; i++) {
                 String attributeName = utf8(readU2());
@@ -316,14 +316,18 @@ public class BytecodeFingerprint {
                 if ("BootstrapMethods".equals(attributeName)) {
                     int bootstrapCount = readU2();
                     for (int j = 0; j < bootstrapCount; j++) {
-                        references.add(resolveMethodHandle(readU2()));
+                        String reference = resolveMethodHandle(readU2());
                         int argumentCount = readU2();
-                        offset += argumentCount * 2;
+                        List<String> arguments = new ArrayList<>();
+                        for (int k = 0; k < argumentCount; k++) {
+                            arguments.add(resolveBootstrapArgument(readU2()));
+                        }
+                        methods.add(new BootstrapMethodInfo(reference, arguments));
                     }
                 }
                 offset = attributeEnd;
             }
-            return references;
+            return methods;
         }
 
         private void readConstantPool() {
@@ -864,8 +868,8 @@ public class BytecodeFingerprint {
                 return "invokedynamic#" + index;
             }
             String call = "invokedynamic." + utf8(nameAndType.index1) + utf8(nameAndType.index2);
-            if (invokeDynamic.index1 >= 0 && invokeDynamic.index1 < bootstrapMethodReferences.size()) {
-                return call + " [bootstrap=" + bootstrapMethodReferences.get(invokeDynamic.index1) + "]";
+            if (invokeDynamic.index1 >= 0 && invokeDynamic.index1 < bootstrapMethodsByIndex.size()) {
+                return call + " " + bootstrapMethodsByIndex.get(invokeDynamic.index1).format();
             }
             return call;
         }
@@ -884,6 +888,38 @@ public class BytecodeFingerprint {
                 return "#" + index;
             }
             return resolveMethodReference(methodHandle.index1);
+        }
+
+        private String resolveBootstrapArgument(int index) {
+            CpInfo argument = cp(index);
+            if (argument == null) {
+                return "#" + index;
+            }
+            switch (argument.tag) {
+                case 7:
+                    return "class:" + resolveClassName(index);
+                case 8:
+                    return "string:" + printableString(utf8(argument.index1));
+                case 15:
+                    return "handle:" + resolveMethodHandle(index);
+                case 16:
+                    return "methodType:" + utf8(argument.index1);
+                default:
+                    return "#" + index;
+            }
+        }
+
+        private String printableString(String value) {
+            StringBuilder result = new StringBuilder();
+            for (int i = 0; i < value.length(); i++) {
+                char ch = value.charAt(i);
+                if (Character.isISOControl(ch)) {
+                    result.append(String.format(Locale.ROOT, "\\u%04x", (int) ch));
+                } else {
+                    result.append(ch);
+                }
+            }
+            return result.toString();
         }
 
         private String utf8(int index) {
@@ -948,6 +984,23 @@ public class BytecodeFingerprint {
         private final Set<String> annotations = new LinkedHashSet<>();
         private final Set<String> genericSignatures = new LinkedHashSet<>();
         private final Set<String> bootstrapMethods = new LinkedHashSet<>();
+    }
+
+    private static class BootstrapMethodInfo {
+        private final String reference;
+        private final List<String> arguments;
+
+        private BootstrapMethodInfo(String reference, List<String> arguments) {
+            this.reference = reference;
+            this.arguments = arguments;
+        }
+
+        private String format() {
+            if (arguments.isEmpty()) {
+                return "[bootstrap=" + reference + "]";
+            }
+            return "[bootstrap=" + reference + "; args=" + String.join(", ", arguments) + "]";
+        }
     }
 
     private static class CpInfo {

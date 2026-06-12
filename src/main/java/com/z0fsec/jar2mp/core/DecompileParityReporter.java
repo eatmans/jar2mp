@@ -12,6 +12,32 @@ import java.util.jar.JarFile;
 
 public class DecompileParityReporter {
 
+    private static final String[] REFLECTIVE_CALL_PREFIXES = {
+            "java/lang/Class.forName",
+            "java/lang/Class.getMethod(",
+            "java/lang/Class.getDeclaredMethod(",
+            "java/lang/Class.getMethods(",
+            "java/lang/Class.getDeclaredMethods(",
+            "java/lang/Class.getField(",
+            "java/lang/Class.getDeclaredField(",
+            "java/lang/Class.getFields(",
+            "java/lang/Class.getDeclaredFields(",
+            "java/lang/Class.getConstructor(",
+            "java/lang/Class.getDeclaredConstructor(",
+            "java/lang/Class.getConstructors(",
+            "java/lang/Class.getDeclaredConstructors(",
+            "java/lang/Class.getAnnotation(",
+            "java/lang/Class.getDeclaredAnnotation(",
+            "java/lang/Class.getAnnotations(",
+            "java/lang/Class.getDeclaredAnnotations(",
+            "java/lang/reflect/"
+    };
+
+    private static final String[] REFLECTION_UTILITY_PREFIXES = {
+            "cn/hutool/core/util/ReflectUtil.",
+            "org/springframework/util/ReflectionUtils."
+    };
+
     public void writeReport(JarFile jarFile, JarAnalysisResult analysis, File outputDir) throws IOException {
         StringBuilder report = new StringBuilder();
         StringBuilder classDetails = new StringBuilder();
@@ -248,14 +274,29 @@ public class DecompileParityReporter {
         return false;
     }
 
-    private boolean isReflectiveCall(String call) {
-        return call.startsWith("java/lang/Class.forName") ||
-                call.startsWith("java/lang/reflect/") ||
-                call.contains(".getMethod(") ||
-                call.contains(".getDeclaredMethod(") ||
-                call.contains(".getField(") ||
-                call.contains(".getDeclaredField(") ||
-                call.contains(".invoke(");
+    private static boolean isReflectiveCall(String call) {
+        return startsWithAny(call, REFLECTIVE_CALL_PREFIXES)
+                || startsWithAny(call, REFLECTION_UTILITY_PREFIXES)
+                || containsBootstrapMethodHandle(call, REFLECTIVE_CALL_PREFIXES)
+                || containsBootstrapMethodHandle(call, REFLECTION_UTILITY_PREFIXES);
+    }
+
+    private static boolean startsWithAny(String call, String[] prefixes) {
+        for (String prefix : prefixes) {
+            if (call.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsBootstrapMethodHandle(String call, String[] prefixes) {
+        for (String prefix : prefixes) {
+            if (call.contains("; args=handle:" + prefix) || call.contains(", handle:" + prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void appendList(StringBuilder report, String label, List<String> values) {
@@ -472,13 +513,7 @@ public class DecompileParityReporter {
                 missingDebugNameMethods++;
             }
             for (String call : method.getMethodCalls()) {
-                if (call.startsWith("java/lang/Class.forName")
-                        || call.startsWith("java/lang/reflect/")
-                        || call.contains(".getMethod(")
-                        || call.contains(".getDeclaredMethod(")
-                        || call.contains(".getField(")
-                        || call.contains(".getDeclaredField(")
-                        || call.contains(".invoke(")) {
+                if (isReflectiveCall(call)) {
                     reflectionMethods++;
                     break;
                 }

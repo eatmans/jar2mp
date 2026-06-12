@@ -131,6 +131,8 @@ class DecompileParityReporterTest {
         assertNotNull(method);
         assertTrue(method.getInvokedynamicCalls().iterator().next()
                 .contains("java/lang/invoke/StringConcatFactory.makeConcatWithConstants"));
+        assertTrue(method.getInvokedynamicCalls().iterator().next()
+                .contains("args=string:user=\\u0001, count=\\u0001"));
 
         Path jarPath = tempDir.resolve("string-concat.jar");
         try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
@@ -159,6 +161,35 @@ class DecompileParityReporterTest {
     }
 
     @Test
+    void doesNotTreatStringConcatRecipeTextAsReflection() throws Exception {
+        Path classFile = compileReflectionTextStringConcatClass();
+        Path jarPath = tempDir.resolve("reflection-text-string-concat.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/ReflectionTextStringConcat.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("reflection-text-string-concat-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/ReflectionTextStringConcat.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, reflectionTextStringConcatSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/ReflectionTextStringConcat.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (string-concat invokedynamic only)"));
+        assertTrue(report.contains("args=string:literal, java/lang/Class.getMethod(\\u0001"));
+        assertFalse(report.contains("reflection call detected"));
+        assertFalse(report.contains("Reflection: detected call"));
+    }
+
+    @Test
     void keepsMixedLambdaAndStringConcatInvokedynamicAsMediumRisk() throws Exception {
         Path classFile = compileMixedInvokedynamicClass();
         BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(Files.readAllBytes(classFile));
@@ -167,6 +198,13 @@ class DecompileParityReporterTest {
         assertNotNull(method);
         assertTrue(method.getInvokedynamicCalls().stream()
                 .allMatch(call -> call.contains(" [bootstrap=")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .filter(call -> call.startsWith("invokedynamic.apply"))
+                .count() >= 2);
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("demo/MixedInvokedynamic.lambda$format$0")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("demo/MixedInvokedynamic.lambda$format$1")));
         assertTrue(method.getInvokedynamicCalls().stream()
                 .filter(call -> call.startsWith("invokedynamic.apply"))
                 .allMatch(call -> call.contains("java/lang/invoke/LambdaMetafactory.metafactory")));
@@ -202,7 +240,95 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Risk level: MEDIUM (invokedynamic)"));
         assertTrue(report.contains(
                 "| MEDIUM | `demo/MixedInvokedynamic` | `format(Ljava/lang/String;)Ljava/lang/String;` | invokedynamic |"));
+        assertTrue(report.contains("demo/MixedInvokedynamic.lambda$format$0"));
+        assertTrue(report.contains("demo/MixedInvokedynamic.lambda$format$1"));
         assertFalse(report.contains("Risk level: LOW (string-concat invokedynamic only)"));
+    }
+
+    @Test
+    void doesNotTreatOrdinaryGetMethodCallsAsReflection() throws Exception {
+        Path classFile = compileNonReflectiveGetMethodClass();
+        Path jarPath = tempDir.resolve("non-reflective-get-method.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/NonReflectiveGetMethod.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("non-reflective-get-method-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/NonReflectiveGetMethod.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, nonReflectiveGetMethodSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/NonReflectiveGetMethod.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (source and bytecode facts align for basic checks)"));
+        assertTrue(report.contains("demo/NonReflectiveGetMethod$Request.getMethod()Ljava/lang/String;"));
+        assertFalse(report.contains("reflection call detected"));
+        assertFalse(report.contains("Reflection: detected call"));
+    }
+
+    @Test
+    void doesNotTreatMethodReferenceToFieldGetterAsReflection() throws Exception {
+        Path classFile = compileNonReflectiveFieldGetterClass();
+        Path jarPath = tempDir.resolve("non-reflective-field-getter.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/NonReflectiveFieldGetter.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("non-reflective-field-getter-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/NonReflectiveFieldGetter.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, nonReflectiveFieldGetterSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/NonReflectiveFieldGetter.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: MEDIUM (invokedynamic)"));
+        assertTrue(report.contains("demo/NonReflectiveFieldGetter$FieldData.getField()Ljava/lang/reflect/Field;"));
+        assertFalse(report.contains("reflection call detected"));
+        assertFalse(report.contains("Reflection: detected call"));
+    }
+
+    @Test
+    void treatsPluralClassReflectionApisAsReflection() throws Exception {
+        Path classFile = compilePluralReflectionApiClass();
+        Path jarPath = tempDir.resolve("plural-reflection-api.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/PluralReflectionApi.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("plural-reflection-api-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/PluralReflectionApi.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, pluralReflectionApiSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/PluralReflectionApi.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: HIGH (reflection call detected)"));
+        assertTrue(report.contains("java/lang/Class.getDeclaredFields()[Ljava/lang/reflect/Field;"));
+        assertTrue(report.contains("Reflection: detected call(s): java/lang/Class.getDeclaredFields()[Ljava/lang/reflect/Field;"));
     }
 
     @Test
@@ -615,6 +741,26 @@ class DecompileParityReporterTest {
         return classesDir.resolve("demo/StringConcatOnly.class");
     }
 
+    private Path compileReflectionTextStringConcatClass() throws Exception {
+        Path sourceDir = tempDir.resolve("reflection-text-string-concat-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("ReflectionTextStringConcat.java");
+        Files.write(sourceFile, reflectionTextStringConcatSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("reflection-text-string-concat-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "--release", "17",
+                "-g",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/ReflectionTextStringConcat.class");
+    }
+
     private Path compileMixedInvokedynamicClass() throws Exception {
         Path sourceDir = tempDir.resolve("mixed-invokedynamic-src/demo");
         Files.createDirectories(sourceDir);
@@ -633,6 +779,68 @@ class DecompileParityReporterTest {
                 sourceFile.toString());
         assertEquals(0, result);
         return classesDir.resolve("demo/MixedInvokedynamic.class");
+    }
+
+    private Path compileNonReflectiveGetMethodClass() throws Exception {
+        Path sourceDir = tempDir.resolve("non-reflective-get-method-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("NonReflectiveGetMethod.java");
+        Files.write(sourceFile, nonReflectiveGetMethodSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("non-reflective-get-method-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/NonReflectiveGetMethod.class");
+    }
+
+    private Path compileNonReflectiveFieldGetterClass() throws Exception {
+        Path sourceDir = tempDir.resolve("non-reflective-field-getter-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("NonReflectiveFieldGetter.java");
+        Files.write(sourceFile, nonReflectiveFieldGetterSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("non-reflective-field-getter-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "--release", "17",
+                "-g",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/NonReflectiveFieldGetter.class");
+    }
+
+    private Path compilePluralReflectionApiClass() throws Exception {
+        Path sourceDir = tempDir.resolve("plural-reflection-api-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("PluralReflectionApi.java");
+        Files.write(sourceFile, pluralReflectionApiSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("plural-reflection-api-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/PluralReflectionApi.class");
     }
 
     private Path compileInnerClass() throws Exception {
@@ -1031,6 +1239,16 @@ class DecompileParityReporterTest {
                 "}\n";
     }
 
+    private String reflectionTextStringConcatSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class ReflectionTextStringConcat {\n" +
+                "    public String message(String input) {\n" +
+                "        return \"literal, java/lang/Class.getMethod(\" + input;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
     private String mixedInvokedynamicSource() {
         return "package demo;\n" +
                 "\n" +
@@ -1041,6 +1259,49 @@ class DecompileParityReporterTest {
                 "        Function<String, String> normalizer = value -> value.trim();\n" +
                 "        Function<String, String> lowercase = value -> value.toLowerCase();\n" +
                 "        return \"user=\" + normalizer.apply(input) + \", lower=\" + lowercase.apply(input);\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String nonReflectiveGetMethodSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class NonReflectiveGetMethod {\n" +
+                "    interface Request {\n" +
+                "        String getMethod();\n" +
+                "    }\n" +
+                "\n" +
+                "    public String read(Request request) {\n" +
+                "        return request.getMethod();\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String nonReflectiveFieldGetterSource() {
+        return "package demo;\n" +
+                "\n" +
+                "import java.lang.reflect.Field;\n" +
+                "import java.util.function.Function;\n" +
+                "\n" +
+                "public class NonReflectiveFieldGetter {\n" +
+                "    static class FieldData {\n" +
+                "        Field getField() {\n" +
+                "            return null;\n" +
+                "        }\n" +
+                "    }\n" +
+                "\n" +
+                "    public Function<FieldData, Field> accessor() {\n" +
+                "        return FieldData::getField;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String pluralReflectionApiSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class PluralReflectionApi {\n" +
+                "    public int countFields(Class<?> type) {\n" +
+                "        return type.getDeclaredFields().length;\n" +
                 "    }\n" +
                 "}\n";
     }
