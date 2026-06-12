@@ -108,6 +108,18 @@ parse_artifact_summary_field() {
   printf '%s' "${value:-${fallback}}"
 }
 
+classify_package_record_restore_gate() {
+  local status="$1"
+  local exact="$2"
+  if [[ "${status}" == "PASS" && "${exact}" == "true" ]]; then
+    printf 'PASS_EXACT'
+  elif [[ -n "${exact}" && "${exact}" != "not-run" ]]; then
+    printf 'FAIL_%s' "${exact}"
+  else
+    printf 'FAIL_%s' "${status:-missing}"
+  fi
+}
+
 parse_decompile_failure_count() {
   local report="$1"
   if [[ ! -f "${report}" ]]; then
@@ -152,7 +164,10 @@ write_sample_row() {
   local raw_artifact_exact="${10}"
   local byte_exact_package_status="${11}"
   local byte_exact_package_exact="${12}"
-  local project_dir="${13}"
+  local package_record_restore_status="${13}"
+  local package_record_restore_exact="${14}"
+  local package_record_restore_gate="${15}"
+  local project_dir="${16}"
 
   {
     csv_field "${name}"; printf ','
@@ -168,12 +183,15 @@ write_sample_row() {
     csv_field "${raw_artifact_exact}"; printf ','
     csv_field "${byte_exact_package_status}"; printf ','
     csv_field "${byte_exact_package_exact}"; printf ','
+    csv_field "${package_record_restore_status}"; printf ','
+    csv_field "${package_record_restore_exact}"; printf ','
+    csv_field "${package_record_restore_gate}"; printf ','
     csv_field "${project_dir:-missing}"; printf ','
     csv_field "${sample_notes[${index}]}"; printf '\n'
   } >> "${REPORT_DIR}/adhoc-github-release-assets-summary.csv"
 
   cat >> "${REPORT_DIR}/adhoc-github-release-assets-summary.md" <<MD
-| ${name} | ${run_status} | ${sample_assets[${index}]} | ${sample_types[${index}]} | ${exit_code} | ${verification_summary} | ${verification_failure_type} | ${verification_error_count} | ${compile_fallback_classes} | ${decompile_failures} | ${raw_artifact_exact} | ${byte_exact_package_status} | ${byte_exact_package_exact} |
+| ${name} | ${run_status} | ${sample_assets[${index}]} | ${sample_types[${index}]} | ${exit_code} | ${verification_summary} | ${verification_failure_type} | ${verification_error_count} | ${compile_fallback_classes} | ${decompile_failures} | ${raw_artifact_exact} | ${byte_exact_package_status} | ${byte_exact_package_exact} | ${package_record_restore_status} | ${package_record_restore_exact} | ${package_record_restore_gate} |
 MD
 }
 
@@ -188,7 +206,8 @@ run_sample() {
   if [[ ! -s "${asset_path}" ]]; then
     log "Missing cached asset ${asset_path}"
     write_sample_row "${index}" "${name}" "MISSING_ASSET" "not-run" \
-      "not-run" "not-run" "not-run" "not-run" "not-run" "missing" "not-run" "missing" "missing"
+      "not-run" "not-run" "not-run" "not-run" "not-run" "missing" \
+      "not-run" "missing" "not-run" "missing" "not-run" "missing"
     return
   fi
 
@@ -223,6 +242,9 @@ run_sample() {
   local raw_artifact_exact="missing"
   local byte_exact_package_status="not-run"
   local byte_exact_package_exact="not-run"
+  local package_record_restore_status="not-run"
+  local package_record_restore_exact="not-run"
+  local package_record_restore_gate="not-run"
   local run_status="RESTORE_FAILED"
 
   if [[ -n "${project_dir}" ]]; then
@@ -256,6 +278,33 @@ run_sample() {
       byte_exact_package_exact="package-failed"
     fi
 
+    local package_record_output_base="${RESTORE_DIR}/${name}-package-records"
+    rm -rf "${package_record_output_base}"
+    mkdir -p "${package_record_output_base}"
+    set +e
+    java -jar "${JAR2MP_JAR}" \
+      --verbose \
+      --restore-package-records \
+      --verify-build \
+      -f \
+      -o "${package_record_output_base}" \
+      "${asset_path}" > "${REPORT_DIR}/${name}.package-records.cli.log" 2>&1
+    local package_record_exit_code=$?
+    set -e
+
+    local package_record_project_dir
+    package_record_project_dir="$(find "${package_record_output_base}" -mindepth 1 -maxdepth 1 -type d | sort | head -n 1 || true)"
+    if [[ "${package_record_exit_code}" -eq 0 && -n "${package_record_project_dir}" ]]; then
+      package_record_restore_status="PASS"
+      package_record_restore_exact="$(parse_artifact_summary_field \
+        "${package_record_project_dir}/target/package-record-restore-check/artifact-fidelity-summary.csv" 1 "missing")"
+    else
+      package_record_restore_status="FAIL"
+      package_record_restore_exact="restore-failed"
+    fi
+    package_record_restore_gate="$(classify_package_record_restore_gate \
+      "${package_record_restore_status}" "${package_record_restore_exact}")"
+
     run_status="VERIFY_FAILED"
     if [[ "${exit_code}" -eq 0 \
       && "${verification_summary}" == "BUILD SUCCESS" \
@@ -265,13 +314,18 @@ run_sample() {
       && "${byte_exact_package_status}" == "PASS" \
       && "${byte_exact_package_exact}" == "true" ]]; then
       run_status="PASS"
+      if [[ "${package_record_restore_gate}" == FAIL_* ]]; then
+        run_status="PASS_WITH_WARNINGS"
+      fi
     fi
   fi
 
   write_sample_row "${index}" "${name}" "${run_status}" "${exit_code}" \
     "${verification_summary}" "${verification_failure_type}" "${verification_error_count}" \
     "${compile_fallback_classes}" "${decompile_failures}" "${raw_artifact_exact}" \
-    "${byte_exact_package_status}" "${byte_exact_package_exact}" "${project_dir:-missing}"
+    "${byte_exact_package_status}" "${byte_exact_package_exact}" \
+    "${package_record_restore_status}" "${package_record_restore_exact}" \
+    "${package_record_restore_gate}" "${project_dir:-missing}"
 }
 
 main() {
@@ -294,14 +348,14 @@ main() {
   write_file "${REPORT_DIR}/adhoc-github-release-assets-summary.md" <<'MD'
 # jar2mp Cached Ad-hoc GitHub Release Asset Regression Summary
 
-This matrix replays the cached binary assets under `target/adhoc-github-release-assets/assets/`. It does not download artifacts. `PASS` requires jar2mp exit code `0`, Maven verification `BUILD SUCCESS`, `Failure type: NONE`, `Error count: 0`, raw artifact exact match `true`, and generated Maven `package` output exact match `true`.
+This matrix replays the cached binary assets under `target/adhoc-github-release-assets/assets/`. It does not download artifacts. `PASS` requires jar2mp exit code `0`, Maven verification `BUILD SUCCESS`, `Failure type: NONE`, `Error count: 0`, raw artifact exact match `true`, generated Maven `package` output exact match `true`, and guarded package-record restoration exact match `true`.
 
-| Sample | Status | Asset | Artifact type | Exit code | Verification summary | Failure type | Error count | Compile fallback classes | Decompile failures | Raw exact | Byte-exact package | Byte-exact package exact |
-| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- | --- | --- |
+| Sample | Status | Asset | Artifact type | Exit code | Verification summary | Failure type | Error count | Compile fallback classes | Decompile failures | Raw exact | Byte-exact package | Byte-exact package exact | Package-record restore | Package-record exact | Package-record gate |
+| --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- |
 MD
 
   write_file "${REPORT_DIR}/adhoc-github-release-assets-summary.csv" <<'CSV'
-sample,status,asset,artifact_type,exit_code,verification_summary,verification_failure_type,verification_error_count,compile_fallback_classes,decompile_failures,raw_artifact_exact,byte_exact_package_status,byte_exact_package_exact,project_dir,note
+sample,status,asset,artifact_type,exit_code,verification_summary,verification_failure_type,verification_error_count,compile_fallback_classes,decompile_failures,raw_artifact_exact,byte_exact_package_status,byte_exact_package_exact,package_record_restore_status,package_record_restore_exact,package_record_restore_gate,project_dir,note
 CSV
 
   local total="${#sample_names[@]}"
@@ -314,7 +368,7 @@ CSV
   log "CSV: ${REPORT_DIR}/adhoc-github-release-assets-summary.csv"
 
   local pass_count
-  pass_count="$(awk -F',' 'NR > 1 && $2 == "\"PASS\"" { count++ } END { print count + 0 }' "${REPORT_DIR}/adhoc-github-release-assets-summary.csv")"
+  pass_count="$(awk -F',' 'NR > 1 && ($2 == "\"PASS\"" || $2 == "\"PASS_WITH_WARNINGS\"") { count++ } END { print count + 0 }' "${REPORT_DIR}/adhoc-github-release-assets-summary.csv")"
   if [[ "${pass_count}" -eq 0 ]]; then
     log "No cached ad-hoc release asset samples passed."
     exit 1

@@ -70,7 +70,7 @@ The script writes:
 - downloaded release assets under `target/release-assets-samples/assets/`
 - restored jar2mp projects under `target/release-assets-samples/restored/`
 
-Each sample is marked `PASS` when the overall score meets the sample threshold, Maven package verification reports `BUILD SUCCESS` with `Failure type: NONE`, raw artifact preservation reports `exact_match=true`, byte-exact package comparison reports `byte_exact_package_exact=true`, and runtime evidence does not fail. A sample is marked `PASS_WITH_WARNINGS` when those gates pass but there are non-gating warnings such as raw-class fallback, decompile-failure records, runtime skip/warn status, or source/resource buckets below `100`.
+Each sample is marked `PASS` when the overall score meets the sample threshold, Maven package verification reports `BUILD SUCCESS` with `Failure type: NONE`, raw artifact preservation reports `exact_match=true`, byte-exact package comparison reports `byte_exact_package_exact=true`, guarded package-record restoration reports `package_record_restore_gate=PASS_EXACT`, and runtime evidence does not fail. A sample is marked `PASS_WITH_WARNINGS` when the required byte-exact gates pass but there are non-gating warnings such as raw-class fallback, decompile-failure records, runtime skip/warn status, source/resource buckets below `100`, or a guarded package-record restoration gap in exploratory matrices.
 
 `STRICT_RELEASE_ASSETS=1` turns any remaining `GAP`, `RESTORE_FAILED`, or `DOWNLOAD_FAILED` row into a non-zero script exit. The default mode is exploratory and only fails when no sample reaches `PASS` or `PASS_WITH_WARNINGS`.
 

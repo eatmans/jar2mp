@@ -367,6 +367,18 @@ classify_required_exact_gate() {
   fi
 }
 
+classify_package_record_restore_gate() {
+  local status="$1"
+  local exact="$2"
+  if [[ "${status}" == "PASS" && "${exact}" == "true" ]]; then
+    printf 'PASS_EXACT'
+  elif [[ -n "${exact}" && "${exact}" != "not-run" ]]; then
+    printf 'FAIL_%s' "${exact}"
+  else
+    printf 'FAIL_%s' "${status:-missing}"
+  fi
+}
+
 classify_source_artifact_gate() {
   local exact="$1"
   local content_entries_match="$2"
@@ -483,6 +495,9 @@ run_sample() {
   local byte_exact_package_status="not-run"
   local byte_exact_package_exact="not-run"
   local byte_exact_package_gate="not-run"
+  local package_record_restore_status="not-run"
+  local package_record_restore_exact="not-run"
+  local package_record_restore_gate="not-run"
   local runtime_gate="not-run"
   local raw_artifact_gate="not-run"
   local source_artifact_gate="not-run"
@@ -603,11 +618,34 @@ run_sample() {
       byte_exact_package_exact="restore-failed"
     fi
 
+    local package_record_output_base="${RESTORE_DIR}/${name}-package-records"
+    rm -rf "${package_record_output_base}"
+    mkdir -p "${package_record_output_base}"
+    local package_record_args=(--verbose --restore-package-records --verify-build -f -o "${package_record_output_base}" "${artifact}")
+    set +e
+    run_with_java_home "${java_home}" java -jar "${JAR2MP_JAR}" "${package_record_args[@]}" \
+      > "${REPORT_DIR}/${name}.package-records.cli.log" 2>&1
+    local package_record_exit_code=$?
+    set -e
+
+    local package_record_project_dir
+    package_record_project_dir="$(find "${package_record_output_base}" -mindepth 1 -maxdepth 1 -type d | sort | head -n 1 || true)"
+    if [[ "${package_record_exit_code}" -eq 0 && -n "${package_record_project_dir}" ]]; then
+      package_record_restore_status="PASS"
+      package_record_restore_exact="$(parse_artifact_summary_field \
+        "${package_record_project_dir}/target/package-record-restore-check/artifact-fidelity-summary.csv" 1 "missing")"
+    else
+      package_record_restore_status="FAIL"
+      package_record_restore_exact="restore-failed"
+    fi
+
     runtime_gate="$(classify_runtime_gate "${runtime_launch_support}" "${runtime_run_status}" "${runtime_events}")"
     raw_artifact_gate="$(classify_required_exact_gate "${raw_artifact_exact}")"
     source_artifact_gate="$(classify_source_artifact_gate "${artifact_exact}" \
       "${artifact_content_entries_match}" "${artifact_archive_bytes_same}")"
     byte_exact_package_gate="$(classify_required_exact_gate "${byte_exact_package_exact}")"
+    package_record_restore_gate="$(classify_package_record_restore_gate \
+      "${package_record_restore_status}" "${package_record_restore_exact}")"
 
     if [[ "${exit_code}" -eq 0 \
       && "${overall}" -ge "${threshold}" \
@@ -624,7 +662,9 @@ run_sample() {
       && "${byte_exact_package_gate}" == "PASS_EXACT" \
       && "${runtime_gate}" != FAIL_* ]]; then
       status="PASS"
-      if [[ "${runtime_gate}" == WARN_* || "${source_artifact_gate}" == WARN_* ]]; then
+      if [[ "${runtime_gate}" == WARN_* \
+        || "${source_artifact_gate}" == WARN_* \
+        || "${package_record_restore_gate}" == FAIL_* ]]; then
         status="PASS_WITH_WARNINGS"
       fi
     fi
@@ -677,13 +717,16 @@ run_sample() {
     csv_field "${byte_exact_package_status}"; printf ','
     csv_field "${byte_exact_package_exact}"; printf ','
     csv_field "${byte_exact_package_gate}"; printf ','
+    csv_field "${package_record_restore_status}"; printf ','
+    csv_field "${package_record_restore_exact}"; printf ','
+    csv_field "${package_record_restore_gate}"; printf ','
     csv_field "${threshold}"; printf ','
     csv_field "${java_home:-default}"; printf ','
     csv_field "${sample_notes[${index}]}"; printf '\n'
   } >> "${REPORT_DIR}/github-realworld-summary.csv"
 
   cat >> "${REPORT_DIR}/github-realworld-summary.md" <<MD
-| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${package_status} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${runtime_gate} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${artifact_content_entries_match} | ${artifact_archive_bytes_same} | ${artifact_archive_entry_order_same} | ${artifact_archive_metadata_diff_entries} | ${artifact_archive_timestamp_differences} | ${artifact_archive_compression_method_differences} | ${artifact_archive_compressed_size_differences} | ${artifact_archive_extra_field_differences} | ${artifact_archive_comment_differences} | ${artifact_archive_order_restored_exact} | ${source_artifact_gate} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${raw_artifact_gate} | ${byte_exact_verification_status} | ${byte_exact_verification_failure_type} | ${byte_exact_package_status} | ${byte_exact_package_exact} | ${byte_exact_package_gate} | ${threshold} |
+| ${name} | ${status} | ${sample_repos[${index}]} | ${sample_refs[${index}]} | ${sample_types[${index}]} | ${overall} | ${source_score} | ${resource_score} | ${runtime_score} | ${verification_score} | ${verification_status} | ${verification_failure_type} | ${decompile_failures} | ${package_status} | ${runtime_launch_type} | ${runtime_launch_support} | ${runtime_run_status} | ${runtime_events} | ${runtime_gate} | ${artifact_exact} | ${artifact_diff_sha} | ${artifact_missing} | ${artifact_extra} | ${artifact_diff_classes} | ${artifact_content_entries_match} | ${artifact_archive_bytes_same} | ${artifact_archive_entry_order_same} | ${artifact_archive_metadata_diff_entries} | ${artifact_archive_timestamp_differences} | ${artifact_archive_compression_method_differences} | ${artifact_archive_compressed_size_differences} | ${artifact_archive_extra_field_differences} | ${artifact_archive_comment_differences} | ${artifact_archive_order_restored_exact} | ${source_artifact_gate} | ${raw_artifact_exact} | ${raw_artifact_diff_sha} | ${raw_artifact_missing} | ${raw_artifact_extra} | ${raw_artifact_diff_classes} | ${raw_artifact_gate} | ${byte_exact_verification_status} | ${byte_exact_verification_failure_type} | ${byte_exact_package_status} | ${byte_exact_package_exact} | ${byte_exact_package_gate} | ${package_record_restore_status} | ${package_record_restore_exact} | ${package_record_restore_gate} | ${threshold} |
 MD
 }
 
@@ -697,15 +740,15 @@ main() {
   prepare_samples
 
   write_file "${REPORT_DIR}/github-realworld-summary.csv" <<'CSV'
-sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,package_status,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,runtime_gate,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,artifact_content_entries_match,artifact_archive_bytes_same,artifact_archive_entry_order_same,artifact_archive_metadata_diff_entries,artifact_archive_timestamp_differences,artifact_archive_compression_method_differences,artifact_archive_compressed_size_differences,artifact_archive_extra_field_differences,artifact_archive_comment_differences,artifact_archive_order_restored_exact,source_artifact_gate,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,raw_artifact_gate,byte_exact_verification_status,byte_exact_verification_failure_type,byte_exact_package_status,byte_exact_package_exact,byte_exact_package_gate,threshold,java_home,note
+sample,status,repo,ref,artifact_type,overall,source,resource,runtime,verification,verification_status,verification_failure_type,decompile_failures,package_status,runtime_launch_type,runtime_launch_support,runtime_run_status,runtime_events,runtime_gate,artifact_exact,artifact_diff_sha,artifact_missing,artifact_extra,artifact_diff_classes,artifact_content_entries_match,artifact_archive_bytes_same,artifact_archive_entry_order_same,artifact_archive_metadata_diff_entries,artifact_archive_timestamp_differences,artifact_archive_compression_method_differences,artifact_archive_compressed_size_differences,artifact_archive_extra_field_differences,artifact_archive_comment_differences,artifact_archive_order_restored_exact,source_artifact_gate,raw_artifact_exact,raw_artifact_diff_sha,raw_artifact_missing,raw_artifact_extra,raw_artifact_diff_classes,raw_artifact_gate,byte_exact_verification_status,byte_exact_verification_failure_type,byte_exact_package_status,byte_exact_package_exact,byte_exact_package_gate,package_record_restore_status,package_record_restore_exact,package_record_restore_gate,threshold,java_home,note
 CSV
   write_file "${REPORT_DIR}/github-realworld-summary.md" <<'MD'
 # jar2mp GitHub Real-World Regression Summary
 
 This is a compile/package-gate summary with runtime, source artifact, raw artifact, and byte-exact package evidence columns.
 
-| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Package | Runtime launch | Runtime support | Runtime status | Runtime events | Runtime gate | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Artifact content entries match | Artifact archive bytes same | Artifact archive order same | Artifact archive metadata diff entries | Artifact archive timestamp diffs | Artifact archive method diffs | Artifact archive compressed-size diffs | Artifact archive extra-field diffs | Artifact archive comment diffs | Artifact archive order-restored exact | Source artifact gate | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Raw gate | Byte-exact verification | Byte-exact failure type | Byte-exact package | Byte-exact package exact | Byte-exact package gate | Threshold |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | ---: |
+| Sample | Status | Repo | Ref | Artifact type | Overall | Source | Resource | Runtime | Verification | Verification status | Failure type | Decompile failures | Package | Runtime launch | Runtime support | Runtime status | Runtime events | Runtime gate | Artifact exact | Artifact diff SHA | Artifact missing | Artifact extra | Artifact diff classes | Artifact content entries match | Artifact archive bytes same | Artifact archive order same | Artifact archive metadata diff entries | Artifact archive timestamp diffs | Artifact archive method diffs | Artifact archive compressed-size diffs | Artifact archive extra-field diffs | Artifact archive comment diffs | Artifact archive order-restored exact | Source artifact gate | Raw exact | Raw diff SHA | Raw missing | Raw extra | Raw diff classes | Raw gate | Byte-exact verification | Byte-exact failure type | Byte-exact package | Byte-exact package exact | Byte-exact package gate | Package-record restore | Package-record exact | Package-record gate | Threshold |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: |
 MD
 
   local i

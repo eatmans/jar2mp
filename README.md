@@ -184,7 +184,7 @@ Options:
 ./scripts/regression/run-github-realworld-regression.sh
 ```
 
-汇总报告写入 `target/realworld-samples/report/github-realworld-summary.md` 和 `target/realworld-samples/report/github-realworld-summary.csv`。realworld 矩阵会分别记录 source rebuild artifact fidelity、raw artifact exact 和 byte-exact package 门禁；样本来源、固定 ref、阈值和已知非门禁候选见 `docs/github-realworld-regression.md`。
+汇总报告写入 `target/realworld-samples/report/github-realworld-summary.md` 和 `target/realworld-samples/report/github-realworld-summary.csv`。realworld 矩阵会分别记录 source rebuild artifact fidelity、raw artifact exact、byte-exact package 门禁和 package-record restore 证据；样本来源、固定 ref、阈值和已知非门禁候选见 `docs/github-realworld-regression.md`。
 
 也可以运行下载型 GitHub Release 二进制样本矩阵，脚本会下载固定 release asset 并验证还原项目的编译门禁与 raw artifact 保真：
 
@@ -192,7 +192,7 @@ Options:
 ./scripts/regression/run-github-release-assets-regression.sh
 ```
 
-汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven package 验证、raw artifact exact 与 byte-exact package 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警或源码分数未满分。
+汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven package 验证、raw artifact exact 与 byte-exact package 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警、源码分数未满分或 package-record restore 未精确通过。
 
 严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、写入常见测试/质量插件的 skip properties，并跳过原 POM 中会在 `package` 阶段重写主 artifact 的 shade/assembly/repackage 等插件。jar2mp 还会在生成项目的 `.jar2mp/byte-exact/` 写入 standalone ZIP record helper 和 `.jar2mp/byte-exact/raw-artifact/<original-name>` 参考原包；后续 `mvn package` 或 `mvn clean package` 会先生成正常 package 产物作为 Maven 项目可打包性的门禁，再由 helper 以原始归档作为最终 ZIP record 的规范字节来源，回放原始 entry 顺序、空目录 entry、manifest/module-info/resource/class 字节、entry 集合和 ZIP 元数据，最终写入 `target/byte-exact-package-restored/<original-name>`。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。若需要保留普通源码重构包语义、但在内容 entry 已一致时把最终 `mvn package` 产物提升到字节一致，可使用 `--restore-package-records`；该模式不会改 `finalName` 或跳过 package-transforming 插件，会在 `.jar2mp/package-records/` 写入受保护 helper 和参考原包，helper 先校验 Maven 产物的非目录 entry 集合与内容摘要一致，再回放原始 ZIP records，验证报告写入 `target/package-record-restore-check/`。普通 `--emit-raw-artifact` 只保留 `target/raw-artifact/` 原始副本和报告，不改变 `mvn package` 的源码重构产物；普通源码重构包会在 `process-classes` 阶段回填原始 class bytes，用于隔离剩余 ZIP 容器层差异。Spring Boot 可执行 JAR 的普通 package 还会在 repackage 后用 `src/main/original-libs/BOOT-INF/lib` 重建最终 `BOOT-INF/lib` 集合，用 `src/main/original-boot-loader` 回填原始 root Spring Boot loader classes，并把原始 `META-INF/MANIFEST.MF` 覆盖回最终包，避免 system-scope 依赖被 Spring Boot 插件改名、补入传递依赖，或由当前插件版本注入不同 loader/manifest 字节。
 
