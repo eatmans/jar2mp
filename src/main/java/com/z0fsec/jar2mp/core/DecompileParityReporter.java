@@ -52,6 +52,7 @@ public class DecompileParityReporter {
         }
 
         appendRiskSummary(report, riskSummary);
+        appendRiskMethodIndex(report, riskSummary);
         report.append(classDetails);
         IoUtils.writeStringToFile(new File(outputDir, "decompile-parity-report.md"), report.toString());
     }
@@ -84,7 +85,7 @@ public class DecompileParityReporter {
 
         for (BytecodeFingerprint.MethodFingerprint method : fingerprint.getMethodsByKey().values()) {
             String riskLevel = riskLevel(method, source);
-            riskSummary.record(method, source, riskLevel);
+            riskSummary.record(fingerprint.getClassName(), method, source, riskLevel);
             report.append("### ").append(method.getKey()).append("\n\n");
             report.append("- Risk level: ").append(riskLevel).append("\n");
             if (!method.hasCode()) {
@@ -144,6 +145,29 @@ public class DecompileParityReporter {
         report.append("| HIGH | ").append(summary.highMethods).append(" |\n");
         report.append("| MEDIUM | ").append(summary.mediumMethods).append(" |\n");
         report.append("| LOW | ").append(summary.lowMethods).append(" |\n\n");
+    }
+
+    private void appendRiskMethodIndex(StringBuilder report, RiskSummary summary) {
+        report.append("## Risk method index\n\n");
+        if (summary.riskMethods.isEmpty()) {
+            report.append("No HIGH or MEDIUM methods.\n\n");
+            return;
+        }
+
+        report.append("| Risk | Class | Method | Reason |\n");
+        report.append("| --- | --- | --- | --- |\n");
+        for (RiskMethod riskMethod : summary.riskMethods) {
+            report.append("| ")
+                    .append(markdownCell(riskMethod.risk))
+                    .append(" | `")
+                    .append(markdownCode(riskMethod.className))
+                    .append("` | `")
+                    .append(markdownCode(riskMethod.methodKey))
+                    .append("` | ")
+                    .append(markdownCell(riskMethod.reason))
+                    .append(" |\n");
+        }
+        report.append("\n");
     }
 
     private File resolveSourceFile(File outputDir, String classPath) {
@@ -248,6 +272,14 @@ public class DecompileParityReporter {
         return String.join(", ", values);
     }
 
+    private String markdownCell(String value) {
+        return value.replace("|", "\\|");
+    }
+
+    private String markdownCode(String value) {
+        return value.replace("`", "\\`");
+    }
+
     private String classNameFromPath(String classPath) {
         return classPath.replace(".class", "").replace('/', '.');
     }
@@ -291,13 +323,17 @@ public class DecompileParityReporter {
         private int reflectionMethods;
         private int invokedynamicMethods;
         private int missingDebugNameMethods;
+        private final List<RiskMethod> riskMethods = new ArrayList<>();
 
-        private void record(BytecodeFingerprint.MethodFingerprint method, String source, String riskLevel) {
+        private void record(String className, BytecodeFingerprint.MethodFingerprint method,
+                            String source, String riskLevel) {
             methodCount++;
             if (riskLevel.startsWith("HIGH")) {
                 highMethods++;
+                riskMethods.add(RiskMethod.from(className, method.getKey(), riskLevel));
             } else if (riskLevel.startsWith("MEDIUM")) {
                 mediumMethods++;
+                riskMethods.add(RiskMethod.from(className, method.getKey(), riskLevel));
             } else {
                 lowMethods++;
             }
@@ -324,6 +360,29 @@ public class DecompileParityReporter {
                     break;
                 }
             }
+        }
+    }
+
+    private static class RiskMethod {
+        private final String risk;
+        private final String className;
+        private final String methodKey;
+        private final String reason;
+
+        private RiskMethod(String risk, String className, String methodKey, String reason) {
+            this.risk = risk;
+            this.className = className;
+            this.methodKey = methodKey;
+            this.reason = reason;
+        }
+
+        private static RiskMethod from(String className, String methodKey, String riskLevel) {
+            int separator = riskLevel.indexOf(' ');
+            String risk = separator < 0 ? riskLevel : riskLevel.substring(0, separator);
+            int start = riskLevel.indexOf('(');
+            int end = riskLevel.lastIndexOf(')');
+            String reason = start >= 0 && end > start ? riskLevel.substring(start + 1, end) : riskLevel;
+            return new RiskMethod(risk, className, methodKey, reason);
         }
     }
 }

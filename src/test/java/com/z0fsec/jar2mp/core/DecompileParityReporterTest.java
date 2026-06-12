@@ -71,6 +71,9 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("## Risk summary"));
         assertTrue(report.contains("| Risk | Methods |"));
         assertTrue(report.contains("| HIGH |"));
+        assertTrue(report.contains("## Risk method index"));
+        assertTrue(report.contains("| Risk | Class | Method | Reason |"));
+        assertTrue(report.contains("| HIGH | `demo/ReflectiveFlow` | `run(Ljava/lang/String;)Ljava/lang/String;` | reflection call detected |"));
         assertTrue(report.contains("demo/ReflectiveFlow"));
         assertTrue(report.contains("run(Ljava/lang/String;)Ljava/lang/String;"));
         assertTrue(report.contains("Selected engine: fernflower"));
