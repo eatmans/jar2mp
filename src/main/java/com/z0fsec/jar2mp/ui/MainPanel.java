@@ -1,6 +1,7 @@
 package com.z0fsec.jar2mp.ui;
 
 import com.formdev.flatlaf.util.SystemFileChooser;
+import com.z0fsec.jar2mp.core.BuildPostProcessor;
 import com.z0fsec.jar2mp.core.JarAnalyzer;
 import com.z0fsec.jar2mp.core.PomGenerator;
 import com.z0fsec.jar2mp.core.ProjectBuilder;
@@ -8,6 +9,7 @@ import com.z0fsec.jar2mp.db.PackagePrefixDatabase;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ProjectConfig;
 import com.z0fsec.jar2mp.util.IoUtils;
+import com.z0fsec.jar2mp.util.TraceArgsParser;
 
 import javax.swing.*;
 import javax.swing.event.ListSelectionEvent;
@@ -22,6 +24,7 @@ import java.awt.dnd.DropTargetDropEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -34,6 +37,14 @@ public class MainPanel extends BasePanel {
     private DefaultListModel<File> fileListModel;
     private JList<File> fileJList;
     private JTextField outputDirField;
+    private JCheckBox byteExactPackageCheckBox;
+    private JCheckBox emitRawArtifactCheckBox;
+    private JCheckBox verifyBuildCheckBox;
+    private JTextField verifyGoalField;
+    private JCheckBox traceRuntimeCheckBox;
+    private JTextField traceArgsField;
+    private JSpinner traceTimeoutSpinner;
+    private JCheckBox smokeOnlyCheckBox;
     private JTabbedPane tabbedPane;
 
     private AnalysisPanel analysisPanel;
@@ -207,8 +218,89 @@ public class MainPanel extends BasePanel {
         buildBtn.addActionListener(e -> doBuildAll());
         panel.add(buildBtn, c);
 
+        // Row 5: advanced build options
+        c.gridx = 0;
+        c.gridy = 5;
+        c.gridwidth = 3;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        panel.add(createAdvancedOptionsPanel(), c);
+
+        c.gridwidth = 1;
         c.gridheight = 1;
 
+        return panel;
+    }
+
+    private JPanel createAdvancedOptionsPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(BorderFactory.createTitledBorder("高级构建选项"));
+
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(3, 4, 3, 4);
+        c.anchor = GridBagConstraints.WEST;
+        c.fill = GridBagConstraints.HORIZONTAL;
+
+        byteExactPackageCheckBox = new JCheckBox("字节级打包");
+        emitRawArtifactCheckBox = new JCheckBox("输出原始构件");
+        verifyBuildCheckBox = new JCheckBox("构建验证");
+        traceRuntimeCheckBox = new JCheckBox("运行 Trace");
+        smokeOnlyCheckBox = new JCheckBox("仅 Smoke");
+        byteExactPackageCheckBox.addActionListener(e -> applyByteExactPackageDefaults());
+        smokeOnlyCheckBox.addActionListener(e -> {
+            if (smokeOnlyCheckBox.isSelected()) {
+                traceRuntimeCheckBox.setSelected(true);
+            }
+        });
+
+        c.gridx = 0;
+        c.gridy = 0;
+        c.weightx = 0;
+        panel.add(byteExactPackageCheckBox, c);
+
+        c.gridx = 1;
+        panel.add(emitRawArtifactCheckBox, c);
+
+        c.gridx = 2;
+        panel.add(verifyBuildCheckBox, c);
+
+        c.gridx = 3;
+        panel.add(traceRuntimeCheckBox, c);
+
+        c.gridx = 4;
+        panel.add(smokeOnlyCheckBox, c);
+
+        c.gridx = 0;
+        c.gridy = 1;
+        c.weightx = 0;
+        panel.add(new JLabel("验证目标:"), c);
+
+        c.gridx = 1;
+        c.weightx = 0.15;
+        verifyGoalField = new JTextField("compile", 10);
+        panel.add(verifyGoalField, c);
+
+        c.gridx = 2;
+        c.weightx = 0;
+        panel.add(new JLabel("Trace 超时(秒):"), c);
+
+        c.gridx = 3;
+        c.weightx = 0.1;
+        traceTimeoutSpinner = new JSpinner(new SpinnerNumberModel(120L, 1L, 3600L, 1L));
+        panel.add(traceTimeoutSpinner, c);
+
+        c.gridx = 0;
+        c.gridy = 2;
+        c.weightx = 0;
+        panel.add(new JLabel("Trace 参数:"), c);
+
+        c.gridx = 1;
+        c.gridwidth = 4;
+        c.weightx = 1;
+        traceArgsField = new JTextField();
+        panel.add(traceArgsField, c);
+
+        c.gridwidth = 1;
         return panel;
     }
 
@@ -294,6 +386,55 @@ public class MainPanel extends BasePanel {
         if (chooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
             outputDirField.setText(chooser.getSelectedFile().getAbsolutePath());
         }
+    }
+
+    ProjectConfig createBuildConfig(String outputDir) {
+        ProjectConfig config = new ProjectConfig();
+        boolean byteExactPackage = byteExactPackageCheckBox.isSelected();
+        boolean smokeOnly = smokeOnlyCheckBox.isSelected();
+        String verifyGoal = normalizeVerifyGoal(verifyGoalField.getText());
+        if (byteExactPackage && "compile".equals(verifyGoal)) {
+            verifyGoal = "package";
+        }
+
+        config.setOutputDir(outputDir);
+        config.setByteExactPackage(byteExactPackage);
+        config.setEmitRawArtifact(emitRawArtifactCheckBox.isSelected() || byteExactPackage);
+        config.setVerifyBuild(verifyBuildCheckBox.isSelected());
+        config.setVerifyGoal(verifyGoal);
+        config.setTraceRuntime(traceRuntimeCheckBox.isSelected() || smokeOnly);
+        config.setTraceArgs(parseTraceArgs(traceArgsField.getText()));
+        config.setTraceTimeoutSeconds(traceTimeoutSeconds());
+        config.setSmokeOnly(smokeOnly);
+        return config;
+    }
+
+    private void applyByteExactPackageDefaults() {
+        if (!byteExactPackageCheckBox.isSelected()) {
+            return;
+        }
+        emitRawArtifactCheckBox.setSelected(true);
+        String verifyGoal = normalizeVerifyGoal(verifyGoalField.getText());
+        if ("compile".equals(verifyGoal)) {
+            verifyGoalField.setText("package");
+        }
+    }
+
+    private String normalizeVerifyGoal(String verifyGoal) {
+        String trimmed = verifyGoal == null ? "" : verifyGoal.trim();
+        return trimmed.isEmpty() ? "compile" : trimmed;
+    }
+
+    private List<String> parseTraceArgs(String rawArgs) {
+        return TraceArgsParser.parse(rawArgs);
+    }
+
+    private long traceTimeoutSeconds() {
+        Object value = traceTimeoutSpinner.getValue();
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        return 120L;
     }
 
     // ========== 拖拽支持 ==========
@@ -523,8 +664,8 @@ public class MainPanel extends BasePanel {
 
         dependencyPanel.syncToResult();
 
-        currentConfig = new ProjectConfig();
-        currentConfig.setOutputDir(outputDirField.getText().trim());
+        String outputDirRaw = outputDirField.getText().trim();
+        currentConfig = createBuildConfig(outputDirRaw.isEmpty() ? "." : outputDirRaw);
 
         PomGenerator gen = new PomGenerator();
         String pomXml = gen.generate(currentResult, currentConfig);
@@ -549,8 +690,7 @@ public class MainPanel extends BasePanel {
         String outputDirRaw = outputDirField.getText().trim();
         final String outputDir = outputDirRaw.isEmpty() ? "." : outputDirRaw;
 
-        currentConfig = new ProjectConfig();
-        currentConfig.setOutputDir(outputDir);
+        currentConfig = createBuildConfig(outputDir);
         final ProjectConfig config = currentConfig;
 
         final List<Map.Entry<File, JarAnalysisResult>> entries = new ArrayList<>(resultMap.entrySet());
@@ -560,6 +700,7 @@ public class MainPanel extends BasePanel {
         new Thread(() -> {
             PomGenerator gen = new PomGenerator();
             ProjectBuilder builder = new ProjectBuilder(config);
+            BuildPostProcessor postProcessor = new BuildPostProcessor();
             int total = entries.size();
             int done = 0;
 
@@ -580,6 +721,15 @@ public class MainPanel extends BasePanel {
                     builder.build(jarFile, result, pomXml, outDir, (message, percent) -> {
                         SwingUtilities.invokeLater(() -> appendDebug(message));
                     });
+                    BuildPostProcessor.PostBuildResult postBuildResult = postProcessor.postProcess(
+                            jarFile,
+                            result,
+                            outDir,
+                            config,
+                            message -> SwingUtilities.invokeLater(() -> appendDebug(message)));
+                    if (postBuildResult.hasBlockingFailure()) {
+                        throw new IOException(postBuildResult.getBlockingFailure());
+                    }
 
                     SwingUtilities.invokeLater(() -> {
                         appendSuccess("[" + d + "/" + total + "] 已生成: " + outDir.getAbsolutePath());

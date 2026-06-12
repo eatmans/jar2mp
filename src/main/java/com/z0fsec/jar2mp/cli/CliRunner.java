@@ -4,13 +4,11 @@ import com.z0fsec.jar2mp.core.*;
 import com.z0fsec.jar2mp.db.PackagePrefixDatabase;
 import com.z0fsec.jar2mp.model.*;
 import com.z0fsec.jar2mp.util.Jar2MpConstants;
+import com.z0fsec.jar2mp.util.TraceArgsParser;
 
 import java.io.*;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.*;
 
 public class CliRunner {
@@ -63,15 +61,7 @@ public class CliRunner {
             JarAnalyzer analyzer = new JarAnalyzer(packageDb, config);
             PomGenerator pomGen = new PomGenerator();
             ProjectBuilder builder = new ProjectBuilder(config);
-            ProjectVerifier verifier = new ProjectVerifier();
-            RuntimeSmokeRunner smokeRunner = new RuntimeSmokeRunner();
-            RuntimeTraceReportWriter traceReportWriter = new RuntimeTraceReportWriter();
-            RawArtifactPackager rawArtifactPackager = new RawArtifactPackager();
-            ArtifactFidelityComparator artifactFidelityComparator = new ArtifactFidelityComparator();
-            ArtifactFidelityReportWriter artifactFidelityReportWriter = new ArtifactFidelityReportWriter();
-            RestorationScorer restorationScorer = new RestorationScorer();
-            RestorationScoreWriter restorationScoreWriter = new RestorationScoreWriter();
-            GapSummaryWriter gapSummaryWriter = new GapSummaryWriter();
+            BuildPostProcessor postProcessor = new BuildPostProcessor();
 
             int totalFiles = files.size();
             int successCount = 0;
@@ -127,74 +117,24 @@ public class CliRunner {
                         }
                     });
 
-                    if (config.isEmitRawArtifact()) {
-                        File preservedArtifact = rawArtifactPackager.preserve(jarFile, outputDir);
-                        if (config.isByteExactPackage()) {
-                            rawArtifactPackager.preserveByteExactReference(jarFile, outputDir);
-                        }
-                        File rawArtifactDir = preservedArtifact.getParentFile();
-                        ArtifactFidelityResult rawFidelity = artifactFidelityComparator.compare(jarFile, preservedArtifact);
-                        artifactFidelityReportWriter.write(rawArtifactDir, rawFidelity);
-                        if (!options.isQuiet()) {
-                            System.out.println("  原始归档保真副本: " + preservedArtifact.getAbsolutePath()
-                                    + " (exact=" + rawFidelity.isExactMatch() + ")");
-                        }
-                    }
-
-                    if (config.isTraceRuntime() || config.isSmokeOnly()) {
-                        RuntimeSmokeRunner.SmokeRunResult smokeResult = smokeRunner.runSmoke(
-                                jarFile,
-                                result,
-                                resolveTraceAgentJar(),
-                                resolveTraceFile(config, outputDir),
-                                config.getTraceArgs(),
-                                config.getTraceTimeoutSeconds());
-                        traceReportWriter.write(outputDir, smokeResult);
-                        result.setRuntimeSmokeResult(smokeResult);
-                        result.setRuntimeTraceResult(smokeResult.getTraceResult());
-                        refreshRestorationScore(outputDir, result, restorationScorer, restorationScoreWriter,
-                                gapSummaryWriter);
-                        if (!options.isQuiet()) {
-                            printSmokeSummary(smokeResult);
-                        }
-                    }
+                    BuildPostProcessor.PostBuildResult postBuildResult = postProcessor.postProcess(
+                            jarFile,
+                            result,
+                            outputDir,
+                            config,
+                            message -> {
+                                if (!options.isQuiet()) {
+                                    System.out.println("  " + message);
+                                }
+                            });
 
                     if (!options.isQuiet()) {
                         System.out.println("  Maven 项目已生成: " + outputDir.getAbsolutePath());
                     }
 
-                    if (config.isVerifyBuild() && !config.isSmokeOnly()) {
-                        VerificationResult verification = verifier.verify(outputDir, config.getVerifyGoal());
-                        result.setVerificationResult(verification);
-                        verifier.writeReport(outputDir, verification);
-                        refreshRestorationScore(outputDir, result, restorationScorer, restorationScoreWriter,
-                                gapSummaryWriter);
-                        if (!options.isQuiet()) {
-                            printVerificationReportPath(outputDir);
-                        }
-                        if (!options.isQuiet()) {
-                            System.out.println("  构建验证: " + verification.getFailureType()
-                                    + " (exit " + verification.getExitCode() + ")");
-                        }
-                        if (isVerificationFailure(verification)) {
-                            failedCount++;
-                            continue;
-                        }
-                        if (config.isByteExactPackage() && runsPackagePhase(config.getVerifyGoal())) {
-                            ArtifactFidelityResult packageFidelity = verifyByteExactPackage(
-                                    jarFile,
-                                    outputDir,
-                                    artifactFidelityComparator,
-                                    artifactFidelityReportWriter);
-                            if (!options.isQuiet()) {
-                                System.out.println("  字节级 package 保真: exact="
-                                        + packageFidelity.isExactMatch());
-                            }
-                            if (!packageFidelity.isExactMatch()) {
-                                failedCount++;
-                                continue;
-                            }
-                        }
+                    if (postBuildResult.hasBlockingFailure()) {
+                        failedCount++;
+                        continue;
                     }
 
                     if (!options.isQuiet()) {
@@ -506,55 +446,7 @@ public class CliRunner {
     }
 
     private List<String> parseTraceArgs(String value) {
-        List<String> parsed = new ArrayList<>();
-        if (value == null || value.trim().isEmpty()) {
-            return parsed;
-        }
-
-        StringBuilder current = new StringBuilder();
-        boolean inSingleQuote = false;
-        boolean inDoubleQuote = false;
-        boolean escaping = false;
-
-        for (int i = 0; i < value.length(); i++) {
-            char ch = value.charAt(i);
-            if (escaping) {
-                current.append(ch);
-                escaping = false;
-                continue;
-            }
-            if (ch == '\\') {
-                escaping = true;
-                continue;
-            }
-            if (ch == '\'' && !inDoubleQuote) {
-                inSingleQuote = !inSingleQuote;
-                continue;
-            }
-            if (ch == '"' && !inSingleQuote) {
-                inDoubleQuote = !inDoubleQuote;
-                continue;
-            }
-            if (Character.isWhitespace(ch) && !inSingleQuote && !inDoubleQuote) {
-                addTraceArg(parsed, current);
-                continue;
-            }
-            current.append(ch);
-        }
-
-        if (escaping) {
-            current.append('\\');
-        }
-        addTraceArg(parsed, current);
-        return parsed;
-    }
-
-    private void addTraceArg(List<String> parsed, StringBuilder current) {
-        if (current.length() == 0) {
-            return;
-        }
-        parsed.add(current.toString());
-        current.setLength(0);
+        return TraceArgsParser.parse(value);
     }
 
     private Long parsePositiveLong(String value, String optionName) {
@@ -582,163 +474,6 @@ public class CliRunner {
         } catch (NumberFormatException e) {
             System.err.println("Invalid value for " + optionName + ": " + value);
             return null;
-        }
-    }
-
-    private boolean isVerificationFailure(VerificationResult verification) {
-        if (verification == null) {
-            return true;
-        }
-        return verification.getExitCode() != 0 || !"NONE".equals(verification.getFailureType());
-    }
-
-    private boolean runsPackagePhase(String goal) {
-        String effectiveGoal = goal == null || goal.trim().isEmpty() ? "compile" : goal.trim();
-        for (String part : effectiveGoal.split("\\s+")) {
-            if ("package".equals(part)
-                    || "verify".equals(part)
-                    || "install".equals(part)
-                    || "deploy".equals(part)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private ArtifactFidelityResult verifyByteExactPackage(File originalArtifact,
-                                                          File outputDir,
-                                                          ArtifactFidelityComparator comparator,
-                                                          ArtifactFidelityReportWriter reportWriter) throws IOException {
-        File packagedArtifact = findPackagedArtifact(outputDir, originalArtifact);
-        if (packagedArtifact == null) {
-            throw new IOException("byte-exact package artifact not found under "
-                    + new File(outputDir, "target").getAbsolutePath());
-        }
-        ArtifactFidelityResult fidelity = comparator.compare(originalArtifact, packagedArtifact);
-        if (!fidelity.isExactMatch()
-                && !fidelity.isArchiveBytesSame()
-                && canAttemptRecordLevelRestoration(fidelity)) {
-            File restoredDir = new File(new File(outputDir, "target"), "byte-exact-package-restored");
-            try {
-                File restoredArtifact = new ZipRecordOrderRestorer().restore(originalArtifact, packagedArtifact,
-                        restoredDir);
-                Files.copy(restoredArtifact.toPath(), packagedArtifact.toPath(),
-                        StandardCopyOption.REPLACE_EXISTING);
-                fidelity = comparator.compare(originalArtifact, packagedArtifact);
-            } catch (IOException ignored) {
-                // Keep the original comparison report when record-level restoration is not applicable.
-            }
-        }
-        File reportDir = new File(new File(outputDir, "target"), "byte-exact-package-check");
-        reportWriter.write(reportDir, fidelity);
-        return fidelity;
-    }
-
-    private boolean canAttemptRecordLevelRestoration(ArtifactFidelityResult fidelity) {
-        if (fidelity.isContentEntriesMatch()) {
-            return true;
-        }
-        return fidelity.getMissingEntries() == 0
-                && fidelity.getExtraEntries() == 0
-                && fidelity.getDifferentSha256() == 1
-                && fidelity.isManifestOriginalPresent()
-                && fidelity.isManifestRebuiltPresent()
-                && !fidelity.isManifestSame();
-    }
-
-    private File findPackagedArtifact(File outputDir, File originalArtifact) {
-        File targetDir = new File(outputDir, "target");
-        if (!targetDir.isDirectory()) {
-            return null;
-        }
-        String extension = artifactExtension(originalArtifact);
-        File[] candidates = targetDir.listFiles(file -> file.isFile()
-                && file.getName().toLowerCase(Locale.ROOT).endsWith("." + extension)
-                && !isNonPrimaryArtifact(file.getName()));
-        if (candidates == null || candidates.length == 0) {
-            return null;
-        }
-        Arrays.sort(candidates, Comparator.comparing(File::getName));
-        return candidates[0];
-    }
-
-    private String artifactExtension(File artifact) {
-        String name = artifact == null ? "" : artifact.getName();
-        int index = name.lastIndexOf('.');
-        if (index < 0 || index == name.length() - 1) {
-            return "jar";
-        }
-        return name.substring(index + 1).toLowerCase(Locale.ROOT);
-    }
-
-    private boolean isNonPrimaryArtifact(String name) {
-        String lower = name.toLowerCase(Locale.ROOT);
-        return lower.endsWith("-sources.jar")
-                || lower.endsWith("-javadoc.jar")
-                || lower.equals("compiler-fallback-classes.jar")
-                || lower.startsWith("original-");
-    }
-
-    private Path resolveTraceFile(ProjectConfig config, File outputDir) {
-        String configured = config.getTraceFile();
-        if (configured != null && !configured.trim().isEmpty()) {
-            Path path = Paths.get(configured.trim());
-            return path.isAbsolute() ? path : outputDir.toPath().resolve(path);
-        }
-        return outputDir.toPath().resolve("runtime-trace.jsonl");
-    }
-
-    private File resolveTraceAgentJar() {
-        String override = System.getProperty("jar2mp.traceAgentJar");
-        if (override != null && !override.trim().isEmpty()) {
-            return new File(override.trim());
-        }
-
-        String agentName = "jar2mp-" + Jar2MpConstants.VERSION + "-trace-agent.jar";
-        File targetAgent = new File("target", agentName);
-        if (targetAgent.isFile()) {
-            return targetAgent;
-        }
-
-        File codeLocation = resolveCodeLocation();
-        if (codeLocation != null) {
-            File baseDir = codeLocation.isFile() ? codeLocation.getParentFile() : codeLocation;
-            File sibling = new File(baseDir, agentName);
-            if (sibling.isFile()) {
-                return sibling;
-            }
-        }
-
-        File targetDir = new File("target");
-        File[] candidates = targetDir.listFiles((dir, name) -> name.endsWith(".jar") && name.contains("trace-agent"));
-        if (candidates != null && candidates.length > 0) {
-            Arrays.sort(candidates, Comparator.comparing(File::getName));
-            return candidates[0];
-        }
-        return targetAgent;
-    }
-
-    private File resolveCodeLocation() {
-        try {
-            if (getClass().getProtectionDomain() == null
-                    || getClass().getProtectionDomain().getCodeSource() == null
-                    || getClass().getProtectionDomain().getCodeSource().getLocation() == null) {
-                return null;
-            }
-            URI uri = getClass().getProtectionDomain().getCodeSource().getLocation().toURI();
-            return new File(uri);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private void printSmokeSummary(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
-        RuntimeTraceResult traceResult = smokeResult.getTraceResult();
-        int eventCount = traceResult == null ? 0 : traceResult.getEvents().size();
-        String status = smokeResult.isSuccessful() ? "OK" : "FAILED";
-        System.out.println("  运行时追踪: " + status + " (" + eventCount + " events)");
-        if (smokeResult.getFailureMessage() != null && !smokeResult.getFailureMessage().trim().isEmpty()) {
-            System.out.println("    " + smokeResult.getFailureMessage());
         }
     }
 
@@ -788,21 +523,6 @@ public class CliRunner {
             System.out.println("    " + new File(outputDir,
                     "target/byte-exact-package-check/artifact-fidelity-summary.csv").getAbsolutePath());
         }
-    }
-
-    private void printVerificationReportPath(File outputDir) {
-        System.out.println("  " + new File(outputDir, "verification-report.md").getAbsolutePath());
-        System.out.println("  " + new File(outputDir, "verification-errors.md").getAbsolutePath());
-    }
-
-    private void refreshRestorationScore(File outputDir, JarAnalysisResult result,
-                                         RestorationScorer scorer,
-                                         RestorationScoreWriter scoreWriter,
-                                         GapSummaryWriter gapSummaryWriter) throws IOException {
-        RestorationScore score = scorer.score(result, result.getRuntimeTraceResult(), result.getVerificationResult());
-        result.setRestorationScore(score);
-        scoreWriter.write(outputDir, score);
-        gapSummaryWriter.write(outputDir, score);
     }
 
     private List<MavenDependency> importDependencies(String filePath) throws IOException {
