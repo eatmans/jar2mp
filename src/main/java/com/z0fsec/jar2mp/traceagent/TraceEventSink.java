@@ -7,7 +7,10 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TraceEventSink implements AutoCloseable {
@@ -22,6 +25,7 @@ public class TraceEventSink implements AutoCloseable {
     private final Path traceFile;
     private final RuntimeTraceWriter writer;
     private final Object lock = new Object();
+    private final Set<String> seenEvents = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private volatile boolean closed;
 
     private TraceEventSink(Path traceFile) {
@@ -61,6 +65,9 @@ public class TraceEventSink implements AutoCloseable {
 
     public void write(String kind, String owner, String target, String value) {
         if (closed || traceFile == null) {
+            return;
+        }
+        if (!seenEvents.add(eventKey(kind, owner, target, value))) {
             return;
         }
         RuntimeTraceEvent event = new RuntimeTraceEvent(
@@ -103,6 +110,14 @@ public class TraceEventSink implements AutoCloseable {
             }
         }
         return frames;
+    }
+
+    private String eventKey(String kind, String owner, String target, String value) {
+        return safe(kind) + '\u0000' + safe(owner) + '\u0000' + safe(target) + '\u0000' + safe(value);
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private static boolean isSuppressed() {

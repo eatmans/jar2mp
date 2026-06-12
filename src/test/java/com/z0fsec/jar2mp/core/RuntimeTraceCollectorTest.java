@@ -77,4 +77,19 @@ class RuntimeTraceCollectorTest {
         assertEquals("reflection", parsed.getEvents().get(0).getKind());
         assertEquals("resource", parsed.getEvents().get(1).getKind());
     }
+
+    @Test
+    void traceEventSinkDeduplicatesIdenticalEventsBeforeWriting() throws Exception {
+        Path trace = tempDir.resolve("trace.jsonl");
+        TraceEventSink sink = TraceEventSink.open(trace.toString());
+
+        sink.write("resource", "demo.App", "getResourceAsStream", "application.yml");
+        sink.write("resource", "demo.App", "getResourceAsStream", "application.yml");
+        sink.write("resource", "demo.App", "getResourceAsStream", "bootstrap.yml");
+
+        RuntimeTraceResult parsed = new RuntimeTraceCollector().read(trace);
+        assertEquals(2, parsed.getEvents().size());
+        assertEquals("application.yml", parsed.getEvents().get(0).getValue());
+        assertEquals("bootstrap.yml", parsed.getEvents().get(1).getValue());
+    }
 }

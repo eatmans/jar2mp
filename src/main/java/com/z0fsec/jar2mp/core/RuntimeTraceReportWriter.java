@@ -36,6 +36,7 @@ public class RuntimeTraceReportWriter {
                 .append(result == null ? -1 : result.getStartupProbeStatusCode()).append("\n");
         report.append("- Trace file: ").append(formatInline(result == null ? null : pathValue(result.getTraceFile()))).append("\n");
         report.append("- Total events: ").append(events.size()).append("\n");
+        report.append("- Event de-duplication: `kind/owner/target/value`\n");
         report.append("- Reflection events: ").append(count(events, "reflection")).append("\n");
         report.append("- Resource events: ").append(count(events, "resource")).append("\n");
         report.append("- File events: ").append(count(events, "file")).append("\n");

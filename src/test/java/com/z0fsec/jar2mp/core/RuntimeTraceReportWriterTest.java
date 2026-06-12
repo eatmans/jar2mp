@@ -53,6 +53,7 @@ class RuntimeTraceReportWriterTest {
         assertTrue(report.contains("Socket"));
         assertTrue(report.contains("Class.forName"));
         assertTrue(report.contains("META-INF/services/demo.Service"));
+        assertTrue(report.contains("Event de-duplication: `kind/owner/target/value`"));
         assertTrue(report.contains("java -jar demo.jar"));
         assertTrue(report.contains("demo.App"));
         assertTrue(report.contains("Launch type: `EXECUTABLE_JAR`"));
