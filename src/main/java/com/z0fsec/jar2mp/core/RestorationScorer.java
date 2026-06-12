@@ -197,9 +197,9 @@ public class RestorationScorer {
         if ("TRACE_COLLECTED_HEALTHY_TIMEOUT".equals(status)) {
             return evidenceScore;
         }
-        if ("STARTUP_FAILED_TIMEOUT".equals(status)) {
+        if ("STARTUP_FAILED_TIMEOUT".equals(status) || "STARTUP_FAILED_EXIT".equals(status)) {
             score.addGap("runtime_status",
-                    "Runtime startup failure was detected before timeout: "
+                    "Runtime startup failure was detected: "
                             + safeValue(smokeResult.getFailureMessage()) + ".",
                     RUNTIME_WEIGHT);
             return 0;

@@ -363,6 +363,10 @@ classify_runtime_gate() {
     printf 'FAIL_STARTUP_FAILED_TIMEOUT'
     return
   fi
+  if [[ "${run_status}" == "STARTUP_FAILED_EXIT" ]]; then
+    printf 'FAIL_STARTUP_FAILED_EXIT'
+    return
+  fi
   printf 'FAIL_%s' "${run_status:-missing}"
 }
 

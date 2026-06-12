@@ -27,8 +27,10 @@ public class RuntimeSmokeRunner {
     private static final long STARTUP_PROBE_POLL_MILLIS = 200L;
     private static final int STARTUP_PROBE_CONNECT_TIMEOUT_MILLIS = 500;
     private static final int STARTUP_PROBE_READ_TIMEOUT_MILLIS = 500;
+    private static final String SPRING_BOOT_LOADER_TRACE_INCLUDE = "org.springframework.boot.loader.";
     private static final String TRACE_COLLECTED_HEALTHY_TIMEOUT = "TRACE_COLLECTED_HEALTHY_TIMEOUT";
     private static final String TRACE_COLLECTED_TIMEOUT = "TRACE_COLLECTED_TIMEOUT";
+    private static final String STARTUP_FAILED_EXIT = "STARTUP_FAILED_EXIT";
     private static final String STARTUP_FAILED_TIMEOUT = "STARTUP_FAILED_TIMEOUT";
     private static final String HTTP_RESPONDED = "HTTP_RESPONDED";
     private static final Pattern[] LOCAL_HTTP_PORT_PATTERNS = new Pattern[] {
@@ -42,7 +44,9 @@ public class RuntimeSmokeRunner {
             Pattern.compile("Application run failed", Pattern.CASE_INSENSITIVE),
             Pattern.compile("ApplicationContextException", Pattern.CASE_INSENSITIVE),
             Pattern.compile("BeanCreationException", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("UnsatisfiedDependencyException", Pattern.CASE_INSENSITIVE)
+            Pattern.compile("UnsatisfiedDependencyException", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("RedisConnectionException", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("Unable to connect to Redis server", Pattern.CASE_INSENSITIVE)
     };
     private final RuntimeTraceCollector collector;
 
@@ -61,6 +65,10 @@ public class RuntimeSmokeRunner {
         List<String> command = new ArrayList<>();
         command.add(resolveJavaExecutable());
         command.add("-Djar2mp.traceFile=" + absolute(traceFile));
+        String traceIncludes = traceIncludesFor(entryPoint.getMainClass());
+        if (traceIncludes != null) {
+            command.add("-Djar2mp.traceIncludes=" + traceIncludes);
+        }
         command.add("-javaagent:" + absolute(agentJar) + "=traceFile=" + absolute(traceFile));
 
         if (entryPoint.isJarLaunch()) {
@@ -78,6 +86,26 @@ public class RuntimeSmokeRunner {
 
         return new SmokeCommand(command, entryPoint.getMainClass(), entryPoint.getLaunchSource(),
                 entryPoint.getNotes());
+    }
+
+    private String traceIncludesFor(String mainClass) {
+        String packagePrefix = packagePrefix(mainClass);
+        if (packagePrefix == null) {
+            return null;
+        }
+        return packagePrefix + "," + SPRING_BOOT_LOADER_TRACE_INCLUDE;
+    }
+
+    private String packagePrefix(String className) {
+        String value = trimToNull(className);
+        if (value == null) {
+            return null;
+        }
+        int separator = value.lastIndexOf('.');
+        if (separator <= 0) {
+            return null;
+        }
+        return value.substring(0, separator + 1);
     }
 
     public SmokeRunResult runSmoke(File originalJar, JarAnalysisResult analysis, File agentJar,
@@ -174,6 +202,10 @@ public class RuntimeSmokeRunner {
                 }
                 result.setStdout(stdout == null ? "" : stdout.getContent());
                 result.setStderr(stderr == null ? "" : stderr.getContent());
+                if (!timedOut && result.getExitCode() != 0 && hasStartupFailureOutput(result)) {
+                    result.setRunStatus(STARTUP_FAILED_EXIT);
+                    result.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+                }
             } finally {
                 if (process != null) {
                     process.destroy();

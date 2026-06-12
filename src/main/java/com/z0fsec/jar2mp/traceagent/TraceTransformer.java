@@ -19,6 +19,9 @@ import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.security.ProtectionDomain;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static net.bytebuddy.matcher.ElementMatchers.any;
@@ -70,9 +73,15 @@ public class TraceTransformer {
     private static final AtomicReference<Method> FOR_NAME = new AtomicReference<Method>();
 
     private final TraceEventSink sink;
+    private final List<String> includePrefixes;
 
     public TraceTransformer(TraceEventSink sink) {
+        this(sink, Collections.<String>emptyList());
+    }
+
+    public TraceTransformer(TraceEventSink sink, List<String> includePrefixes) {
         this.sink = sink;
+        this.includePrefixes = normalizeIncludes(includePrefixes);
     }
 
     public void install(Instrumentation instrumentation) {
@@ -83,7 +92,7 @@ public class TraceTransformer {
         new AgentBuilder.Default()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                 .disableClassFormatChanges()
-                .type(APPLICATION_TYPES)
+                .type(traceableTypes())
                 .transform(new AgentBuilder.Transformer() {
                     @Override
                     public DynamicType.Builder<?> transform(DynamicType.Builder<?> builder,
@@ -99,6 +108,58 @@ public class TraceTransformer {
                     }
                 })
                 .installOn(instrumentation);
+    }
+
+    private ElementMatcher<TypeDescription> traceableTypes() {
+        return new ElementMatcher<TypeDescription>() {
+            @Override
+            public boolean matches(TypeDescription target) {
+                return target != null && shouldTraceType(target.getName(), includePrefixes);
+            }
+        };
+    }
+
+    static boolean shouldTraceType(String className, List<String> includePrefixes) {
+        if (isExcludedType(className)) {
+            return false;
+        }
+        List<String> normalizedIncludes = normalizeIncludes(includePrefixes);
+        if (normalizedIncludes.isEmpty()) {
+            return true;
+        }
+        for (String includePrefix : normalizedIncludes) {
+            if (className.startsWith(includePrefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isExcludedType(String className) {
+        return className == null
+                || className.startsWith("java.")
+                || className.startsWith("javax.")
+                || className.startsWith("sun.")
+                || className.startsWith("jdk.")
+                || className.startsWith("com.sun.")
+                || className.startsWith("net.bytebuddy.")
+                || className.startsWith("com.z0fsec.jar2mp.traceagent.");
+    }
+
+    private static List<String> normalizeIncludes(List<String> includePrefixes) {
+        if (includePrefixes == null || includePrefixes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> normalized = new ArrayList<>();
+        for (String includePrefix : includePrefixes) {
+            if (includePrefix != null) {
+                String trimmed = includePrefix.trim();
+                if (!trimmed.isEmpty()) {
+                    normalized.add(trimmed);
+                }
+            }
+        }
+        return normalized.isEmpty() ? Collections.<String>emptyList() : Collections.unmodifiableList(normalized);
     }
 
     private AsmVisitorWrapper reflectionSubstitution() {

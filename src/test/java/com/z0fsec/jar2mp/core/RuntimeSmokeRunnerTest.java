@@ -68,13 +68,33 @@ class RuntimeSmokeRunnerTest {
         List<String> command = smokeCommand.getCommand();
         assertTrue(command.get(0).endsWith("java"));
         assertEquals("-Djar2mp.traceFile=" + traceFile.toAbsolutePath(), command.get(1));
-        assertEquals("-javaagent:" + agentJar.getAbsolutePath() + "=traceFile=" + traceFile.toAbsolutePath(), command.get(2));
-        assertEquals("-jar", command.get(3));
-        assertEquals(originalJar.getAbsolutePath(), command.get(4));
-        assertEquals("--profile=test", command.get(5));
+        assertEquals("-Djar2mp.traceIncludes=com.example.,org.springframework.boot.loader.", command.get(2));
+        assertEquals("-javaagent:" + agentJar.getAbsolutePath() + "=traceFile=" + traceFile.toAbsolutePath(), command.get(3));
+        assertEquals("-jar", command.get(4));
+        assertEquals(originalJar.getAbsolutePath(), command.get(5));
+        assertEquals("--profile=test", command.get(6));
         assertFalse(command.contains("com.example.Main"));
         assertEquals("com.example.Main", smokeCommand.getMainClass());
         assertEquals("manifest Main-Class", smokeCommand.getLaunchSource());
+    }
+
+    @Test
+    void buildsTraceIncludeScopeFromEntrypointPackage() {
+        RuntimeSmokeRunner runner = new RuntimeSmokeRunner();
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("com.example.Main");
+        analysis.setManifestInfo(manifestInfo);
+
+        RuntimeSmokeRunner.SmokeCommand smokeCommand = runner.buildCommand(
+                tempDir.resolve("sample.jar").toFile(),
+                analysis,
+                new File("target/jar2mp-1.0-trace-agent.jar"),
+                tempDir.resolve("trace.jsonl"),
+                Arrays.asList("--profile=test"));
+
+        assertTrue(smokeCommand.getCommand().contains(
+                "-Djar2mp.traceIncludes=com.example.,org.springframework.boot.loader."));
     }
 
     @Test
@@ -138,7 +158,7 @@ class RuntimeSmokeRunnerTest {
                 Arrays.asList("--profile=test"),
                 1L);
 
-        assertEquals("TRACE_COLLECTED_TIMEOUT", result.getRunStatus());
+        assertEquals("TRACE_COLLECTED_TIMEOUT", result.getRunStatus(), result.getStderr());
         assertEquals(-1, result.getExitCode());
         assertFalse(result.getTraceResult().getEvents().isEmpty());
     }
@@ -159,7 +179,7 @@ class RuntimeSmokeRunnerTest {
                 Arrays.asList("--profile=test"),
                 2L);
 
-        assertEquals("TRACE_COLLECTED_HEALTHY_TIMEOUT", result.getRunStatus());
+        assertEquals("TRACE_COLLECTED_HEALTHY_TIMEOUT", result.getRunStatus(), result.getStderr());
         assertEquals("HTTP_RESPONDED", result.getStartupProbeStatus());
         assertEquals(200, result.getStartupProbeStatusCode());
         assertTrue(result.getStartupProbeUrl().startsWith("http://127.0.0.1:"));
@@ -182,9 +202,53 @@ class RuntimeSmokeRunnerTest {
                 Arrays.asList("--profile=test"),
                 1L);
 
-        assertEquals("STARTUP_FAILED_TIMEOUT", result.getRunStatus());
+        assertEquals("STARTUP_FAILED_TIMEOUT", result.getRunStatus(), result.getStderr());
         assertTrue(result.getFailureMessage().contains("startup failure"));
         assertTrue(result.getStderr().contains("APPLICATION FAILED TO START"));
+        assertFalse(result.getTraceResult().getEvents().isEmpty());
+    }
+
+    @Test
+    void runSmokeClassifiesStartupFailureNonZeroExit() throws Exception {
+        RuntimeSmokeRunner runner = new RuntimeSmokeRunner();
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("demo.ImmediateFailedStartupMain");
+        analysis.setManifestInfo(manifestInfo);
+
+        RuntimeSmokeRunner.SmokeRunResult result = runner.runSmoke(
+                createImmediateFailedStartupTraceJar().toFile(),
+                analysis,
+                traceAgentJar(),
+                tempDir.resolve("immediate-failed-startup-trace.jsonl"),
+                Arrays.asList("--profile=test"),
+                5L);
+
+        assertEquals("STARTUP_FAILED_EXIT", result.getRunStatus(), result.getStderr());
+        assertTrue(result.getFailureMessage().contains("startup failure"));
+        assertTrue(result.getStderr().contains("Application run failed"));
+        assertFalse(result.getTraceResult().getEvents().isEmpty());
+    }
+
+    @Test
+    void runSmokeClassifiesRedisConnectionFailureTailAsStartupFailureExit() throws Exception {
+        RuntimeSmokeRunner runner = new RuntimeSmokeRunner();
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("demo.RedisFailedStartupMain");
+        analysis.setManifestInfo(manifestInfo);
+
+        RuntimeSmokeRunner.SmokeRunResult result = runner.runSmoke(
+                createRedisFailedStartupTraceJar().toFile(),
+                analysis,
+                traceAgentJar(),
+                tempDir.resolve("redis-failed-startup-trace.jsonl"),
+                Arrays.asList("--profile=test"),
+                5L);
+
+        assertEquals("STARTUP_FAILED_EXIT", result.getRunStatus(), result.getStderr());
+        assertTrue(result.getFailureMessage().contains("startup failure"));
+        assertTrue(result.getStderr().contains("RedisConnectionException"));
         assertFalse(result.getTraceResult().getEvents().isEmpty());
     }
 
@@ -350,6 +414,94 @@ class RuntimeSmokeRunnerTest {
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
             out.putNextEntry(new JarEntry("demo/FailedStartupMain.class"));
             out.write(Files.readAllBytes(classesDir.resolve("demo/FailedStartupMain.class")));
+            out.closeEntry();
+        }
+        return jar;
+    }
+
+    private Path createImmediateFailedStartupTraceJar() throws Exception {
+        Path sourceDir = tempDir.resolve("immediate-failed-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("ImmediateFailedStartupMain.java");
+        Files.write(sourceFile, ("package demo;\n"
+                + "import java.nio.charset.StandardCharsets;\n"
+                + "import java.nio.file.Files;\n"
+                + "import java.nio.file.Paths;\n"
+                + "public class ImmediateFailedStartupMain {\n"
+                + "  public static void main(String[] args) throws Exception {\n"
+                + "    String traceFile = System.getProperty(\"jar2mp.traceFile\");\n"
+                + "    String event = \"{\\\"kind\\\":\\\"reflection\\\",\\\"owner\\\":\\\"demo.ImmediateFailedStartupMain\\\",\\\"target\\\":\\\"main\\\",\\\"value\\\":\\\"startup\\\",\\\"thread\\\":\\\"main\\\",\\\"stack\\\":[\\\"demo.ImmediateFailedStartupMain.main\\\"]}\\n\";\n"
+                + "    Files.write(Paths.get(traceFile), event.getBytes(StandardCharsets.UTF_8));\n"
+                + "    System.err.println(\"org.springframework.boot.SpringApplication: Application run failed\");\n"
+                + "    System.err.flush();\n"
+                + "    System.exit(1);\n"
+                + "  }\n"
+                + "}\n").getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("immediate-failed-classes");
+        Files.createDirectories(classesDir);
+        int compileResult = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, compileResult);
+
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "demo.ImmediateFailedStartupMain");
+
+        Path jar = tempDir.resolve("immediate-failed-startup-trace.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("demo/ImmediateFailedStartupMain.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/ImmediateFailedStartupMain.class")));
+            out.closeEntry();
+        }
+        return jar;
+    }
+
+    private Path createRedisFailedStartupTraceJar() throws Exception {
+        Path sourceDir = tempDir.resolve("redis-failed-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("RedisFailedStartupMain.java");
+        Files.write(sourceFile, ("package demo;\n"
+                + "import java.nio.charset.StandardCharsets;\n"
+                + "import java.nio.file.Files;\n"
+                + "import java.nio.file.Paths;\n"
+                + "public class RedisFailedStartupMain {\n"
+                + "  public static void main(String[] args) throws Exception {\n"
+                + "    String traceFile = System.getProperty(\"jar2mp.traceFile\");\n"
+                + "    String event = \"{\\\"kind\\\":\\\"reflection\\\",\\\"owner\\\":\\\"demo.RedisFailedStartupMain\\\",\\\"target\\\":\\\"main\\\",\\\"value\\\":\\\"startup\\\",\\\"thread\\\":\\\"main\\\",\\\"stack\\\":[\\\"demo.RedisFailedStartupMain.main\\\"]}\\n\";\n"
+                + "    Files.write(Paths.get(traceFile), event.getBytes(StandardCharsets.UTF_8));\n"
+                + "    System.err.println(\"Caused by: org.redisson.client.RedisConnectionException: Unable to connect to Redis server: localhost/127.0.0.1:6379\");\n"
+                + "    System.err.flush();\n"
+                + "    System.exit(1);\n"
+                + "  }\n"
+                + "}\n").getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("redis-failed-classes");
+        Files.createDirectories(classesDir);
+        int compileResult = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, compileResult);
+
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "demo.RedisFailedStartupMain");
+
+        Path jar = tempDir.resolve("redis-failed-startup-trace.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("demo/RedisFailedStartupMain.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/RedisFailedStartupMain.class")));
             out.closeEntry();
         }
         return jar;

@@ -5,6 +5,9 @@ import java.io.IOException;
 import java.lang.instrument.Instrumentation;
 import java.net.URISyntaxException;
 import java.security.CodeSource;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.jar.JarFile;
 
 public class TraceAgent {
@@ -22,7 +25,7 @@ public class TraceAgent {
         TraceEventSink.install(sink);
         Runtime.getRuntime().addShutdownHook(new Thread(new ShutdownHook(sink), "jar2mp-trace-shutdown"));
 
-        new TraceTransformer(sink).install(instrumentation);
+        new TraceTransformer(sink, resolveTraceIncludes()).install(instrumentation);
     }
 
     public static final class ShutdownHook implements Runnable {
@@ -49,6 +52,24 @@ public class TraceAgent {
             return agentArgs.substring("traceFile=".length()).trim();
         }
         return "jar2mp-trace.jsonl";
+    }
+
+    static List<String> resolveTraceIncludes() {
+        String includes = System.getProperty("jar2mp.traceIncludes");
+        if (includes == null || includes.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> result = new ArrayList<>();
+        String[] parts = includes.split(",");
+        for (String part : parts) {
+            if (part != null) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    result.add(trimmed);
+                }
+            }
+        }
+        return result;
     }
 
     private static File resolveAgentJar() throws URISyntaxException, IOException {
