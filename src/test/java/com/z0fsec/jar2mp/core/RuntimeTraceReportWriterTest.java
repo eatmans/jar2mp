@@ -25,6 +25,11 @@ class RuntimeTraceReportWriterTest {
         result.setLaunchSupport("SUPPORTED");
         result.setLaunchReason("Manifest Main-Class can be launched with java -jar.");
         result.setRunStatus("TRACE_COLLECTED_TIMEOUT");
+        result.setStartupProbeStatus("HTTP_RESPONDED");
+        result.setStartupProbeUrl("http://127.0.0.1:12345/");
+        result.setStartupProbeStatusCode(200);
+        result.setStdout("Tomcat started on port(s): 12345 (http)\n");
+        result.setStderr("APPLICATION FAILED TO START\nRedis connection refused\n");
         result.setTraceResult(new RuntimeTraceResult(Arrays.asList(
                 new RuntimeTraceEvent("reflection", "demo.App", "Class.forName", "java.lang.String", "main",
                         Arrays.asList("demo.App.main")),
@@ -53,6 +58,13 @@ class RuntimeTraceReportWriterTest {
         assertTrue(report.contains("Launch type: `EXECUTABLE_JAR`"));
         assertTrue(report.contains("Launch support: `SUPPORTED`"));
         assertTrue(report.contains("Run status: `TRACE_COLLECTED_TIMEOUT`"));
+        assertTrue(report.contains("Startup probe status: `HTTP_RESPONDED`"));
+        assertTrue(report.contains("Startup probe URL: `http://127.0.0.1:12345/`"));
+        assertTrue(report.contains("Startup probe status code: 200"));
+        assertTrue(report.contains("## Process stdout tail"));
+        assertTrue(report.contains("Tomcat started on port(s): 12345"));
+        assertTrue(report.contains("## Process stderr tail"));
+        assertTrue(report.contains("APPLICATION FAILED TO START"));
         assertTrue(report.contains("Manifest Main-Class can be launched with java -jar."));
     }
 }

@@ -18,6 +18,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RestorationScorerTest {
@@ -245,6 +246,36 @@ class RestorationScorerTest {
     }
 
     @Test
+    void runtimeScoreAcceptsHealthyTimeoutWithEvents() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("TRACE_COLLECTED_HEALTHY_TIMEOUT");
+        smokeResult.setStartupProbeStatus("HTTP_RESPONDED");
+        smokeResult.setStartupProbeStatusCode(200);
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(100, score.getBreakdown().get("runtime").intValue());
+        assertFalse(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
+    }
+
+    @Test
     void runtimeScoreFailsNonZeroSmokeRunEvenWhenTraceEventsExist() throws Exception {
         Path jar = compileJar("demo.TraceExpectations",
                 "package demo;\n" +
@@ -271,6 +302,36 @@ class RestorationScorerTest {
 
         assertEquals(0, score.getBreakdown().get("runtime").intValue());
         assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreFailsStartupFailureTimeoutEvenWhenTraceEventsExist() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_TIMEOUT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before timeout.");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(0, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())
+                && g.getDetail().contains("startup failure")));
     }
 
     @Test

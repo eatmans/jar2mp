@@ -9,6 +9,8 @@ import java.util.List;
 
 public class RuntimeTraceReportWriter {
 
+    private static final int PROCESS_OUTPUT_SNIPPET_LIMIT = 8000;
+
     public void write(File outputDir, RuntimeSmokeRunner.SmokeRunResult result) throws IOException {
         StringBuilder report = new StringBuilder();
         RuntimeTraceResult traceResult = result == null || result.getTraceResult() == null
@@ -26,6 +28,12 @@ public class RuntimeTraceReportWriter {
         report.append("- Launch type: ").append(formatInline(result == null ? null : result.getLaunchType())).append("\n");
         report.append("- Launch support: ").append(formatInline(result == null ? null : result.getLaunchSupport())).append("\n");
         report.append("- Launch reason: ").append(formatInline(result == null ? null : result.getLaunchReason())).append("\n");
+        report.append("- Startup probe status: ")
+                .append(formatInline(result == null ? null : result.getStartupProbeStatus())).append("\n");
+        report.append("- Startup probe URL: ")
+                .append(formatInline(result == null ? null : result.getStartupProbeUrl())).append("\n");
+        report.append("- Startup probe status code: ")
+                .append(result == null ? -1 : result.getStartupProbeStatusCode()).append("\n");
         report.append("- Trace file: ").append(formatInline(result == null ? null : pathValue(result.getTraceFile()))).append("\n");
         report.append("- Total events: ").append(events.size()).append("\n");
         report.append("- Reflection events: ").append(count(events, "reflection")).append("\n");
@@ -33,6 +41,7 @@ public class RuntimeTraceReportWriter {
         report.append("- File events: ").append(count(events, "file")).append("\n");
         report.append("- Socket events: ").append(count(events, "socket")).append("\n");
 
+        appendProcessOutput(report, result);
         appendNotes(report, result == null ? null : result.getNotes());
         appendKindSection(report, "Reflection", "reflection", events);
         appendKindSection(report, "Resource", "resource", events);
@@ -40,6 +49,30 @@ public class RuntimeTraceReportWriter {
         appendKindSection(report, "Socket", "socket", events);
 
         IoUtils.writeStringToFile(new File(outputDir, "runtime-trace-report.md"), report.toString());
+    }
+
+    private void appendProcessOutput(StringBuilder report, RuntimeSmokeRunner.SmokeRunResult result) {
+        appendOutputTail(report, "stdout", result == null ? null : result.getStdout());
+        appendOutputTail(report, "stderr", result == null ? null : result.getStderr());
+    }
+
+    private void appendOutputTail(StringBuilder report, String streamName, String content) {
+        report.append("\n## Process ").append(streamName).append(" tail\n\n");
+        if (content == null || content.trim().isEmpty()) {
+            report.append("- None captured.\n");
+            return;
+        }
+        report.append("```text\n")
+                .append(sanitizeBlock(tail(content)))
+                .append("\n```\n");
+    }
+
+    private String tail(String value) {
+        if (value == null || value.length() <= PROCESS_OUTPUT_SNIPPET_LIMIT) {
+            return value;
+        }
+        return "[truncated to last " + PROCESS_OUTPUT_SNIPPET_LIMIT + " chars]\n"
+                + value.substring(value.length() - PROCESS_OUTPUT_SNIPPET_LIMIT);
     }
 
     private void appendNotes(StringBuilder report, List<String> notes) {
@@ -123,6 +156,13 @@ public class RuntimeTraceReportWriter {
             return "";
         }
         return value.replace("\r", " ").replace("\n", " ").replace("|", "\\|");
+    }
+
+    private String sanitizeBlock(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\r", "").replace("```", "` ` `");
     }
 
     private String pathValue(java.nio.file.Path path) {

@@ -194,6 +194,16 @@ public class RestorationScorer {
         if (status.isEmpty() || "EXIT_ZERO".equals(status)) {
             return evidenceScore;
         }
+        if ("TRACE_COLLECTED_HEALTHY_TIMEOUT".equals(status)) {
+            return evidenceScore;
+        }
+        if ("STARTUP_FAILED_TIMEOUT".equals(status)) {
+            score.addGap("runtime_status",
+                    "Runtime startup failure was detected before timeout: "
+                            + safeValue(smokeResult.getFailureMessage()) + ".",
+                    RUNTIME_WEIGHT);
+            return 0;
+        }
         if ("TRACE_COLLECTED_TIMEOUT".equals(status)) {
             score.addGap("runtime_status",
                     "Runtime trace timed out after collecting events; clean exit and health are not verified.",

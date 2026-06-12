@@ -143,6 +143,51 @@ class RuntimeSmokeRunnerTest {
         assertFalse(result.getTraceResult().getEvents().isEmpty());
     }
 
+    @Test
+    void runSmokeClassifiesHttpResponsiveTimeoutAsHealthyTimeout() throws Exception {
+        RuntimeSmokeRunner runner = new RuntimeSmokeRunner();
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("demo.HttpTraceMain");
+        analysis.setManifestInfo(manifestInfo);
+
+        RuntimeSmokeRunner.SmokeRunResult result = runner.runSmoke(
+                createHttpTraceJar().toFile(),
+                analysis,
+                traceAgentJar(),
+                tempDir.resolve("http-trace.jsonl"),
+                Arrays.asList("--profile=test"),
+                2L);
+
+        assertEquals("TRACE_COLLECTED_HEALTHY_TIMEOUT", result.getRunStatus());
+        assertEquals("HTTP_RESPONDED", result.getStartupProbeStatus());
+        assertEquals(200, result.getStartupProbeStatusCode());
+        assertTrue(result.getStartupProbeUrl().startsWith("http://127.0.0.1:"));
+        assertFalse(result.getTraceResult().getEvents().isEmpty());
+    }
+
+    @Test
+    void runSmokeClassifiesStartupFailureBeforeTimeout() throws Exception {
+        RuntimeSmokeRunner runner = new RuntimeSmokeRunner();
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("demo.FailedStartupMain");
+        analysis.setManifestInfo(manifestInfo);
+
+        RuntimeSmokeRunner.SmokeRunResult result = runner.runSmoke(
+                createFailedStartupTraceJar().toFile(),
+                analysis,
+                traceAgentJar(),
+                tempDir.resolve("failed-startup-trace.jsonl"),
+                Arrays.asList("--profile=test"),
+                1L);
+
+        assertEquals("STARTUP_FAILED_TIMEOUT", result.getRunStatus());
+        assertTrue(result.getFailureMessage().contains("startup failure"));
+        assertTrue(result.getStderr().contains("APPLICATION FAILED TO START"));
+        assertFalse(result.getTraceResult().getEvents().isEmpty());
+    }
+
     private File traceAgentJar() {
         File agentJar = new File("target/jar2mp-1.0-trace-agent.jar");
         assertTrue(agentJar.isFile(), "Expected trace agent jar at " + agentJar.getAbsolutePath());
@@ -186,6 +231,125 @@ class RuntimeSmokeRunnerTest {
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
             out.putNextEntry(new JarEntry("demo/SlowTraceMain.class"));
             out.write(Files.readAllBytes(classesDir.resolve("demo/SlowTraceMain.class")));
+            out.closeEntry();
+        }
+        return jar;
+    }
+
+    private Path createHttpTraceJar() throws Exception {
+        Path sourceDir = tempDir.resolve("http-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("HttpTraceMain.java");
+        Files.write(sourceFile, ("package demo;\n"
+                + "import java.io.OutputStream;\n"
+                + "import java.net.InetAddress;\n"
+                + "import java.net.ServerSocket;\n"
+                + "import java.net.Socket;\n"
+                + "import java.nio.charset.StandardCharsets;\n"
+                + "import java.nio.file.Files;\n"
+                + "import java.nio.file.Paths;\n"
+                + "public class HttpTraceMain {\n"
+                + "  public static void main(String[] args) throws Exception {\n"
+                + "    final ServerSocket server = new ServerSocket(0, 50, InetAddress.getByName(\"127.0.0.1\"));\n"
+                + "    Thread worker = new Thread(new Runnable() {\n"
+                + "      public void run() {\n"
+                + "        while (true) {\n"
+                + "          try {\n"
+                + "            Socket socket = server.accept();\n"
+                + "            try {\n"
+                + "              byte[] buffer = new byte[256];\n"
+                + "              socket.getInputStream().read(buffer);\n"
+                + "              OutputStream out = socket.getOutputStream();\n"
+                + "              out.write(\"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nOK\".getBytes(StandardCharsets.UTF_8));\n"
+                + "              out.flush();\n"
+                + "            } finally {\n"
+                + "              socket.close();\n"
+                + "            }\n"
+                + "          } catch (Exception ignored) {\n"
+                + "            return;\n"
+                + "          }\n"
+                + "        }\n"
+                + "      }\n"
+                + "    });\n"
+                + "    worker.setDaemon(true);\n"
+                + "    worker.start();\n"
+                + "    System.out.println(\"Tomcat started on port(s): \" + server.getLocalPort() + \" (http)\");\n"
+                + "    System.out.flush();\n"
+                + "    String traceFile = System.getProperty(\"jar2mp.traceFile\");\n"
+                + "    String event = \"{\\\"kind\\\":\\\"socket\\\",\\\"owner\\\":\\\"demo.HttpTraceMain\\\",\\\"target\\\":\\\"accept\\\",\\\"value\\\":\\\"startup\\\",\\\"thread\\\":\\\"main\\\",\\\"stack\\\":[\\\"demo.HttpTraceMain.main\\\"]}\\n\";\n"
+                + "    Files.write(Paths.get(traceFile), event.getBytes(StandardCharsets.UTF_8));\n"
+                + "    Thread.sleep(30000L);\n"
+                + "  }\n"
+                + "}\n").getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("http-classes");
+        Files.createDirectories(classesDir);
+        int compileResult = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, compileResult);
+
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "demo.HttpTraceMain");
+
+        Path jar = tempDir.resolve("http-trace.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("demo/HttpTraceMain.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/HttpTraceMain.class")));
+            out.closeEntry();
+            out.putNextEntry(new JarEntry("demo/HttpTraceMain$1.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/HttpTraceMain$1.class")));
+            out.closeEntry();
+        }
+        return jar;
+    }
+
+    private Path createFailedStartupTraceJar() throws Exception {
+        Path sourceDir = tempDir.resolve("failed-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("FailedStartupMain.java");
+        Files.write(sourceFile, ("package demo;\n"
+                + "import java.nio.charset.StandardCharsets;\n"
+                + "import java.nio.file.Files;\n"
+                + "import java.nio.file.Paths;\n"
+                + "public class FailedStartupMain {\n"
+                + "  public static void main(String[] args) throws Exception {\n"
+                + "    String traceFile = System.getProperty(\"jar2mp.traceFile\");\n"
+                + "    String event = \"{\\\"kind\\\":\\\"reflection\\\",\\\"owner\\\":\\\"demo.FailedStartupMain\\\",\\\"target\\\":\\\"main\\\",\\\"value\\\":\\\"startup\\\",\\\"thread\\\":\\\"main\\\",\\\"stack\\\":[\\\"demo.FailedStartupMain.main\\\"]}\\n\";\n"
+                + "    Files.write(Paths.get(traceFile), event.getBytes(StandardCharsets.UTF_8));\n"
+                + "    System.err.println(\"APPLICATION FAILED TO START\");\n"
+                + "    System.err.println(\"org.springframework.boot.SpringApplication: Application run failed\");\n"
+                + "    System.err.flush();\n"
+                + "    Thread.sleep(30000L);\n"
+                + "  }\n"
+                + "}\n").getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("failed-classes");
+        Files.createDirectories(classesDir);
+        int compileResult = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, compileResult);
+
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "demo.FailedStartupMain");
+
+        Path jar = tempDir.resolve("failed-startup-trace.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("demo/FailedStartupMain.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/FailedStartupMain.class")));
             out.closeEntry();
         }
         return jar;

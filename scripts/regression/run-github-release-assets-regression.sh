@@ -377,8 +377,16 @@ classify_runtime_gate() {
     printf 'PASS_EXIT_ZERO'
     return
   fi
+  if [[ "${run_status}" == "TRACE_COLLECTED_HEALTHY_TIMEOUT" ]] && is_positive_integer "${runtime_events}"; then
+    printf 'PASS_HEALTHY_TIMEOUT'
+    return
+  fi
   if [[ "${run_status}" == "TRACE_COLLECTED_TIMEOUT" ]] && is_positive_integer "${runtime_events}"; then
     printf 'WARN_STARTED_TIMEOUT'
+    return
+  fi
+  if [[ "${run_status}" == "STARTUP_FAILED_TIMEOUT" ]]; then
+    printf 'FAIL_STARTUP_FAILED_TIMEOUT'
     return
   fi
   printf 'WARN_%s' "${run_status:-missing}"

@@ -141,6 +141,9 @@ public class BuildPostProcessor {
             return "OK";
         }
         String runStatus = smokeResult.getRunStatus() == null ? "" : smokeResult.getRunStatus().toUpperCase(Locale.ROOT);
+        if ("TRACE_COLLECTED_HEALTHY_TIMEOUT".equals(runStatus)) {
+            return "OK";
+        }
         if ("TRACE_COLLECTED_TIMEOUT".equals(runStatus)) {
             return "WARN";
         }

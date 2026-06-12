@@ -9,6 +9,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,10 +18,32 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class RuntimeSmokeRunner {
 
     private static final long DEFAULT_TIMEOUT_SECONDS = 120L;
+    private static final long STARTUP_PROBE_POLL_MILLIS = 200L;
+    private static final int STARTUP_PROBE_CONNECT_TIMEOUT_MILLIS = 500;
+    private static final int STARTUP_PROBE_READ_TIMEOUT_MILLIS = 500;
+    private static final String TRACE_COLLECTED_HEALTHY_TIMEOUT = "TRACE_COLLECTED_HEALTHY_TIMEOUT";
+    private static final String TRACE_COLLECTED_TIMEOUT = "TRACE_COLLECTED_TIMEOUT";
+    private static final String STARTUP_FAILED_TIMEOUT = "STARTUP_FAILED_TIMEOUT";
+    private static final String HTTP_RESPONDED = "HTTP_RESPONDED";
+    private static final Pattern[] LOCAL_HTTP_PORT_PATTERNS = new Pattern[] {
+            Pattern.compile("Tomcat started on port\\(s\\):\\s*(\\d+)"),
+            Pattern.compile("Tomcat started on port\\s+(\\d+)"),
+            Pattern.compile("Netty started on port\\s+(\\d+)"),
+            Pattern.compile("Undertow started on port\\s+(\\d+)")
+    };
+    private static final Pattern[] STARTUP_FAILURE_PATTERNS = new Pattern[] {
+            Pattern.compile("APPLICATION FAILED TO START", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("Application run failed", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("ApplicationContextException", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("BeanCreationException", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("UnsatisfiedDependencyException", Pattern.CASE_INSENSITIVE)
+    };
     private final RuntimeTraceCollector collector;
 
     public RuntimeSmokeRunner() {
@@ -127,7 +151,7 @@ public class RuntimeSmokeRunner {
                 stdout.start();
                 stderr.start();
 
-                boolean finished = process.waitFor(effectiveTimeout, TimeUnit.SECONDS);
+                boolean finished = waitForProcessOrTimeout(process, stdout, stderr, result, effectiveTimeout);
                 if (!finished) {
                     timedOut = true;
                     process.destroyForcibly();
@@ -159,7 +183,16 @@ public class RuntimeSmokeRunner {
             result.setTraceResult(collector.read(traceFile));
             if (timedOut) {
                 int eventCount = result.getTraceResult().getEvents().size();
-                result.setRunStatus(eventCount > 0 ? "TRACE_COLLECTED_TIMEOUT" : "TIMEOUT_NO_EVENTS");
+                if (eventCount > 0 && hasStartupFailureOutput(result)) {
+                    result.setRunStatus(STARTUP_FAILED_TIMEOUT);
+                    result.setFailureMessage("Runtime startup failure was detected before timeout.");
+                } else if (eventCount > 0 && result.hasSuccessfulStartupProbe()) {
+                    result.setRunStatus(TRACE_COLLECTED_HEALTHY_TIMEOUT);
+                    result.setFailureMessage(null);
+                    result.getNotes().add("Runtime process exceeded trace timeout after local HTTP startup was verified.");
+                } else {
+                    result.setRunStatus(eventCount > 0 ? TRACE_COLLECTED_TIMEOUT : "TIMEOUT_NO_EVENTS");
+                }
             }
         } catch (RuntimeException e) {
             result.setRunStatus("ERROR");
@@ -177,6 +210,81 @@ public class RuntimeSmokeRunner {
         }
 
         return result;
+    }
+
+    private boolean hasStartupFailureOutput(SmokeRunResult result) {
+        String output = safeValue(result == null ? null : result.getStdout()) + "\n"
+                + safeValue(result == null ? null : result.getStderr());
+        for (Pattern pattern : STARTUP_FAILURE_PATTERNS) {
+            if (pattern.matcher(output).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean waitForProcessOrTimeout(Process process, StreamCollector stdout, StreamCollector stderr,
+                                            SmokeRunResult result, long timeoutSeconds) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        while (System.nanoTime() < deadline) {
+            if (process.waitFor(STARTUP_PROBE_POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                pollStartupProbe(stdout, stderr, result);
+                return true;
+            }
+            pollStartupProbe(stdout, stderr, result);
+        }
+        pollStartupProbe(stdout, stderr, result);
+        return process.waitFor(0L, TimeUnit.MILLISECONDS);
+    }
+
+    private void pollStartupProbe(StreamCollector stdout, StreamCollector stderr, SmokeRunResult result) {
+        if (result == null || result.hasSuccessfulStartupProbe()) {
+            return;
+        }
+        Integer port = extractLocalHttpPort(stdout, stderr);
+        if (port == null) {
+            return;
+        }
+        String probeUrl = "http://127.0.0.1:" + port + "/";
+        result.setStartupProbeUrl(probeUrl);
+        StartupProbeResult probeResult = probeHttp(probeUrl);
+        result.setStartupProbeStatus(probeResult.getStatus());
+        result.setStartupProbeStatusCode(probeResult.getStatusCode());
+    }
+
+    private Integer extractLocalHttpPort(StreamCollector stdout, StreamCollector stderr) {
+        String output = (stdout == null ? "" : stdout.getContent()) + "\n"
+                + (stderr == null ? "" : stderr.getContent());
+        for (Pattern pattern : LOCAL_HTTP_PORT_PATTERNS) {
+            Matcher matcher = pattern.matcher(output);
+            if (matcher.find()) {
+                try {
+                    return Integer.valueOf(matcher.group(1));
+                } catch (NumberFormatException ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    private StartupProbeResult probeHttp(String probeUrl) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(probeUrl).openConnection();
+            connection.setConnectTimeout(STARTUP_PROBE_CONNECT_TIMEOUT_MILLIS);
+            connection.setReadTimeout(STARTUP_PROBE_READ_TIMEOUT_MILLIS);
+            connection.setRequestMethod("GET");
+            connection.setInstanceFollowRedirects(false);
+            int statusCode = connection.getResponseCode();
+            return new StartupProbeResult(statusCode > 0 ? HTTP_RESPONDED : "HTTP_NO_RESPONSE", statusCode);
+        } catch (IOException e) {
+            return new StartupProbeResult("HTTP_NO_RESPONSE", -1);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
     }
 
     private void applyLaunchPlan(SmokeRunResult result, RuntimeLaunchPlan launchPlan) {
@@ -297,6 +405,10 @@ public class RuntimeSmokeRunner {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    private String safeValue(String value) {
+        return value == null ? "" : value;
+    }
+
     private static final class EntryPoint {
         private final String mainClass;
         private final String launchSource;
@@ -369,6 +481,9 @@ public class RuntimeSmokeRunner {
         private String launchSupport;
         private String launchReason;
         private String runStatus = "NOT_RUN";
+        private String startupProbeStatus = "NOT_RUN";
+        private String startupProbeUrl;
+        private int startupProbeStatusCode = -1;
         private Path traceFile;
         private RuntimeTraceResult traceResult = new RuntimeTraceResult();
         private final List<String> notes = new ArrayList<>();
@@ -461,6 +576,34 @@ public class RuntimeSmokeRunner {
             this.runStatus = runStatus;
         }
 
+        public String getStartupProbeStatus() {
+            return startupProbeStatus;
+        }
+
+        public void setStartupProbeStatus(String startupProbeStatus) {
+            this.startupProbeStatus = startupProbeStatus == null ? "NOT_RUN" : startupProbeStatus;
+        }
+
+        public String getStartupProbeUrl() {
+            return startupProbeUrl;
+        }
+
+        public void setStartupProbeUrl(String startupProbeUrl) {
+            this.startupProbeUrl = startupProbeUrl;
+        }
+
+        public int getStartupProbeStatusCode() {
+            return startupProbeStatusCode;
+        }
+
+        public void setStartupProbeStatusCode(int startupProbeStatusCode) {
+            this.startupProbeStatusCode = startupProbeStatusCode;
+        }
+
+        public boolean hasSuccessfulStartupProbe() {
+            return HTTP_RESPONDED.equalsIgnoreCase(startupProbeStatus) && startupProbeStatusCode > 0;
+        }
+
         public Path getTraceFile() {
             return traceFile;
         }
@@ -501,9 +644,8 @@ public class RuntimeSmokeRunner {
             int read;
             try {
                 while ((read = inputStream.read(buffer)) != -1) {
-                    int remaining = MAX_CAPTURE_BYTES - output.size();
-                    if (remaining > 0) {
-                        output.write(buffer, 0, Math.min(read, remaining));
+                    synchronized (output) {
+                        appendTail(buffer, read);
                     }
                 }
             } catch (IOException ignored) {
@@ -511,8 +653,43 @@ public class RuntimeSmokeRunner {
             }
         }
 
+        private void appendTail(byte[] buffer, int read) {
+            if (read >= MAX_CAPTURE_BYTES) {
+                output.reset();
+                output.write(buffer, read - MAX_CAPTURE_BYTES, MAX_CAPTURE_BYTES);
+                return;
+            }
+            int overflow = output.size() + read - MAX_CAPTURE_BYTES;
+            if (overflow > 0) {
+                byte[] existing = output.toByteArray();
+                output.reset();
+                output.write(existing, overflow, existing.length - overflow);
+            }
+            output.write(buffer, 0, read);
+        }
+
         private String getContent() {
-            return new String(output.toByteArray(), StandardCharsets.UTF_8);
+            synchronized (output) {
+                return new String(output.toByteArray(), StandardCharsets.UTF_8);
+            }
+        }
+    }
+
+    private static final class StartupProbeResult {
+        private final String status;
+        private final int statusCode;
+
+        private StartupProbeResult(String status, int statusCode) {
+            this.status = status;
+            this.statusCode = statusCode;
+        }
+
+        private String getStatus() {
+            return status;
+        }
+
+        private int getStatusCode() {
+            return statusCode;
         }
     }
 }
