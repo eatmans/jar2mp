@@ -68,6 +68,9 @@ class DecompileParityReporterTest {
 
         String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
         assertTrue(report.contains("Decompile parity report"));
+        assertTrue(report.contains("## Risk summary"));
+        assertTrue(report.contains("| Risk | Methods |"));
+        assertTrue(report.contains("| HIGH |"));
         assertTrue(report.contains("demo/ReflectiveFlow"));
         assertTrue(report.contains("run(Ljava/lang/String;)Ljava/lang/String;"));
         assertTrue(report.contains("Selected engine: fernflower"));

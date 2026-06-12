@@ -146,7 +146,7 @@ Options:
 
 - `restoration-report.md` - 还原结果总览
 - `resource-inventory.md` - 资源分类与目标路径
-- `decompile-parity-report.md` - 字节码与源码对照
+- `decompile-parity-report.md` - 字节码与源码对照，并汇总 HIGH/MEDIUM/LOW 方法级反编译风险
 - `restoration-score.md` - 源码、资源、运行时观测与构建验证的综合评分；最终 package 字节一致性以 artifact fidelity 报告为准
 - `gap-summary.md` - 主要缺口汇总
 - `runtime-trace-report.md` - 运行时追踪报告（启用运行时追踪时生成）
@@ -164,7 +164,7 @@ Options:
 
 1. 先看 `restoration-report.md` 和 `resource-inventory.md`
 2. 再看 `RUNBOOK.md` 确认启动方式
-3. 用 `decompile-parity-report.md` 检查反编译风险
+3. 用 `decompile-parity-report.md` 的 Risk summary 和逐方法明细检查反编译风险
 4. 看 `restoration-score.md` 和 `gap-summary.md` 了解源码、资源、运行时观测与构建验证缺口
 5. 如需确认可编译性，启用 `--verify-build`；如需确认最终包字节一致性，查看对应 artifact fidelity 报告
 

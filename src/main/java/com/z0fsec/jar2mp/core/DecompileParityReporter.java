@@ -14,6 +14,8 @@ public class DecompileParityReporter {
 
     public void writeReport(JarFile jarFile, JarAnalysisResult analysis, File outputDir) throws IOException {
         StringBuilder report = new StringBuilder();
+        StringBuilder classDetails = new StringBuilder();
+        RiskSummary riskSummary = new RiskSummary();
         report.append("# Decompile parity report\n\n");
         report.append("This report compares recoverable bytecode facts from the original archive ")
                 .append("with the generated source tree. It does not prove semantic equivalence; ")
@@ -29,12 +31,14 @@ public class DecompileParityReporter {
             if (entry == null) {
                 continue;
             }
+            riskSummary.classCount++;
 
             BytecodeFingerprint fingerprint;
             try {
                 fingerprint = BytecodeFingerprint.fromClassFile(readAllBytes(jarFile, entry));
             } catch (Exception e) {
-                report.append("## ").append(classNameFromPath(classPath)).append("\n\n")
+                riskSummary.parseFailures++;
+                classDetails.append("## ").append(classNameFromPath(classPath)).append("\n\n")
                         .append("- Risk level: HIGH\n")
                         .append("- Unable to parse class file: ").append(e.getMessage()).append("\n\n");
                 continue;
@@ -44,14 +48,17 @@ public class DecompileParityReporter {
             String source = sourceFile.isFile() ? IoUtils.readFileToString(sourceFile) : "";
             DecompileFinding finding = findFinding(analysis, classPath);
 
-            appendClassReport(report, fingerprint, source, sourceFile.toPath(), finding);
+            appendClassReport(classDetails, fingerprint, source, sourceFile.toPath(), finding, riskSummary);
         }
 
+        appendRiskSummary(report, riskSummary);
+        report.append(classDetails);
         IoUtils.writeStringToFile(new File(outputDir, "decompile-parity-report.md"), report.toString());
     }
 
     private void appendClassReport(StringBuilder report, BytecodeFingerprint fingerprint,
-                                   String source, Path sourcePath, DecompileFinding finding) {
+                                   String source, Path sourcePath, DecompileFinding finding,
+                                   RiskSummary riskSummary) {
         report.append("## ").append(fingerprint.getClassName()).append("\n\n");
         report.append("- Selected engine: ").append(selectedEngine(finding)).append("\n");
         if (finding != null && finding.getEngineSummary() != null && !finding.getEngineSummary().trim().isEmpty()) {
@@ -76,8 +83,10 @@ public class DecompileParityReporter {
         report.append("\n");
 
         for (BytecodeFingerprint.MethodFingerprint method : fingerprint.getMethodsByKey().values()) {
+            String riskLevel = riskLevel(method, source);
+            riskSummary.record(method, source, riskLevel);
             report.append("### ").append(method.getKey()).append("\n\n");
-            report.append("- Risk level: ").append(riskLevel(method, source)).append("\n");
+            report.append("- Risk level: ").append(riskLevel).append("\n");
             if (!method.hasCode()) {
                 report.append("- No Code attribute; abstract/native/synthetic-only method.\n\n");
                 continue;
@@ -114,6 +123,23 @@ public class DecompileParityReporter {
             appendReflectionFindings(report, method);
             report.append("\n");
         }
+    }
+
+    private void appendRiskSummary(StringBuilder report, RiskSummary summary) {
+        report.append("## Risk summary\n\n");
+        report.append("- Classes scanned: ").append(summary.classCount).append("\n");
+        report.append("- Methods scanned: ").append(summary.methodCount).append("\n");
+        report.append("- Class parse failures: ").append(summary.parseFailures).append("\n");
+        report.append("- Methods with missing source: ").append(summary.missingSourceMethods).append("\n");
+        report.append("- Methods with reflection calls: ").append(summary.reflectionMethods).append("\n");
+        report.append("- Methods with invokedynamic: ").append(summary.invokedynamicMethods).append("\n");
+        report.append("- Methods without LocalVariableTable names: ")
+                .append(summary.missingDebugNameMethods).append("\n\n");
+        report.append("| Risk | Methods |\n");
+        report.append("| --- | ---: |\n");
+        report.append("| HIGH | ").append(summary.highMethods).append(" |\n");
+        report.append("| MEDIUM | ").append(summary.mediumMethods).append(" |\n");
+        report.append("| LOW | ").append(summary.lowMethods).append(" |\n\n");
     }
 
     private String riskLevel(BytecodeFingerprint.MethodFingerprint method, String source) {
@@ -229,6 +255,51 @@ public class DecompileParityReporter {
                 bos.write(buf, 0, len);
             }
             return bos.toByteArray();
+        }
+    }
+
+    private static class RiskSummary {
+        private int classCount;
+        private int methodCount;
+        private int parseFailures;
+        private int highMethods;
+        private int mediumMethods;
+        private int lowMethods;
+        private int missingSourceMethods;
+        private int reflectionMethods;
+        private int invokedynamicMethods;
+        private int missingDebugNameMethods;
+
+        private void record(BytecodeFingerprint.MethodFingerprint method, String source, String riskLevel) {
+            methodCount++;
+            if (riskLevel.startsWith("HIGH")) {
+                highMethods++;
+            } else if (riskLevel.startsWith("MEDIUM")) {
+                mediumMethods++;
+            } else {
+                lowMethods++;
+            }
+            if (source == null || source.isEmpty()) {
+                missingSourceMethods++;
+            }
+            if (!method.getInvokedynamicCalls().isEmpty()) {
+                invokedynamicMethods++;
+            }
+            if (method.getLocalVariableNames().isEmpty()) {
+                missingDebugNameMethods++;
+            }
+            for (String call : method.getMethodCalls()) {
+                if (call.startsWith("java/lang/Class.forName")
+                        || call.startsWith("java/lang/reflect/")
+                        || call.contains(".getMethod(")
+                        || call.contains(".getDeclaredMethod(")
+                        || call.contains(".getField(")
+                        || call.contains(".getDeclaredField(")
+                        || call.contains(".invoke(")) {
+                    reflectionMethods++;
+                    break;
+                }
+            }
         }
     }
 }
