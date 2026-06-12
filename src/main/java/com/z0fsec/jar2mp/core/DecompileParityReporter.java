@@ -108,6 +108,8 @@ public class DecompileParityReporter {
                 report.append("- Variable names: not required; ").append(supportReason).append(".\n");
             } else if (method.getLocalVariableNames().isEmpty() && method.requiresLocalVariableNames()) {
                 report.append("- Variable names: unavailable; original class has no LocalVariableTable debug metadata.\n");
+            } else if (method.getLocalVariableNames().isEmpty() && method.hasOnlyCompilerTempLocalStores()) {
+                report.append("- Variable names: not required; local stores are compiler-generated monitor temporaries.\n");
             } else if (method.getLocalVariableNames().isEmpty()) {
                 report.append("- Variable names: not required; bytecode has no user parameters or local stores.\n");
             } else if (allNamesPresent(source, method.getLocalVariableNames())) {
@@ -145,7 +147,7 @@ public class DecompileParityReporter {
         report.append("Methods without LocalVariableTable names excludes bytecode bodies with no ")
                 .append("user parameters and no local-variable stores, plus compiler-generated ")
                 .append("synthetic switch-map support classes, bridge methods, enum support methods, ")
-                .append("and outer-this constructors.\n\n");
+                .append("outer-this constructors, and monitor temporaries.\n\n");
         report.append("| Risk | Methods |\n");
         report.append("| --- | ---: |\n");
         report.append("| HIGH | ").append(summary.highMethods).append(" |\n");

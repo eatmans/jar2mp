@@ -79,6 +79,7 @@ public class BytecodeFingerprint {
         private final Set<String> invokedynamicCalls;
         private final Set<String> genericSignatures;
         private final Set<Integer> localStoreSlots;
+        private final Set<Integer> compilerTempLocalStoreSlots;
         private final int exceptionHandlerCount;
         private final int branchOpcodeCount;
         private final int lineNumberCount;
@@ -90,7 +91,7 @@ public class BytecodeFingerprint {
                                   Set<String> localVariableNames, Set<String> fieldReferences,
                                   Set<String> annotations, Set<String> thrownExceptions,
                                   Set<String> invokedynamicCalls, Set<String> genericSignatures,
-                                  Set<Integer> localStoreSlots,
+                                  Set<Integer> localStoreSlots, Set<Integer> compilerTempLocalStoreSlots,
                                   int exceptionHandlerCount, int branchOpcodeCount,
                                   int lineNumberCount, boolean hasCode, int accessFlags) {
             this.name = name;
@@ -105,6 +106,7 @@ public class BytecodeFingerprint {
             this.invokedynamicCalls = invokedynamicCalls;
             this.genericSignatures = genericSignatures;
             this.localStoreSlots = localStoreSlots;
+            this.compilerTempLocalStoreSlots = compilerTempLocalStoreSlots;
             this.exceptionHandlerCount = exceptionHandlerCount;
             this.branchOpcodeCount = branchOpcodeCount;
             this.lineNumberCount = lineNumberCount;
@@ -181,11 +183,28 @@ public class BytecodeFingerprint {
             }
             int firstUserLocalSlot = isStatic() ? 0 : 1;
             for (Integer slot : localStoreSlots) {
-                if (slot != null && slot >= firstUserLocalSlot) {
+                if (slot != null && slot >= firstUserLocalSlot && !compilerTempLocalStoreSlots.contains(slot)) {
                     return true;
                 }
             }
             return false;
+        }
+
+        public boolean hasOnlyCompilerTempLocalStores() {
+            if (!hasCode || parameterSlotCount() > 0) {
+                return false;
+            }
+            int firstUserLocalSlot = isStatic() ? 0 : 1;
+            boolean foundCompilerTemp = false;
+            for (Integer slot : localStoreSlots) {
+                if (slot != null && slot >= firstUserLocalSlot) {
+                    if (!compilerTempLocalStoreSlots.contains(slot)) {
+                        return false;
+                    }
+                    foundCompilerTemp = true;
+                }
+            }
+            return foundCompilerTemp;
         }
 
         public boolean hasCode() {
@@ -368,6 +387,7 @@ public class BytecodeFingerprint {
             Set<String> invokedynamicCalls = new LinkedHashSet<>();
             Set<String> genericSignatures = new LinkedHashSet<>();
             Set<Integer> localStoreSlots = new LinkedHashSet<>();
+            Set<Integer> compilerTempLocalStoreSlots = new LinkedHashSet<>();
             int exceptionHandlerCount = 0;
             int branchOpcodeCount = 0;
             int lineNumberCount = 0;
@@ -389,6 +409,7 @@ public class BytecodeFingerprint {
                     fieldReferences.addAll(code.fieldReferences);
                     invokedynamicCalls.addAll(code.invokedynamicCalls);
                     localStoreSlots.addAll(code.localStoreSlots);
+                    compilerTempLocalStoreSlots.addAll(code.compilerTempLocalStoreSlots);
                     exceptionHandlerCount = code.exceptionHandlerCount;
                     branchOpcodeCount = code.branchOpcodeCount;
                     lineNumberCount = code.lineNumberCount;
@@ -409,8 +430,8 @@ public class BytecodeFingerprint {
 
             return new MethodFingerprint(name, descriptor, instructions, methodCalls, stringConstants,
                     localVariableNames, fieldReferences, annotations, thrownExceptions, invokedynamicCalls,
-                    genericSignatures, localStoreSlots, exceptionHandlerCount, branchOpcodeCount, lineNumberCount,
-                    hasCode, accessFlags);
+                    genericSignatures, localStoreSlots, compilerTempLocalStoreSlots, exceptionHandlerCount,
+                    branchOpcodeCount, lineNumberCount, hasCode, accessFlags);
         }
 
         private CodeFingerprint readCodeAttribute() {
@@ -420,11 +441,16 @@ public class BytecodeFingerprint {
             byte[] code = Arrays.copyOfRange(data, offset, offset + codeLength);
             offset += codeLength;
 
-            CodeFingerprint fingerprint = scanCode(code);
-
             int exceptionTableLength = readU2();
+            Set<Integer> exceptionHandlerStarts = new HashSet<>();
+            for (int i = 0; i < exceptionTableLength; i++) {
+                offset += 4; // start_pc + end_pc
+                exceptionHandlerStarts.add(readU2());
+                offset += 2; // catch_type
+            }
+
+            CodeFingerprint fingerprint = scanCode(code, exceptionHandlerStarts);
             fingerprint.exceptionHandlerCount = exceptionTableLength;
-            offset += exceptionTableLength * 8;
 
             int attributesCount = readU2();
             for (int i = 0; i < attributesCount; i++) {
@@ -455,7 +481,7 @@ public class BytecodeFingerprint {
             return fingerprint;
         }
 
-        private CodeFingerprint scanCode(byte[] code) {
+        private CodeFingerprint scanCode(byte[] code, Set<Integer> exceptionHandlerStarts) {
             CodeFingerprint fingerprint = new CodeFingerprint();
             int position = 0;
             while (position < code.length) {
@@ -475,42 +501,42 @@ public class BytecodeFingerprint {
                     case 0x38:
                     case 0x39:
                     case 0x3a:
-                        fingerprint.localStoreSlots.add(code[position + 1] & 0xFF);
+                        recordLocalStore(fingerprint, code, position, code[position + 1] & 0xFF, exceptionHandlerStarts);
                         position += 2;
                         break;
                     case 0x3b:
                     case 0x3c:
                     case 0x3d:
                     case 0x3e:
-                        fingerprint.localStoreSlots.add(opcode - 0x3b);
+                        recordLocalStore(fingerprint, code, position, opcode - 0x3b, exceptionHandlerStarts);
                         position += 1;
                         break;
                     case 0x3f:
                     case 0x40:
                     case 0x41:
                     case 0x42:
-                        fingerprint.localStoreSlots.add(opcode - 0x3f);
+                        recordLocalStore(fingerprint, code, position, opcode - 0x3f, exceptionHandlerStarts);
                         position += 1;
                         break;
                     case 0x43:
                     case 0x44:
                     case 0x45:
                     case 0x46:
-                        fingerprint.localStoreSlots.add(opcode - 0x43);
+                        recordLocalStore(fingerprint, code, position, opcode - 0x43, exceptionHandlerStarts);
                         position += 1;
                         break;
                     case 0x47:
                     case 0x48:
                     case 0x49:
                     case 0x4a:
-                        fingerprint.localStoreSlots.add(opcode - 0x47);
+                        recordLocalStore(fingerprint, code, position, opcode - 0x47, exceptionHandlerStarts);
                         position += 1;
                         break;
                     case 0x4b:
                     case 0x4c:
                     case 0x4d:
                     case 0x4e:
-                        fingerprint.localStoreSlots.add(opcode - 0x4b);
+                        recordLocalStore(fingerprint, code, position, opcode - 0x4b, exceptionHandlerStarts);
                         position += 1;
                         break;
                     case 0x13:
@@ -519,7 +545,7 @@ public class BytecodeFingerprint {
                         position += 3;
                         break;
                     case 0x84:
-                        fingerprint.localStoreSlots.add(code[position + 1] & 0xFF);
+                        recordLocalStore(fingerprint, code, position, code[position + 1] & 0xFF, exceptionHandlerStarts);
                         position += 3;
                         break;
                     case 0xb6:
@@ -561,6 +587,80 @@ public class BytecodeFingerprint {
                 }
             }
             return fingerprint;
+        }
+
+        private void recordLocalStore(CodeFingerprint fingerprint, byte[] code, int position, int slot,
+                                      Set<Integer> exceptionHandlerStarts) {
+            fingerprint.localStoreSlots.add(slot);
+            if (isMonitorTempStore(code, position) || isSyntheticMonitorExceptionStore(code, position, slot,
+                    exceptionHandlerStarts)) {
+                fingerprint.compilerTempLocalStoreSlots.add(slot);
+            }
+        }
+
+        private boolean isMonitorTempStore(byte[] code, int position) {
+            int opcode = code[position] & 0xFF;
+            if (!isReferenceStoreOpcode(opcode)) {
+                return false;
+            }
+            int next = position + instructionLength(opcode);
+            return next < code.length && (code[next] & 0xFF) == 0xc2;
+        }
+
+        private boolean isSyntheticMonitorExceptionStore(byte[] code, int position, int slot,
+                                                         Set<Integer> exceptionHandlerStarts) {
+            int opcode = code[position] & 0xFF;
+            if (!exceptionHandlerStarts.contains(position) || !isReferenceStoreOpcode(opcode)) {
+                return false;
+            }
+            int cursor = position + instructionLength(opcode);
+            int monitorLoadLength = referenceLoadInstructionLength(code, cursor);
+            if (monitorLoadLength == 0) {
+                return false;
+            }
+            cursor += monitorLoadLength;
+            if (cursor >= code.length || (code[cursor] & 0xFF) != 0xc3) {
+                return false;
+            }
+            cursor += 1;
+            int exceptionLoadLength = referenceLoadInstructionLength(code, cursor, slot);
+            if (exceptionLoadLength == 0) {
+                return false;
+            }
+            cursor += exceptionLoadLength;
+            return cursor < code.length && (code[cursor] & 0xFF) == 0xbf;
+        }
+
+        private boolean isReferenceStoreOpcode(int opcode) {
+            return opcode == 0x3a || (opcode >= 0x4b && opcode <= 0x4e);
+        }
+
+        private int referenceLoadInstructionLength(byte[] code, int position) {
+            if (position >= code.length) {
+                return 0;
+            }
+            int opcode = code[position] & 0xFF;
+            if (opcode == 0x19) {
+                return position + 1 < code.length ? 2 : 0;
+            }
+            if (opcode >= 0x2a && opcode <= 0x2d) {
+                return 1;
+            }
+            return 0;
+        }
+
+        private int referenceLoadInstructionLength(byte[] code, int position, int expectedSlot) {
+            if (position >= code.length) {
+                return 0;
+            }
+            int opcode = code[position] & 0xFF;
+            if (opcode == 0x19) {
+                return position + 1 < code.length && (code[position + 1] & 0xFF) == expectedSlot ? 2 : 0;
+            }
+            if (opcode >= 0x2a && opcode <= 0x2d) {
+                return opcode - 0x2a == expectedSlot ? 1 : 0;
+            }
+            return 0;
         }
 
         private void recordWideLocalStore(CodeFingerprint fingerprint, byte[] code, int position) {
@@ -774,6 +874,7 @@ public class BytecodeFingerprint {
         private final Set<String> fieldReferences = new LinkedHashSet<>();
         private final Set<String> invokedynamicCalls = new LinkedHashSet<>();
         private final Set<Integer> localStoreSlots = new LinkedHashSet<>();
+        private final Set<Integer> compilerTempLocalStoreSlots = new LinkedHashSet<>();
         private int exceptionHandlerCount;
         private int branchOpcodeCount;
         private int lineNumberCount;

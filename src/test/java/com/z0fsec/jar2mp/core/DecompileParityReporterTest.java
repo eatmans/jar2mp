@@ -238,6 +238,34 @@ class DecompileParityReporterTest {
     }
 
     @Test
+    void doesNotTreatSynchronizedMonitorTempSlotsAsMissingNameRisk() throws Exception {
+        Path classFile = compileStaticSynchronizedSingletonWithoutDebug();
+        Path jarPath = tempDir.resolve("synchronized-singleton.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/SynchronizedSingleton.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("synchronized-singleton-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/SynchronizedSingleton.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, synchronizedSingletonSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/SynchronizedSingleton.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; local stores are compiler-generated monitor temporaries."));
+    }
+
+    @Test
     void treatsSyntheticSwitchMapSupportClassAsLowRisk() throws Exception {
         Path classFile = compileSyntheticSwitchMapClassWithoutDebug();
         Path jarPath = tempDir.resolve("switch-map.jar");
@@ -268,7 +296,7 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Risk level: LOW (compiler-generated synthetic switch-map support class)"));
         assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
         assertTrue(report.contains("synthetic switch-map support classes, bridge methods, enum support methods, "
-                + "and outer-this constructors."));
+                + "outer-this constructors, and monitor temporaries."));
         assertTrue(report.contains("| MEDIUM | 0 |"));
         assertTrue(report.contains("Variable names: not required; compiler-generated synthetic switch-map support class."));
     }
@@ -547,6 +575,27 @@ class DecompileParityReporterTest {
         return classesDir.resolve("demo/NoUserVariables.class");
     }
 
+    private Path compileStaticSynchronizedSingletonWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("synchronized-singleton-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("SynchronizedSingleton.java");
+        Files.write(sourceFile, synchronizedSingletonSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("synchronized-singleton-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/SynchronizedSingleton.class");
+    }
+
     private Path compileSyntheticSwitchMapClassWithoutDebug() throws Exception {
         Path sourceDir = tempDir.resolve("switch-map-src/demo");
         Files.createDirectories(sourceDir);
@@ -713,6 +762,28 @@ class DecompileParityReporterTest {
                 "\n" +
                 "    public static int value() {\n" +
                 "        return 7;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String synchronizedSingletonSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class SynchronizedSingleton {\n" +
+                "    private static volatile SynchronizedSingleton instance;\n" +
+                "\n" +
+                "    private SynchronizedSingleton() {\n" +
+                "    }\n" +
+                "\n" +
+                "    public static SynchronizedSingleton getInstance() {\n" +
+                "        if (instance == null) {\n" +
+                "            synchronized (SynchronizedSingleton.class) {\n" +
+                "                if (instance == null) {\n" +
+                "                    instance = new SynchronizedSingleton();\n" +
+                "                }\n" +
+                "            }\n" +
+                "        }\n" +
+                "        return instance;\n" +
                 "    }\n" +
                 "}\n";
     }
