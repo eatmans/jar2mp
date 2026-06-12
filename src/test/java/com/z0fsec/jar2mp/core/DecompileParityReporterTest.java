@@ -235,6 +235,41 @@ class DecompileParityReporterTest {
         assertTrue(report.contains("Variable names: not required; bytecode has no user parameters or local stores."));
     }
 
+    @Test
+    void treatsSyntheticSwitchMapSupportClassAsLowRisk() throws Exception {
+        Path classFile = compileSyntheticSwitchMapClassWithoutDebug();
+        Path jarPath = tempDir.resolve("switch-map.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/Outer$1.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("switch-map-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/Outer.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, outerSwitchSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/Outer$1.class");
+        DecompileFinding finding = new DecompileFinding("demo/Outer$1.class", null, null);
+        finding.setSelectedEngine("synthetic-switch-map");
+        finding.setEngineSummary("synthetic enum switch map retained as bytecode support for outer source");
+        analysis.getDecompileFindings().add(finding);
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Selected engine: synthetic-switch-map"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated synthetic switch-map support class)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("synthetic switch-map support classes."));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated synthetic switch-map support class."));
+    }
+
     private Path compileReflectiveFlowClass() throws Exception {
         Path sourceDir = tempDir.resolve("compile-src/demo");
         Files.createDirectories(sourceDir);
@@ -363,6 +398,27 @@ class DecompileParityReporterTest {
         return classesDir.resolve("demo/NoUserVariables.class");
     }
 
+    private Path compileSyntheticSwitchMapClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("switch-map-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("Outer$1.java");
+        Files.write(sourceFile, syntheticSwitchMapSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("switch-map-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/Outer$1.class");
+    }
+
     private Path compileUserVariablesClassWithoutDebug() throws Exception {
         Path sourceDir = tempDir.resolve("missing-debug-names-src/demo");
         Files.createDirectories(sourceDir);
@@ -419,6 +475,33 @@ class DecompileParityReporterTest {
                 "    public static int value() {\n" +
                 "        return 7;\n" +
                 "    }\n" +
+                "}\n";
+    }
+
+    private String syntheticSwitchMapSource() {
+        return "package demo;\n" +
+                "\n" +
+                "class Outer$1 {\n" +
+                "    static final int[] $SwitchMap$demo$Outer$Kind;\n" +
+                "    static {\n" +
+                "        $SwitchMap$demo$Outer$Kind = new int[Outer.Kind.values().length];\n" +
+                "        try {\n" +
+                "            $SwitchMap$demo$Outer$Kind[Outer.Kind.FIRST.ordinal()] = 1;\n" +
+                "        } catch (NoSuchFieldError ex) {\n" +
+                "        }\n" +
+                "    }\n" +
+                "}\n" +
+                "\n" +
+                "class Outer {\n" +
+                "    enum Kind { FIRST }\n" +
+                "}\n";
+    }
+
+    private String outerSwitchSource() {
+        return "package demo;\n" +
+                "\n" +
+                "class Outer {\n" +
+                "    enum Kind { FIRST }\n" +
                 "}\n";
     }
 

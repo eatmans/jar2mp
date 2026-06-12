@@ -83,9 +83,10 @@ public class DecompileParityReporter {
         appendSet(report, "Bootstrap methods", fingerprint.getBootstrapMethods());
         report.append("\n");
 
+        boolean syntheticSwitchMap = isSyntheticSwitchMapFinding(finding);
         for (BytecodeFingerprint.MethodFingerprint method : fingerprint.getMethodsByKey().values()) {
-            String riskLevel = riskLevel(method, source);
-            riskSummary.record(fingerprint.getClassName(), method, source, riskLevel);
+            String riskLevel = riskLevel(method, source, syntheticSwitchMap);
+            riskSummary.record(fingerprint.getClassName(), method, source, riskLevel, syntheticSwitchMap);
             report.append("### ").append(method.getKey()).append("\n\n");
             report.append("- Risk level: ").append(riskLevel).append("\n");
             if (!method.hasCode()) {
@@ -102,7 +103,9 @@ public class DecompileParityReporter {
                     .append(method.getExceptionHandlerCount())
                     .append("\n");
 
-            if (method.getLocalVariableNames().isEmpty() && method.requiresLocalVariableNames()) {
+            if (syntheticSwitchMap && method.getLocalVariableNames().isEmpty()) {
+                report.append("- Variable names: not required; compiler-generated synthetic switch-map support class.\n");
+            } else if (method.getLocalVariableNames().isEmpty() && method.requiresLocalVariableNames()) {
                 report.append("- Variable names: unavailable; original class has no LocalVariableTable debug metadata.\n");
             } else if (method.getLocalVariableNames().isEmpty()) {
                 report.append("- Variable names: not required; bytecode has no user parameters or local stores.\n");
@@ -139,7 +142,8 @@ public class DecompileParityReporter {
         report.append("- Methods without LocalVariableTable names: ")
                 .append(summary.missingDebugNameMethods).append("\n\n");
         report.append("Methods without LocalVariableTable names excludes bytecode bodies with no ")
-                .append("user parameters and no local-variable stores.\n\n");
+                .append("user parameters and no local-variable stores, plus compiler-generated ")
+                .append("synthetic switch-map support classes.\n\n");
         report.append("| Risk | Methods |\n");
         report.append("| --- | ---: |\n");
         report.append("| HIGH | ").append(summary.highMethods).append(" |\n");
@@ -187,12 +191,15 @@ public class DecompileParityReporter {
         return outerSource.isFile() ? outerSource : exactSource;
     }
 
-    private String riskLevel(BytecodeFingerprint.MethodFingerprint method, String source) {
+    private String riskLevel(BytecodeFingerprint.MethodFingerprint method, String source, boolean syntheticSwitchMap) {
         if (source.isEmpty()) {
             return "HIGH (source missing)";
         }
         if (!method.hasCode()) {
             return "LOW (no bytecode body; signature-only method)";
+        }
+        if (syntheticSwitchMap) {
+            return "LOW (compiler-generated synthetic switch-map support class)";
         }
         if (hasReflection(method)) {
             return "HIGH (reflection call detected)";
@@ -308,6 +315,10 @@ public class DecompileParityReporter {
         return finding.getSelectedEngine().trim();
     }
 
+    private boolean isSyntheticSwitchMapFinding(DecompileFinding finding) {
+        return "synthetic-switch-map".equals(selectedEngine(finding));
+    }
+
     private byte[] readAllBytes(JarFile jarFile, JarEntry entry) throws IOException {
         try (InputStream is = jarFile.getInputStream(entry)) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -334,7 +345,7 @@ public class DecompileParityReporter {
         private final List<RiskMethod> riskMethods = new ArrayList<>();
 
         private void record(String className, BytecodeFingerprint.MethodFingerprint method,
-                            String source, String riskLevel) {
+                            String source, String riskLevel, boolean syntheticSwitchMap) {
             methodCount++;
             if (riskLevel.startsWith("HIGH")) {
                 highMethods++;
@@ -353,7 +364,8 @@ public class DecompileParityReporter {
             }
             if (method.hasCode()
                     && method.requiresLocalVariableNames()
-                    && method.getLocalVariableNames().isEmpty()) {
+                    && method.getLocalVariableNames().isEmpty()
+                    && !syntheticSwitchMap) {
                 missingDebugNameMethods++;
             }
             for (String call : method.getMethodCalls()) {
