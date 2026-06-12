@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -115,6 +116,78 @@ class ProjectVerifierTest {
                 StandardCharsets.UTF_8);
         assertTrue(errorReport.contains("# Verification errors"));
         assertTrue(errorReport.contains("No structured verification errors were parsed."));
+    }
+
+    @Test
+    void resolvesProjectMavenWrapperBeforeEnvironment() throws Exception {
+        Path projectDir = createProject("public class App { }");
+        Path mvnw = projectDir.resolve("mvnw");
+        Files.write(mvnw, "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8));
+        mvnw.toFile().setExecutable(true);
+
+        Path mavenHome = tempDir.resolve("maven-home");
+        Path homeMvn = mavenHome.resolve("bin/mvn");
+        Files.createDirectories(homeMvn.getParent());
+        Files.write(homeMvn, "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8));
+        homeMvn.toFile().setExecutable(true);
+
+        String resolved = ProjectVerifier.findMavenExecutable(projectDir.toFile(),
+                Map.of("MAVEN_HOME", mavenHome.toString()));
+
+        assertEquals(mvnw.toAbsolutePath().toString(), resolved);
+    }
+
+    @Test
+    void resolvesMavenHomeWhenPathDoesNotContainMaven() throws Exception {
+        Path projectDir = createProject("public class App { }");
+        Path mavenHome = tempDir.resolve("maven-home");
+        Path homeMvn = mavenHome.resolve("bin/mvn");
+        Files.createDirectories(homeMvn.getParent());
+        Files.write(homeMvn, "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8));
+        homeMvn.toFile().setExecutable(true);
+
+        String resolved = ProjectVerifier.findMavenExecutable(projectDir.toFile(),
+                Map.of("MAVEN_HOME", mavenHome.toString(), "PATH", tempDir.toString()));
+
+        assertEquals(homeMvn.toAbsolutePath().toString(), resolved);
+    }
+
+    @Test
+    void resolvesPathMavenWhenHomeVariablesAreMissing() throws Exception {
+        Path projectDir = createProject("public class App { }");
+        Path binDir = tempDir.resolve("path-bin");
+        Path pathMvn = binDir.resolve("mvn");
+        Files.createDirectories(binDir);
+        Files.write(pathMvn, "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8));
+        pathMvn.toFile().setExecutable(true);
+
+        String resolved = ProjectVerifier.findMavenExecutable(projectDir.toFile(),
+                Map.of("PATH", binDir.toString()));
+
+        assertEquals(pathMvn.toAbsolutePath().toString(), resolved);
+    }
+
+    @Test
+    void resolvesMavenWrapperCacheWhenEnvironmentHasNoMaven() throws Exception {
+        Path projectDir = createProject("public class App { }");
+        Path cacheMvn = tempDir.resolve(".m2/wrapper/dists/apache-maven-3.9.12/hash/bin/mvn");
+        Files.createDirectories(cacheMvn.getParent());
+        Files.write(cacheMvn, "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8));
+        cacheMvn.toFile().setExecutable(true);
+
+        String previousHome = System.getProperty("user.home");
+        try {
+            System.setProperty("user.home", tempDir.toString());
+            String resolved = ProjectVerifier.findMavenExecutable(projectDir.toFile(), Map.of());
+
+            assertEquals(cacheMvn.toAbsolutePath().toString(), resolved);
+        } finally {
+            if (previousHome == null) {
+                System.clearProperty("user.home");
+            } else {
+                System.setProperty("user.home", previousHome);
+            }
+        }
     }
 
     private Path createProject(String javaSource) throws Exception {

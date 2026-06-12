@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -19,6 +20,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class ProjectVerifier {
 
@@ -30,7 +33,7 @@ public class ProjectVerifier {
     public VerificationResult verify(File projectDir, String goal) {
         String effectiveGoal = goal == null || goal.trim().isEmpty() ? "compile" : goal.trim();
         List<String> command = new ArrayList<>();
-        command.add("mvn");
+        command.add(findMavenExecutable(projectDir, System.getenv()));
         command.add("-q");
         addVerificationSkipFlags(command);
         for (String part : effectiveGoal.split("\\s+")) {
@@ -231,6 +234,113 @@ public class ProjectVerifier {
         command.add("-Djacoco.skip=true");
         command.add("-Dgit.commit.id.skip=true");
         command.add("-Dmaven.javadoc.skip=true");
+    }
+
+    static String findMavenExecutable(File projectDir, Map<String, String> environment) {
+        Map<String, String> env = environment == null ? java.util.Collections.emptyMap() : environment;
+        String wrapper = findProjectMavenWrapper(projectDir);
+        if (wrapper != null) {
+            return wrapper;
+        }
+        String mavenHome = executableFromHome(env.get("MAVEN_HOME"));
+        if (mavenHome != null) {
+            return mavenHome;
+        }
+        String m2Home = executableFromHome(env.get("M2_HOME"));
+        if (m2Home != null) {
+            return m2Home;
+        }
+        String pathMaven = executableFromPath(env.get("PATH"));
+        if (pathMaven != null) {
+            return pathMaven;
+        }
+        String wrapperCacheMaven = executableFromMavenWrapperCache();
+        return wrapperCacheMaven == null ? "mvn" : wrapperCacheMaven;
+    }
+
+    private static String findProjectMavenWrapper(File projectDir) {
+        if (projectDir == null) {
+            return null;
+        }
+        File mvnw = new File(projectDir, isWindows() ? "mvnw.cmd" : "mvnw");
+        if (isExecutableFile(mvnw)) {
+            return mvnw.getAbsolutePath();
+        }
+        File alternate = new File(projectDir, isWindows() ? "mvnw" : "mvnw.cmd");
+        if (isExecutableFile(alternate)) {
+            return alternate.getAbsolutePath();
+        }
+        return null;
+    }
+
+    private static String executableFromHome(String home) {
+        if (home == null || home.trim().isEmpty()) {
+            return null;
+        }
+        File executable = new File(new File(home.trim(), "bin"), mavenExecutableName());
+        return isExecutableFile(executable) ? executable.getAbsolutePath() : null;
+    }
+
+    private static String executableFromPath(String path) {
+        if (path == null || path.trim().isEmpty()) {
+            return null;
+        }
+        String[] parts = path.split(Pattern.quote(File.pathSeparator));
+        for (String part : parts) {
+            if (part == null || part.trim().isEmpty()) {
+                continue;
+            }
+            File executable = new File(part.trim(), mavenExecutableName());
+            if (isExecutableFile(executable)) {
+                return executable.getAbsolutePath();
+            }
+        }
+        return null;
+    }
+
+    private static String executableFromMavenWrapperCache() {
+        Path wrapperDists = new File(System.getProperty("user.home", ""), ".m2/wrapper/dists").toPath();
+        if (!Files.isDirectory(wrapperDists)) {
+            return null;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.walk(wrapperDists)) {
+            return stream
+                    .filter(path -> path.getFileName() != null
+                            && path.getFileName().toString().equals(mavenExecutableName()))
+                    .filter(path -> path.getParent() != null
+                            && "bin".equals(path.getParent().getFileName().toString()))
+                    .filter(path -> isExecutableFile(path.toFile()))
+                    .max(Comparator.comparing(ProjectVerifier::mavenExecutableSortKey))
+                    .map(path -> path.toAbsolutePath().toString())
+                    .orElse(null);
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private static String mavenExecutableSortKey(Path path) {
+        String value = path.toString();
+        Matcher matcher = Pattern.compile("apache-maven-(\\d+)\\.(\\d+)\\.(\\d+)").matcher(value);
+        if (matcher.find()) {
+            return String.format("%05d.%05d.%05d:%s",
+                    Integer.parseInt(matcher.group(1)),
+                    Integer.parseInt(matcher.group(2)),
+                    Integer.parseInt(matcher.group(3)),
+                    value);
+        }
+        return "00000.00000.00000:" + value;
+    }
+
+    private static boolean isExecutableFile(File file) {
+        return file != null && file.isFile() && (isWindows() || file.canExecute());
+    }
+
+    private static String mavenExecutableName() {
+        return isWindows() ? "mvn.cmd" : "mvn";
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
     }
 
     public void writeReport(File projectDir, VerificationResult result) throws IOException {
