@@ -330,8 +330,14 @@ class RestorationScorerTest {
         RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
 
         assertEquals(0, score.getBreakdown().get("runtime").intValue());
-        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())
-                && g.getDetail().contains("startup failure")));
+        String detail = score.getGaps().stream()
+                .filter(g -> "runtime_status".equals(g.getCategory()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing runtime_status gap"))
+                .getDetail();
+        assertEquals("Runtime startup failure was detected before timeout.", detail);
+        assertFalse(detail.contains("detected: Runtime"));
+        assertFalse(detail.contains(".."));
     }
 
     @Test
@@ -360,8 +366,14 @@ class RestorationScorerTest {
         RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
 
         assertEquals(0, score.getBreakdown().get("runtime").intValue());
-        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())
-                && g.getDetail().contains("startup failure")));
+        String detail = score.getGaps().stream()
+                .filter(g -> "runtime_status".equals(g.getCategory()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing runtime_status gap"))
+                .getDetail();
+        assertEquals("Runtime startup failure was detected before non-zero exit.", detail);
+        assertFalse(detail.contains("detected: Runtime"));
+        assertFalse(detail.contains(".."));
     }
 
     @Test

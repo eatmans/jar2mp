@@ -198,10 +198,7 @@ public class RestorationScorer {
             return evidenceScore;
         }
         if ("STARTUP_FAILED_TIMEOUT".equals(status) || "STARTUP_FAILED_EXIT".equals(status)) {
-            score.addGap("runtime_status",
-                    "Runtime startup failure was detected: "
-                            + safeValue(smokeResult.getFailureMessage()) + ".",
-                    RUNTIME_WEIGHT);
+            score.addGap("runtime_status", runtimeStartupFailureDetail(smokeResult), RUNTIME_WEIGHT);
             return 0;
         }
         if ("TRACE_COLLECTED_TIMEOUT".equals(status)) {
@@ -215,6 +212,25 @@ public class RestorationScorer {
                 "Runtime smoke run did not complete successfully: " + safeValue(smokeResult.getRunStatus()) + ".",
                 RUNTIME_WEIGHT);
         return 0;
+    }
+
+    private String runtimeStartupFailureDetail(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        String message = trimTrailingPeriods(safeValue(smokeResult.getFailureMessage()));
+        if (message.isEmpty()) {
+            return "Runtime startup failure was detected.";
+        }
+        if (message.toLowerCase(Locale.ROOT).startsWith("runtime startup failure")) {
+            return message + ".";
+        }
+        return "Runtime startup failure was detected: " + message + ".";
+    }
+
+    private String trimTrailingPeriods(String value) {
+        String result = safeValue(value);
+        while (result.endsWith(".")) {
+            result = result.substring(0, result.length() - 1).trim();
+        }
+        return result;
     }
 
     private Set<String> runtimeKinds(RuntimeTraceResult runtimeTraceResult) {
