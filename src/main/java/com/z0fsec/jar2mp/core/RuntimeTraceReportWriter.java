@@ -23,6 +23,7 @@ public class RuntimeTraceReportWriter {
         report.append("- Command: ").append(formatInline(result == null ? null : result.getCommand())).append("\n");
         report.append("- Exit code: ").append(result == null ? -1 : result.getExitCode()).append("\n");
         report.append("- Run status: ").append(formatInline(result == null ? null : result.getRunStatus())).append("\n");
+        appendFailureSummary(report, result);
         report.append("- Main class: ").append(formatInline(result == null ? null : result.getMainClass())).append("\n");
         report.append("- Launch source: ").append(formatInline(result == null ? null : result.getLaunchSource())).append("\n");
         report.append("- Launch type: ").append(formatInline(result == null ? null : result.getLaunchType())).append("\n");
@@ -50,6 +51,38 @@ public class RuntimeTraceReportWriter {
         appendKindSection(report, "Socket", "socket", events);
 
         IoUtils.writeStringToFile(new File(outputDir, "runtime-trace-report.md"), report.toString());
+    }
+
+    private void appendFailureSummary(StringBuilder report, RuntimeSmokeRunner.SmokeRunResult result) {
+        if (result == null) {
+            return;
+        }
+        String failureMessage = trimToNull(result.getFailureMessage());
+        if (failureMessage != null) {
+            report.append("- Failure message: ").append(formatInline(failureMessage)).append("\n");
+        }
+        String failureCause = firstCausedBy(result.getStdout());
+        if (failureCause == null) {
+            failureCause = firstCausedBy(result.getStderr());
+        }
+        if (failureCause != null) {
+            report.append("- Failure cause: ").append(formatInline(failureCause)).append("\n");
+        }
+    }
+
+    private String firstCausedBy(String content) {
+        if (content == null || content.trim().isEmpty()) {
+            return null;
+        }
+        String[] lines = content.split("\\R");
+        for (String line : lines) {
+            String value = trimToNull(line);
+            if (value == null || !value.startsWith("Caused by:")) {
+                continue;
+            }
+            return trimToNull(value.substring("Caused by:".length()));
+        }
+        return null;
     }
 
     private void appendProcessOutput(StringBuilder report, RuntimeSmokeRunner.SmokeRunResult result) {
@@ -150,6 +183,14 @@ public class RuntimeTraceReportWriter {
             return "(none)";
         }
         return "`" + sanitize(value) + "`";
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private String sanitize(String value) {

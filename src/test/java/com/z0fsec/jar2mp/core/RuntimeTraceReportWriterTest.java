@@ -68,4 +68,25 @@ class RuntimeTraceReportWriterTest {
         assertTrue(report.contains("APPLICATION FAILED TO START"));
         assertTrue(report.contains("Manifest Main-Class can be launched with java -jar."));
     }
+
+    @Test
+    void writesFailureMessageAndCauseInRunSummary() throws Exception {
+        RuntimeSmokeRunner.SmokeRunResult result = new RuntimeSmokeRunner.SmokeRunResult();
+        result.setRunStatus("STARTUP_FAILED_EXIT");
+        result.setExitCode(1);
+        result.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        result.setStdout("APPLICATION FAILED TO START\n"
+                + "Caused by: org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379\n"
+                + "\tat demo.Redis.connect(Redis.java:10)\n");
+        result.setStderr("Caused by: java.net.ConnectException: Connection refused\n");
+        result.setTraceResult(new RuntimeTraceResult());
+
+        new RuntimeTraceReportWriter().write(tempDir.toFile(), result);
+
+        String report = Files.readString(tempDir.resolve("runtime-trace-report.md"));
+        assertTrue(report.contains("- Failure message: `Runtime startup failure was detected before non-zero exit.`"));
+        assertTrue(report.contains("- Failure cause: `org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379`"));
+    }
 }
