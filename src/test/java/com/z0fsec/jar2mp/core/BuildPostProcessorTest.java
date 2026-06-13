@@ -94,8 +94,9 @@ class BuildPostProcessorTest {
         analysis.getClassFiles().add("demo/App.class");
         ProjectConfig config = new ProjectConfig();
         config.setVerifyBuild(true);
+        List<String> messages = new ArrayList<>();
 
-        new BuildPostProcessor().postProcess(jar.toFile(), analysis, outputDir.toFile(), config, message -> { });
+        new BuildPostProcessor().postProcess(jar.toFile(), analysis, outputDir.toFile(), config, messages::add);
 
         assertNotNull(analysis.getSourceRebuildFidelity());
         assertTrue(analysis.getSourceRebuildFidelity().isSourceRecompiledClassBytesSame(),
@@ -110,6 +111,8 @@ class BuildPostProcessorTest {
                         + ", fallback=" + analysis.getSourceRebuildFidelity().getCompileFallbackClasses()
                         + ", differentSamples="
                         + analysis.getSourceRebuildFidelity().getSampleDifferentClasses());
+        assertTrue(messages.stream().anyMatch(message -> message.contains(
+                "源码重编译 class 字节保真: exact=true, same=1/1, different=0, missing=0, extra=0, fallback=0")));
     }
 
     @Test

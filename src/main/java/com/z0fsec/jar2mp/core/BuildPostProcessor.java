@@ -108,8 +108,8 @@ public class BuildPostProcessor {
             analysis.setSourceRebuildFidelity(sourceRebuildFidelity);
             result.setSourceRebuildFidelity(sourceRebuildFidelity);
             refreshRestorationScore(outputDir, analysis);
-            log(logger, "源码重编译 class 字节保真: exact="
-                    + sourceRebuildFidelity.isSourceRecompiledClassBytesSame());
+            log(logger, "源码重编译 class 字节保真: "
+                    + sourceRebuildFidelitySummary(sourceRebuildFidelity));
             if (config.isByteExactPackage() && runsPackagePhase(config.getVerifyGoal())) {
                 ArtifactFidelityResult packageFidelity = verifyByteExactPackage(originalArtifact, outputDir);
                 result.setPackageFidelity(packageFidelity);
@@ -307,6 +307,15 @@ public class BuildPostProcessor {
         File reportDir = new File(new File(outputDir, "target"), "package-record-restore-check");
         artifactFidelityReportWriter.write(reportDir, fidelity);
         return fidelity;
+    }
+
+    private String sourceRebuildFidelitySummary(SourceRebuildFidelityResult result) {
+        return "exact=" + result.isSourceRecompiledClassBytesSame()
+                + ", same=" + result.getSameClassBytes() + "/" + result.getOriginalAppClasses()
+                + ", different=" + result.getDifferentClassBytes()
+                + ", missing=" + result.getMissingRecompiledClasses()
+                + ", extra=" + result.getExtraRecompiledClasses()
+                + ", fallback=" + result.getCompileFallbackClasses();
     }
 
     private SourceRebuildFidelityResult verifySourceRebuildBytecode(File originalArtifact, File outputDir,
