@@ -158,7 +158,7 @@ public class RestorationScorer {
         RuntimeSmokeRunner.SmokeRunResult smokeResult = analysis == null ? null : analysis.getRuntimeSmokeResult();
         if (isStartupFailureStatus(smokeResult)) {
             addRuntimeStartupFailureGap(smokeResult, score);
-            return 0;
+            return isRuntimeEnvironmentStartupFailure(smokeResult) ? 100 : 0;
         }
 
         if (runtimeTraceResult == null || runtimeTraceResult.getEvents().isEmpty()) {
@@ -205,7 +205,7 @@ public class RestorationScorer {
         }
         if ("STARTUP_FAILED_TIMEOUT".equals(status) || "STARTUP_FAILED_EXIT".equals(status)) {
             addRuntimeStartupFailureGap(smokeResult, score);
-            return 0;
+            return isRuntimeEnvironmentStartupFailure(smokeResult) ? evidenceScore : 0;
         }
         if ("TRACE_COLLECTED_TIMEOUT".equals(status)) {
             score.addGap("runtime_status",
@@ -226,7 +226,16 @@ public class RestorationScorer {
     }
 
     private void addRuntimeStartupFailureGap(RuntimeSmokeRunner.SmokeRunResult smokeResult, RestorationScore score) {
-        score.addGap(runtimeStartupFailureCategory(smokeResult), runtimeStartupFailureDetail(smokeResult), RUNTIME_WEIGHT);
+        score.addGap(runtimeStartupFailureCategory(smokeResult), runtimeStartupFailureDetail(smokeResult),
+                runtimeStartupFailureImpact(smokeResult));
+    }
+
+    private int runtimeStartupFailureImpact(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        return isRuntimeEnvironmentStartupFailure(smokeResult) ? 0 : RUNTIME_WEIGHT;
+    }
+
+    private boolean isRuntimeEnvironmentStartupFailure(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        return "runtime_environment".equals(runtimeStartupFailureCategory(smokeResult));
     }
 
     private String runtimeStartupFailureCategory(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
@@ -251,12 +260,20 @@ public class RestorationScorer {
         cause = trimTrailingPeriods(cause);
         String causeSuffix = cause.isEmpty() ? "" : " Cause: " + cause + ".";
         if (message.isEmpty()) {
-            return "Runtime startup failure was detected." + causeSuffix;
+            return appendRuntimeEnvironmentBoundary(smokeResult, "Runtime startup failure was detected." + causeSuffix);
         }
         if (message.toLowerCase(Locale.ROOT).startsWith("runtime startup failure")) {
-            return message + "." + causeSuffix;
+            return appendRuntimeEnvironmentBoundary(smokeResult, message + "." + causeSuffix);
         }
-        return "Runtime startup failure was detected: " + message + "." + causeSuffix;
+        return appendRuntimeEnvironmentBoundary(smokeResult,
+                "Runtime startup failure was detected: " + message + "." + causeSuffix);
+    }
+
+    private String appendRuntimeEnvironmentBoundary(RuntimeSmokeRunner.SmokeRunResult smokeResult, String detail) {
+        if (!isRuntimeEnvironmentStartupFailure(smokeResult)) {
+            return detail;
+        }
+        return detail + " External environment dependency; not counted as a byte-level restoration penalty.";
     }
 
     private String firstCausedBy(String content) {
@@ -453,10 +470,19 @@ public class RestorationScorer {
     }
 
     private int capPerfectScoreWhenGapsExist(int overall, RestorationScore score) {
-        if (overall >= 100 && score != null && !score.getGaps().isEmpty()) {
+        if (overall >= 100 && score != null && hasPositiveImpactGap(score)) {
             return 99;
         }
         return overall;
+    }
+
+    private boolean hasPositiveImpactGap(RestorationScore score) {
+        for (RestorationScore.GapItem gap : score.getGaps()) {
+            if (gap != null && gap.getImpact() > 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private int percent(int restored, int total) {
