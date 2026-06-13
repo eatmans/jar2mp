@@ -26,7 +26,8 @@ class RestorationScoreWriterTest {
         new RestorationScoreWriter().write(tempDir.toFile(), score);
 
         String report = Files.readString(tempDir.resolve("restoration-score.md"));
-        assertTrue(report.contains("Overall score includes source, resource, runtime observation, and build verification"));
+        assertTrue(report.contains("Overall score includes source fidelity, source-recompiled class-byte equality"));
+        assertTrue(report.contains("resource fidelity, runtime observation, and build/package verification"));
         assertTrue(report.contains("Byte-level package equality is summarized below when package fidelity reports exist"));
         assertTrue(report.contains("target/byte-exact-package-check"));
         assertTrue(report.contains("target/package-record-restore-check"));

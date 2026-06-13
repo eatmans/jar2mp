@@ -1,9 +1,11 @@
 package com.z0fsec.jar2mp.core;
 
+import com.z0fsec.jar2mp.model.ArtifactFidelityResult;
 import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ResourceFinding;
 import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.SourceRebuildFidelityResult;
 import com.z0fsec.jar2mp.model.VerificationError;
 import com.z0fsec.jar2mp.model.VerificationResult;
 import org.junit.jupiter.api.Test;
@@ -534,6 +536,60 @@ class RestorationScorerTest {
                 "verification_errors".equals(g.getCategory())
                         && g.getDetail().contains("MISSING_SYMBOL=2")
                         && g.getDetail().contains("GENERIC_INFERENCE=1")));
+    }
+
+    @Test
+    void sourceRebuildBytecodeMismatchLowersSourceScore() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/App.class");
+        analysis.getClassFiles().add("demo/Service.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/App.class", null, null));
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/Service.class", null, null));
+        SourceRebuildFidelityResult fidelity = new SourceRebuildFidelityResult();
+        fidelity.setOriginalAppClasses(2);
+        fidelity.setRecompiledClasses(2);
+        fidelity.setCommonClasses(2);
+        fidelity.setSameClassBytes(1);
+        fidelity.setDifferentClassBytes(1);
+        fidelity.recordDifferentClass("demo/Service.class");
+        analysis.setSourceRebuildFidelity(fidelity);
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(50, score.getBreakdown().get("source").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "source_rebuild_bytecode".equals(g.getCategory())
+                        && g.getDetail().contains("different=1")
+                        && g.getDetail().contains("demo/Service.class")));
+    }
+
+    @Test
+    void packageFidelityMismatchLowersVerificationScore() {
+        ArtifactFidelityResult packageFidelity = new ArtifactFidelityResult();
+        packageFidelity.setOriginalEntryTotal(3);
+        packageFidelity.setRebuiltEntryTotal(3);
+        packageFidelity.setCommonEntries(3);
+        packageFidelity.setSameSha256(2);
+        packageFidelity.setDifferentSha256(1);
+        packageFidelity.setOriginalClassEntries(1);
+        packageFidelity.setRebuiltClassEntries(1);
+        packageFidelity.setCommonClassEntries(1);
+        packageFidelity.setDifferentClassBytes(1);
+        packageFidelity.setArchiveEntryOrderSame(false);
+        packageFidelity.setArchiveMetadataDiffEntries(1);
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setPackageFidelity(packageFidelity);
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(0);
+        verification.setFailureType("NONE");
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, verification);
+
+        assertEquals(0, score.getBreakdown().get("verification").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "package_fidelity".equals(g.getCategory())
+                        && g.getDetail().contains("exact=false")
+                        && g.getDetail().contains("classDiff=1")));
     }
 
     private VerificationError verificationError(String category) {

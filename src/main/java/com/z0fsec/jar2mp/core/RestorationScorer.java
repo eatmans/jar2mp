@@ -1,9 +1,11 @@
 package com.z0fsec.jar2mp.core;
 
+import com.z0fsec.jar2mp.model.ArtifactFidelityResult;
 import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ResourceFinding;
 import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.SourceRebuildFidelityResult;
 import com.z0fsec.jar2mp.model.VerificationError;
 import com.z0fsec.jar2mp.model.VerificationResult;
 
@@ -46,9 +48,13 @@ public class RestorationScorer {
         RestorationScore score = new RestorationScore();
 
         int sourceScore = scoreSource(effectiveAnalysis, score);
+        sourceScore = Math.min(sourceScore, scoreSourceRebuildFidelity(effectiveAnalysis.getSourceRebuildFidelity(),
+                score));
         int resourceScore = scoreResources(effectiveAnalysis, score);
         int runtimeScore = scoreRuntime(effectiveAnalysis, effectiveRuntime, score);
         int verificationScore = scoreVerification(effectiveVerification, score);
+        verificationScore = Math.min(verificationScore, scorePackageFidelity(effectiveAnalysis.getPackageFidelity(),
+                score));
 
         score.putBucket(SOURCE, sourceScore);
         score.putBucket(RESOURCE, resourceScore);
@@ -59,6 +65,93 @@ public class RestorationScorer {
                 runtimeScore, verificationScore), score);
         score.setOverall(overall);
         return score;
+    }
+
+    private int scoreSourceRebuildFidelity(SourceRebuildFidelityResult fidelity, RestorationScore score) {
+        if (fidelity == null) {
+            return 100;
+        }
+        if (fidelity.isSourceRecompiledClassBytesSame()) {
+            return 100;
+        }
+
+        int originalClasses = fidelity.getOriginalAppClasses();
+        int sameClasses = fidelity.getSameClassBytes();
+        int mismatchCount = sourceRebuildMismatchCount(fidelity);
+        score.addGap("source_rebuild_bytecode", sourceRebuildFidelityDetail(fidelity),
+                bucketImpact(SOURCE_WEIGHT, Math.max(originalClasses, mismatchCount), mismatchCount));
+        if (originalClasses <= 0) {
+            return 0;
+        }
+        return Math.max(0, Math.min(100, percent(sameClasses, originalClasses)));
+    }
+
+    private int sourceRebuildMismatchCount(SourceRebuildFidelityResult fidelity) {
+        int mismatchCount = fidelity.getDifferentClassBytes()
+                + fidelity.getMissingRecompiledClasses()
+                + fidelity.getExtraRecompiledClasses()
+                + fidelity.getCompileFallbackClasses();
+        if (mismatchCount > 0) {
+            return mismatchCount;
+        }
+        return Math.max(1, fidelity.getOriginalAppClasses() - fidelity.getSameClassBytes());
+    }
+
+    private String sourceRebuildFidelityDetail(SourceRebuildFidelityResult fidelity) {
+        StringBuilder detail = new StringBuilder();
+        detail.append("Source-recompiled class bytes are not identical: same=")
+                .append(fidelity.getSameClassBytes())
+                .append("/")
+                .append(fidelity.getOriginalAppClasses())
+                .append(", different=")
+                .append(fidelity.getDifferentClassBytes())
+                .append(", missing=")
+                .append(fidelity.getMissingRecompiledClasses())
+                .append(", extra=")
+                .append(fidelity.getExtraRecompiledClasses())
+                .append(", fallback=")
+                .append(fidelity.getCompileFallbackClasses())
+                .append(".");
+        appendSampleClasses(detail, "different", fidelity.getSampleDifferentClasses());
+        appendSampleClasses(detail, "missing", fidelity.getSampleMissingRecompiledClasses());
+        appendSampleClasses(detail, "extra", fidelity.getSampleExtraRecompiledClasses());
+        return detail.toString();
+    }
+
+    private void appendSampleClasses(StringBuilder detail, String label, List<String> samples) {
+        if (samples == null || samples.isEmpty()) {
+            return;
+        }
+        detail.append(" ").append(label).append(" samples=");
+        for (int i = 0; i < samples.size(); i++) {
+            if (i > 0) {
+                detail.append(",");
+            }
+            detail.append(samples.get(i));
+        }
+        detail.append(".");
+    }
+
+    private int scorePackageFidelity(ArtifactFidelityResult fidelity, RestorationScore score) {
+        if (fidelity == null) {
+            return 100;
+        }
+        if (fidelity.isExactMatch()) {
+            return 100;
+        }
+        score.addGap("package_fidelity", packageFidelityDetail(fidelity), VERIFICATION_WEIGHT);
+        return 0;
+    }
+
+    private String packageFidelityDetail(ArtifactFidelityResult fidelity) {
+        return "Restored package artifact is not byte-identical: exact=" + fidelity.isExactMatch()
+                + ", content=" + fidelity.isContentEntriesMatch()
+                + ", entries=" + fidelity.getSameSha256() + "/" + fidelity.getOriginalEntryTotal()
+                + ", classDiff=" + fidelity.getDifferentClassBytes()
+                + ", nestedDiff=" + fidelity.getDifferentNestedLibs()
+                + ", order=" + fidelity.isArchiveEntryOrderSame()
+                + ", metadataDiff=" + fidelity.getArchiveMetadataDiffEntries()
+                + ".";
     }
 
     private int scoreSource(JarAnalysisResult analysis, RestorationScore score) {

@@ -19,7 +19,8 @@ public class RestorationScoreWriter {
 
         report.append("# Restoration score\n\n");
         report.append("- Overall: ").append(effectiveScore.getOverall()).append("/100\n\n");
-        report.append("> Overall score includes source, resource, runtime observation, and build verification. ")
+        report.append("> Overall score includes source fidelity, source-recompiled class-byte equality, ")
+                .append("resource fidelity, runtime observation, and build/package verification. ")
                 .append("Byte-level package equality is summarized below when package fidelity reports exist; ")
                 .append("full reports live in ")
                 .append("`target/byte-exact-package-check/` and ")
