@@ -113,6 +113,7 @@ public class BuildPostProcessor {
             if (config.isByteExactPackage() && runsPackagePhase(config.getVerifyGoal())) {
                 ArtifactFidelityResult packageFidelity = verifyByteExactPackage(originalArtifact, outputDir);
                 result.setPackageFidelity(packageFidelity);
+                analysis.setPackageFidelity(packageFidelity);
                 refreshRestorationScore(outputDir, analysis);
                 log(logger, "字节级 package 保真: exact=" + packageFidelity.isExactMatch());
                 if (!packageFidelity.isExactMatch()) {
@@ -125,6 +126,7 @@ public class BuildPostProcessor {
                 ArtifactFidelityResult packageFidelity = verifyPackageRecordRestoredPackage(originalArtifact,
                         outputDir);
                 result.setPackageFidelity(packageFidelity);
+                analysis.setPackageFidelity(packageFidelity);
                 refreshRestorationScore(outputDir, analysis);
                 log(logger, "包记录回放保真: exact=" + packageFidelity.isExactMatch());
                 if (!packageFidelity.isExactMatch()) {

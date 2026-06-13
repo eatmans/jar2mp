@@ -27,6 +27,7 @@ public class JarAnalysisResult {
     private com.z0fsec.jar2mp.core.RuntimeSmokeRunner.SmokeRunResult runtimeSmokeResult;
     private VerificationResult verificationResult;
     private SourceRebuildFidelityResult sourceRebuildFidelity;
+    private ArtifactFidelityResult packageFidelity;
     private RestorationScore restorationScore;
     /** Maps stripped class path -> original entry path in JAR (for BOOT-INF/classes/, WEB-INF/classes/) */
     private final Map<String, String> classPathMapping = new LinkedHashMap<>();
@@ -72,6 +73,10 @@ public class JarAnalysisResult {
     public SourceRebuildFidelityResult getSourceRebuildFidelity() { return sourceRebuildFidelity; }
     public void setSourceRebuildFidelity(SourceRebuildFidelityResult sourceRebuildFidelity) {
         this.sourceRebuildFidelity = sourceRebuildFidelity;
+    }
+    public ArtifactFidelityResult getPackageFidelity() { return packageFidelity; }
+    public void setPackageFidelity(ArtifactFidelityResult packageFidelity) {
+        this.packageFidelity = packageFidelity;
     }
     public RestorationScore getRestorationScore() { return restorationScore; }
     public void setRestorationScore(RestorationScore restorationScore) {

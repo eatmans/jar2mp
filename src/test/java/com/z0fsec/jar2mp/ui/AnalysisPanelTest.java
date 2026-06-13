@@ -3,6 +3,7 @@ package com.z0fsec.jar2mp.ui;
 import com.z0fsec.jar2mp.core.RuntimeSmokeRunner;
 import com.z0fsec.jar2mp.core.RuntimeTraceEvent;
 import com.z0fsec.jar2mp.core.RuntimeTraceResult;
+import com.z0fsec.jar2mp.model.ArtifactFidelityResult;
 import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.RestorationScore;
@@ -43,6 +44,15 @@ class AnalysisPanelTest {
         sourceRebuildFidelity.setCommonClasses(2);
         sourceRebuildFidelity.setSameClassBytes(2);
         result.setSourceRebuildFidelity(sourceRebuildFidelity);
+        ArtifactFidelityResult packageFidelity = new ArtifactFidelityResult();
+        packageFidelity.setArchiveBytesSame(true);
+        packageFidelity.setSameClassBytes(3);
+        packageFidelity.setDifferentClassBytes(0);
+        packageFidelity.setSameNestedLibs(2);
+        packageFidelity.setDifferentNestedLibs(0);
+        packageFidelity.setArchiveEntryOrderSame(true);
+        packageFidelity.setArchiveMetadataDiffEntries(0);
+        result.setPackageFidelity(packageFidelity);
         result.getDecompileFindings().add(new DecompileFinding("demo/Broken.class",
                 "src/main/original-classes/demo/Broken.class", "syntax recovery failed"));
         result.getDecompileFindings().add(new DecompileFinding("demo/Plain.class",
@@ -83,6 +93,8 @@ class AnalysisPanelTest {
         assertEquals("1", valueFor(model, "编译回退类数"));
         assertEquals("exact=true, same=2/2, different=0, missing=0, extra=0, fallback=0",
                 valueFor(model, "源码重编译 class 字节"));
+        assertEquals("exact=true, content=true, classSame=3, classDiff=0, nestedDiff=0, order=true, metadataDiff=0",
+                valueFor(model, "字节级 package 保真"));
         assertEquals("2", valueFor(model, "反编译失败数"));
         assertEquals("1", valueFor(model, "保留原始 class 数"));
         assertEquals("STARTUP_FAILED_EXIT (events=2)", valueFor(model, "运行状态"));

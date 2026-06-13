@@ -120,6 +120,10 @@ public class AnalysisPanel extends BasePanel {
             summaryModel.addRow(new Object[]{"源码重编译 class 字节",
                     sourceRebuildFidelityText(sourceRebuildFidelity)});
         }
+        ArtifactFidelityResult packageFidelity = result.getPackageFidelity();
+        if (packageFidelity != null) {
+            summaryModel.addRow(new Object[]{"字节级 package 保真", packageFidelityText(packageFidelity)});
+        }
         summaryModel.addRow(new Object[]{"反编译失败数", result.getDecompileFindings().size()});
         summaryModel.addRow(new Object[]{"保留原始 class 数", retainedClassCount(result.getDecompileFindings())});
 
@@ -178,6 +182,16 @@ public class AnalysisPanel extends BasePanel {
                 + ", missing=" + result.getMissingRecompiledClasses()
                 + ", extra=" + result.getExtraRecompiledClasses()
                 + ", fallback=" + result.getCompileFallbackClasses();
+    }
+
+    private String packageFidelityText(ArtifactFidelityResult result) {
+        return "exact=" + result.isExactMatch()
+                + ", content=" + result.isContentEntriesMatch()
+                + ", classSame=" + result.getSameClassBytes()
+                + ", classDiff=" + result.getDifferentClassBytes()
+                + ", nestedDiff=" + result.getDifferentNestedLibs()
+                + ", order=" + result.isArchiveEntryOrderSame()
+                + ", metadataDiff=" + result.getArchiveMetadataDiffEntries();
     }
 
     private String runtimeStatusText(RuntimeSmokeRunner.SmokeRunResult smokeResult) {

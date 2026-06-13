@@ -116,6 +116,30 @@ class BuildPostProcessorTest {
     }
 
     @Test
+    void postProcessStoresPackageFidelityOnAnalysisResult() throws Exception {
+        Path rawClasses = tempDir.resolve("package-fidelity-classes");
+        compileRawClass(rawClasses, "demo.App", "package demo;\npublic class App {}\n");
+        Path jar = tempDir.resolve("package-fidelity.jar");
+        createJarFromClass(jar, rawClasses.resolve("demo/App.class"), "demo/App.class");
+        Path outputDir = tempDir.resolve("project-with-package-fidelity");
+        Files.createDirectories(outputDir.resolve("src/main/java/demo"));
+        Files.write(outputDir.resolve("pom.xml"), pomXml().getBytes(StandardCharsets.UTF_8));
+        Files.write(outputDir.resolve("src/main/java/demo/App.java"),
+                "package demo;\npublic class App {}\n".getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/App.class");
+        ProjectConfig config = new ProjectConfig();
+        config.setVerifyBuild(true);
+        config.setVerifyGoal("package");
+        config.setByteExactPackage(true);
+
+        new BuildPostProcessor().postProcess(jar.toFile(), analysis, outputDir.toFile(), config, message -> { });
+
+        assertNotNull(analysis.getPackageFidelity());
+    }
+
+    @Test
     void postProcessLogsWarningWhenTraceEventsAreCollectedBeforeTimeout() throws Exception {
         Path jar = createSlowTraceJar();
         Path outputDir = tempDir.resolve("project-with-trace-timeout");
