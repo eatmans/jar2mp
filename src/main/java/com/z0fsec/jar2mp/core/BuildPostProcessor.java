@@ -105,6 +105,7 @@ public class BuildPostProcessor {
             }
             SourceRebuildFidelityResult sourceRebuildFidelity = verifySourceRebuildBytecode(originalArtifact,
                     outputDir, verification);
+            analysis.setSourceRebuildFidelity(sourceRebuildFidelity);
             result.setSourceRebuildFidelity(sourceRebuildFidelity);
             refreshRestorationScore(outputDir, analysis);
             log(logger, "源码重编译 class 字节保真: exact="

@@ -6,6 +6,7 @@ import com.z0fsec.jar2mp.core.RuntimeTraceResult;
 import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.SourceRebuildFidelityResult;
 import com.z0fsec.jar2mp.model.VerificationError;
 import com.z0fsec.jar2mp.model.VerificationResult;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,12 @@ class AnalysisPanelTest {
         verification.getErrors().add(new VerificationError());
         verification.getCompileFallbackClassPaths().add("demo/Broken.class");
         result.setVerificationResult(verification);
+        SourceRebuildFidelityResult sourceRebuildFidelity = new SourceRebuildFidelityResult();
+        sourceRebuildFidelity.setOriginalAppClasses(2);
+        sourceRebuildFidelity.setRecompiledClasses(2);
+        sourceRebuildFidelity.setCommonClasses(2);
+        sourceRebuildFidelity.setSameClassBytes(2);
+        result.setSourceRebuildFidelity(sourceRebuildFidelity);
         result.getDecompileFindings().add(new DecompileFinding("demo/Broken.class",
                 "src/main/original-classes/demo/Broken.class", "syntax recovery failed"));
         result.getDecompileFindings().add(new DecompileFinding("demo/Plain.class",
@@ -74,6 +81,8 @@ class AnalysisPanelTest {
         assertEquals("BUILD SUCCESS (NONE, exit 0)", valueFor(model, "构建验证"));
         assertEquals("1", valueFor(model, "构建错误数"));
         assertEquals("1", valueFor(model, "编译回退类数"));
+        assertEquals("exact=true, same=2/2, different=0, missing=0, extra=0, fallback=0",
+                valueFor(model, "源码重编译 class 字节"));
         assertEquals("2", valueFor(model, "反编译失败数"));
         assertEquals("1", valueFor(model, "保留原始 class 数"));
         assertEquals("STARTUP_FAILED_EXIT (events=2)", valueFor(model, "运行状态"));

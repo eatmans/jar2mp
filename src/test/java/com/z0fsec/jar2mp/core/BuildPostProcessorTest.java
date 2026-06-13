@@ -18,6 +18,7 @@ import java.util.jar.Manifest;
 import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BuildPostProcessorTest {
@@ -75,6 +76,40 @@ class BuildPostProcessorTest {
         String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
         assertTrue(report.contains("- Source coverage: missing"));
         assertTrue(report.contains("- Source: missing or not generated"));
+    }
+
+    @Test
+    void postProcessStoresSourceRebuildFidelityOnAnalysisResult() throws Exception {
+        Path rawClasses = tempDir.resolve("source-fidelity-classes");
+        compileRawClass(rawClasses, "demo.App", "package demo;\npublic class App {}\n");
+        Path jar = tempDir.resolve("source-fidelity.jar");
+        createJarFromClass(jar, rawClasses.resolve("demo/App.class"), "demo/App.class");
+        Path outputDir = tempDir.resolve("project-with-source-fidelity");
+        Files.createDirectories(outputDir.resolve("src/main/java/demo"));
+        Files.write(outputDir.resolve("pom.xml"), pomXml().getBytes(StandardCharsets.UTF_8));
+        Files.write(outputDir.resolve("src/main/java/demo/App.java"),
+                "package demo;\npublic class App {}\n".getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/App.class");
+        ProjectConfig config = new ProjectConfig();
+        config.setVerifyBuild(true);
+
+        new BuildPostProcessor().postProcess(jar.toFile(), analysis, outputDir.toFile(), config, message -> { });
+
+        assertNotNull(analysis.getSourceRebuildFidelity());
+        assertTrue(analysis.getSourceRebuildFidelity().isSourceRecompiledClassBytesSame(),
+                "source rebuild fidelity should be exact: "
+                        + "original=" + analysis.getSourceRebuildFidelity().getOriginalAppClasses()
+                        + ", recompiled=" + analysis.getSourceRebuildFidelity().getRecompiledClasses()
+                        + ", common=" + analysis.getSourceRebuildFidelity().getCommonClasses()
+                        + ", same=" + analysis.getSourceRebuildFidelity().getSameClassBytes()
+                        + ", different=" + analysis.getSourceRebuildFidelity().getDifferentClassBytes()
+                        + ", missing=" + analysis.getSourceRebuildFidelity().getMissingRecompiledClasses()
+                        + ", extra=" + analysis.getSourceRebuildFidelity().getExtraRecompiledClasses()
+                        + ", fallback=" + analysis.getSourceRebuildFidelity().getCompileFallbackClasses()
+                        + ", differentSamples="
+                        + analysis.getSourceRebuildFidelity().getSampleDifferentClasses());
     }
 
     @Test
@@ -246,6 +281,9 @@ class BuildPostProcessorTest {
                 null,
                 null,
                 null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
                 "-d", rawClassesDir.toString(),
                 sourceFile.toString());
         if (result != 0) {

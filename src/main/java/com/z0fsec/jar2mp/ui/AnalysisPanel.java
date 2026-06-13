@@ -115,6 +115,11 @@ public class AnalysisPanel extends BasePanel {
             summaryModel.addRow(new Object[]{"构建错误数", verification.getErrors().size()});
             summaryModel.addRow(new Object[]{"编译回退类数", verification.getCompileFallbackClassPaths().size()});
         }
+        SourceRebuildFidelityResult sourceRebuildFidelity = result.getSourceRebuildFidelity();
+        if (sourceRebuildFidelity != null) {
+            summaryModel.addRow(new Object[]{"源码重编译 class 字节",
+                    sourceRebuildFidelityText(sourceRebuildFidelity)});
+        }
         summaryModel.addRow(new Object[]{"反编译失败数", result.getDecompileFindings().size()});
         summaryModel.addRow(new Object[]{"保留原始 class 数", retainedClassCount(result.getDecompileFindings())});
 
@@ -164,6 +169,15 @@ public class AnalysisPanel extends BasePanel {
                 ? "BUILD SUCCESS"
                 : "BUILD FAILED";
         return status + " (" + failureType + ", exit " + verification.getExitCode() + ")";
+    }
+
+    private String sourceRebuildFidelityText(SourceRebuildFidelityResult result) {
+        return "exact=" + result.isSourceRecompiledClassBytesSame()
+                + ", same=" + result.getSameClassBytes() + "/" + result.getOriginalAppClasses()
+                + ", different=" + result.getDifferentClassBytes()
+                + ", missing=" + result.getMissingRecompiledClasses()
+                + ", extra=" + result.getExtraRecompiledClasses()
+                + ", fallback=" + result.getCompileFallbackClasses();
     }
 
     private String runtimeStatusText(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
