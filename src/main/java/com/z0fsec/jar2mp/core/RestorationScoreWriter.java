@@ -35,19 +35,7 @@ public class RestorationScoreWriter {
         appendPackageFidelityEvidence(report, outputDir);
 
         report.append("\n## Top gaps\n\n");
-        List<RestorationScore.GapItem> gaps = new ArrayList<>(effectiveScore.getGaps());
-        Collections.sort(gaps, new Comparator<RestorationScore.GapItem>() {
-            @Override
-            public int compare(RestorationScore.GapItem left, RestorationScore.GapItem right) {
-                int impact = Integer.compare(right.getImpact(), left.getImpact());
-                if (impact != 0) {
-                    return impact;
-                }
-                String leftCategory = left.getCategory() == null ? "" : left.getCategory();
-                String rightCategory = right.getCategory() == null ? "" : right.getCategory();
-                return leftCategory.compareTo(rightCategory);
-            }
-        });
+        List<RestorationScore.GapItem> gaps = sortedGaps(effectiveScore, true);
 
         if (gaps.isEmpty()) {
             report.append("- None detected.\n");
@@ -65,7 +53,50 @@ public class RestorationScoreWriter {
             }
         }
 
+        report.append("\n## Non-penalizing observations\n\n");
+        List<RestorationScore.GapItem> observations = sortedGaps(effectiveScore, false);
+        if (observations.isEmpty()) {
+            report.append("- None recorded.\n");
+        } else {
+            int limit = Math.min(10, observations.size());
+            for (int i = 0; i < limit; i++) {
+                RestorationScore.GapItem gap = observations.get(i);
+                report.append("- [")
+                        .append(gap.getCategory())
+                        .append("] ")
+                        .append(safe(gap.getDetail()))
+                        .append(" (impact ")
+                        .append(gap.getImpact())
+                        .append(")\n");
+            }
+        }
+
         IoUtils.writeStringToFile(new File(outputDir, "restoration-score.md"), report.toString());
+    }
+
+    private List<RestorationScore.GapItem> sortedGaps(RestorationScore score, boolean positiveImpact) {
+        List<RestorationScore.GapItem> gaps = new ArrayList<>();
+        for (RestorationScore.GapItem gap : score.getGaps()) {
+            if (gap == null) {
+                continue;
+            }
+            if ((gap.getImpact() > 0) == positiveImpact) {
+                gaps.add(gap);
+            }
+        }
+        Collections.sort(gaps, new Comparator<RestorationScore.GapItem>() {
+            @Override
+            public int compare(RestorationScore.GapItem left, RestorationScore.GapItem right) {
+                int impact = Integer.compare(right.getImpact(), left.getImpact());
+                if (impact != 0) {
+                    return impact;
+                }
+                String leftCategory = left.getCategory() == null ? "" : left.getCategory();
+                String rightCategory = right.getCategory() == null ? "" : right.getCategory();
+                return leftCategory.compareTo(rightCategory);
+            }
+        });
+        return gaps;
     }
 
     private void appendBucket(StringBuilder report, String bucket, int weight, Integer score) {

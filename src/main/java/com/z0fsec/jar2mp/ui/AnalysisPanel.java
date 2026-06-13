@@ -137,8 +137,13 @@ public class AnalysisPanel extends BasePanel {
         RestorationScore score = result.getRestorationScore();
         if (score != null) {
             summaryModel.addRow(new Object[]{"恢复评分", restorationScoreText(score)});
-            if (!score.getGaps().isEmpty()) {
-                summaryModel.addRow(new Object[]{"剩余缺口", gapSummaryText(score)});
+            String gapSummary = gapSummaryText(score, true);
+            if (!gapSummary.isEmpty()) {
+                summaryModel.addRow(new Object[]{"剩余缺口", gapSummary});
+            }
+            String observationSummary = gapSummaryText(score, false);
+            if (!observationSummary.isEmpty()) {
+                summaryModel.addRow(new Object[]{"环境观察", observationSummary});
             }
         }
     }
@@ -195,10 +200,13 @@ public class AnalysisPanel extends BasePanel {
         return value == null ? 0 : value.intValue();
     }
 
-    private String gapSummaryText(RestorationScore score) {
+    private String gapSummaryText(RestorationScore score, boolean positiveImpact) {
         StringBuilder summary = new StringBuilder();
         for (RestorationScore.GapItem gap : score.getGaps()) {
             if (gap == null) {
+                continue;
+            }
+            if ((gap.getImpact() > 0) != positiveImpact) {
                 continue;
             }
             if (summary.length() > 0) {

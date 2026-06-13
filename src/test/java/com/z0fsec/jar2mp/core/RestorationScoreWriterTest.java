@@ -71,4 +71,21 @@ class RestorationScoreWriterTest {
         assertTrue(report.contains("| Source-recompiled class bytes same | Original app classes | Recompiled classes | Common | Same class bytes | Different class bytes | Missing | Extra | Compile fallback classes |"));
         assertTrue(report.contains("| true | 413 | 413 | 413 | 413 | 0 | 0 | 0 | 0 |"));
     }
+
+    @Test
+    void separatesNonPenalizingObservationsFromTopGaps() throws Exception {
+        RestorationScore score = new RestorationScore();
+        score.setOverall(100);
+        score.addGap("runtime_environment",
+                "External Redis is not available; not a byte-level restoration penalty.", 0);
+        score.addGap("decompile", "demo/Broken.class", 5);
+
+        new RestorationScoreWriter().write(tempDir.toFile(), score);
+
+        String report = Files.readString(tempDir.resolve("restoration-score.md"));
+        assertTrue(report.contains("## Top gaps"));
+        assertTrue(report.contains("- [decompile] demo/Broken.class (impact 5)"));
+        assertTrue(report.contains("## Non-penalizing observations"));
+        assertTrue(report.contains("- [runtime_environment] External Redis is not available"));
+    }
 }

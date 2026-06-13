@@ -50,4 +50,39 @@ class GapSummaryWriterTest {
         assertTrue(report.contains("## Source rebuild class bytecode fidelity"));
         assertTrue(report.contains("| false | 10 | 9 | 9 | 8 | 1 | 1 | 0 | 1 |"));
     }
+
+    @Test
+    void separatesNonPenalizingObservationsFromRestorationGaps() throws Exception {
+        RestorationScore score = new RestorationScore();
+        score.setOverall(100);
+        score.addGap("runtime_environment",
+                "External Redis is not available; not a byte-level restoration penalty.", 0);
+        score.addGap("decompile", "demo/Broken.class", 5);
+
+        new GapSummaryWriter().write(tempDir.toFile(), score);
+
+        String report = Files.readString(tempDir.resolve("gap-summary.md"));
+        assertTrue(report.contains("- Gap count: 1"));
+        assertTrue(report.contains("- Observation count: 1"));
+        assertTrue(report.contains("## Remaining restoration gaps"));
+        assertTrue(report.contains("| decompile | 5 | demo/Broken.class |"));
+        assertTrue(report.contains("## Non-penalizing observations"));
+        assertTrue(report.contains("| runtime_environment | 0 | External Redis is not available"));
+    }
+
+    @Test
+    void countsOnlyPositiveImpactItemsAsRestorationGaps() throws Exception {
+        RestorationScore score = new RestorationScore();
+        score.setOverall(100);
+        score.addGap("runtime_environment",
+                "External Redis is not available; not a byte-level restoration penalty.", 0);
+
+        new GapSummaryWriter().write(tempDir.toFile(), score);
+
+        String report = Files.readString(tempDir.resolve("gap-summary.md"));
+        assertTrue(report.contains("- Gap count: 0"));
+        assertTrue(report.contains("- Observation count: 1"));
+        assertTrue(report.contains("| (none) | 0 | No restoration gaps detected. |"));
+        assertTrue(report.contains("| runtime_environment | 0 | External Redis is not available"));
+    }
 }

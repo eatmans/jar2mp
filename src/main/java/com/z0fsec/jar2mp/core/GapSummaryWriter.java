@@ -15,17 +15,64 @@ public class GapSummaryWriter {
     public void write(File outputDir, RestorationScore score) throws IOException {
         RestorationScore effectiveScore = score == null ? new RestorationScore() : score;
         StringBuilder report = new StringBuilder();
+        List<RestorationScore.GapItem> restorationGaps = sortedGaps(effectiveScore, true);
+        List<RestorationScore.GapItem> observations = sortedGaps(effectiveScore, false);
 
         report.append("# Gap summary\n\n");
         report.append("- Overall score: ").append(effectiveScore.getOverall()).append("/100\n");
-        report.append("- Gap count: ").append(effectiveScore.getGaps().size()).append("\n");
+        report.append("- Gap count: ").append(restorationGaps.size()).append("\n");
+        report.append("- Observation count: ").append(observations.size()).append("\n");
         appendSourceRebuildFidelityEvidence(report, outputDir);
         appendPackageFidelityEvidence(report, outputDir);
         report.append("\n");
+        report.append("## Remaining restoration gaps\n\n");
         report.append("| Category | Impact | Detail |\n");
         report.append("| --- | --- | --- |\n");
 
-        List<RestorationScore.GapItem> gaps = new ArrayList<>(effectiveScore.getGaps());
+        if (restorationGaps.isEmpty()) {
+            report.append("| (none) | 0 | No restoration gaps detected. |\n");
+        } else {
+            for (RestorationScore.GapItem gap : restorationGaps) {
+                report.append("| ")
+                        .append(safe(gap.getCategory()))
+                        .append(" | ")
+                        .append(gap.getImpact())
+                        .append(" | ")
+                        .append(safe(gap.getDetail()))
+                        .append(" |\n");
+            }
+        }
+
+        report.append("\n## Non-penalizing observations\n\n");
+        report.append("| Observation | Impact | Detail |\n");
+        report.append("| --- | --- | --- |\n");
+        if (observations.isEmpty()) {
+            report.append("| (none) | 0 | No non-penalizing observations recorded. |\n");
+        } else {
+            for (RestorationScore.GapItem gap : observations) {
+                report.append("| ")
+                        .append(safe(gap.getCategory()))
+                        .append(" | ")
+                        .append(gap.getImpact())
+                        .append(" | ")
+                        .append(safe(gap.getDetail()))
+                        .append(" |\n");
+            }
+        }
+
+        IoUtils.writeStringToFile(new File(outputDir, "gap-summary.md"), report.toString());
+    }
+
+    private List<RestorationScore.GapItem> sortedGaps(RestorationScore score, boolean positiveImpact) {
+        List<RestorationScore.GapItem> gaps = new ArrayList<>();
+        for (RestorationScore.GapItem gap : score.getGaps()) {
+            if (gap == null) {
+                continue;
+            }
+            if ((gap.getImpact() > 0) == positiveImpact) {
+                gaps.add(gap);
+            }
+        }
         Collections.sort(gaps, new Comparator<RestorationScore.GapItem>() {
             @Override
             public int compare(RestorationScore.GapItem left, RestorationScore.GapItem right) {
@@ -38,22 +85,7 @@ public class GapSummaryWriter {
                 return leftCategory.compareTo(rightCategory);
             }
         });
-
-        if (gaps.isEmpty()) {
-            report.append("| (none) | 0 | No major gaps detected. |\n");
-        } else {
-            for (RestorationScore.GapItem gap : gaps) {
-                report.append("| ")
-                        .append(safe(gap.getCategory()))
-                        .append(" | ")
-                        .append(gap.getImpact())
-                        .append(" | ")
-                        .append(safe(gap.getDetail()))
-                        .append(" |\n");
-            }
-        }
-
-        IoUtils.writeStringToFile(new File(outputDir, "gap-summary.md"), report.toString());
+        return gaps;
     }
 
     private void appendPackageFidelityEvidence(StringBuilder report, File outputDir) throws IOException {

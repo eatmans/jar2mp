@@ -17,6 +17,7 @@ import java.lang.reflect.Field;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class AnalysisPanelTest {
 
@@ -81,7 +82,8 @@ class AnalysisPanelTest {
         assertEquals("org.redisson.client.RedisConnectionException: "
                         + "Unable to connect to Redis server: localhost/127.0.0.1:6379",
                 valueFor(model, "运行失败原因"));
-        assertEquals("runtime_environment=0", valueFor(model, "剩余缺口"));
+        assertNull(valueFor(model, "剩余缺口"));
+        assertEquals("runtime_environment=0", valueFor(model, "环境观察"));
     }
 
     private JTable summaryTable(AnalysisPanel panel) throws Exception {
