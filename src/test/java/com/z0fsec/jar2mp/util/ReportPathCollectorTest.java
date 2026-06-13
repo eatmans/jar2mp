@@ -26,6 +26,8 @@ class ReportPathCollectorTest {
         createReport("target/raw-artifact/artifact-fidelity-report.md");
         createReport("target/byte-exact-package-check/artifact-fidelity-report.md");
         createReport("target/package-record-restore-check/artifact-fidelity-report.md");
+        createReport("source-rebuild-fidelity-report.md");
+        createReport("source-rebuild-fidelity-summary.csv");
 
         List<String> reports = relativePaths(ReportPathCollector.collectProjectReports(
                 outputDir.toFile(), config, true));
@@ -40,6 +42,8 @@ class ReportPathCollectorTest {
         assertTrue(reports.contains("runtime-trace-report.md"));
         assertTrue(reports.contains("verification-report.md"));
         assertTrue(reports.contains("verification-errors.md"));
+        assertTrue(reports.contains("source-rebuild-fidelity-report.md"));
+        assertTrue(reports.contains("source-rebuild-fidelity-summary.csv"));
         assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-report.md"));
         assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
         assertTrue(reports.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));
@@ -61,6 +65,8 @@ class ReportPathCollectorTest {
 
         assertTrue(reports.contains("verification-report.md"));
         assertTrue(reports.contains("verification-errors.md"));
+        assertTrue(reports.contains("source-rebuild-fidelity-report.md"));
+        assertTrue(reports.contains("source-rebuild-fidelity-summary.csv"));
         assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-report.md"));
         assertTrue(reports.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
         assertTrue(reports.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));

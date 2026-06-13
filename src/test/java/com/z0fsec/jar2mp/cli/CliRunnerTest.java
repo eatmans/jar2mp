@@ -630,6 +630,7 @@ class CliRunnerTest {
         assertTrue(outputText.contains("--restore-package-records"));
         assertTrue(outputText.contains("target/byte-exact-package-check"));
         assertTrue(outputText.contains("target/package-record-restore-check"));
+        assertTrue(outputText.contains("source-rebuild-fidelity-report.md"));
         assertTrue(outputText.contains("restoration-score.md"));
         assertTrue(outputText.contains("gap-summary.md"));
         assertTrue(outputText.contains("runtime-trace-report.md"));
@@ -680,6 +681,8 @@ class CliRunnerTest {
         assertTrue(Files.exists(projectDir.resolve("restoration-score.md")));
         assertTrue(Files.exists(projectDir.resolve("gap-summary.md")));
         assertTrue(Files.exists(projectDir.resolve("verification-report.md")));
+        assertTrue(Files.exists(projectDir.resolve("source-rebuild-fidelity-report.md")));
+        assertTrue(Files.exists(projectDir.resolve("source-rebuild-fidelity-summary.csv")));
     }
 
     private Path createJar(String fileName, String classEntry, byte[] classBytes) throws Exception {

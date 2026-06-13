@@ -109,6 +109,7 @@ public class RestorationReportWriter {
         report.append("- `decompile-parity-report.md`\n");
         report.append("- `restoration-score.md`\n");
         report.append("- `gap-summary.md`\n");
+        report.append("- `source-rebuild-fidelity-report.md` (when `--verify-build` succeeds)\n");
         report.append("- `RUNBOOK.md`\n");
         report.append("- `decompile-failures.md`\n");
         IoUtils.writeStringToFile(new File(outputDir, "restoration-report.md"), report.toString());

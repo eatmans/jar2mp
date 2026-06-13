@@ -31,6 +31,8 @@ public final class ReportPathCollector {
                 && !config.isSmokeOnly();
         addIfExpectedOrPresent(reports, outputDir, "verification-report.md", verificationExpected);
         addIfExpectedOrPresent(reports, outputDir, "verification-errors.md", verificationExpected);
+        addIfExpectedOrPresent(reports, outputDir, "source-rebuild-fidelity-report.md", verificationExpected);
+        addIfExpectedOrPresent(reports, outputDir, "source-rebuild-fidelity-summary.csv", verificationExpected);
 
         boolean rawArtifactExpected = config != null
                 && (config.isEmitRawArtifact() || config.isByteExactPackage());

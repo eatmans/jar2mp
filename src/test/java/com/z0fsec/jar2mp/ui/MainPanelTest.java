@@ -187,6 +187,8 @@ class MainPanelTest {
         String output = logDocumentText(panel);
         assertTrue(output.contains("verification-report.md"));
         assertTrue(output.contains("verification-errors.md"));
+        assertTrue(output.contains("source-rebuild-fidelity-report.md"));
+        assertTrue(output.contains("source-rebuild-fidelity-summary.csv"));
         assertTrue(output.contains("target/raw-artifact/artifact-fidelity-report.md"));
         assertTrue(output.contains("target/raw-artifact/artifact-fidelity-summary.csv"));
         assertTrue(output.contains("target/byte-exact-package-check/artifact-fidelity-report.md"));

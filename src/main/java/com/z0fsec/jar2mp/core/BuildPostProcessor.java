@@ -4,6 +4,7 @@ import com.z0fsec.jar2mp.model.ArtifactFidelityResult;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ProjectConfig;
 import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.SourceRebuildFidelityResult;
 import com.z0fsec.jar2mp.model.VerificationResult;
 import com.z0fsec.jar2mp.util.Jar2MpConstants;
 
@@ -28,6 +29,8 @@ public class BuildPostProcessor {
     private final RawArtifactPackager rawArtifactPackager;
     private final ArtifactFidelityComparator artifactFidelityComparator;
     private final ArtifactFidelityReportWriter artifactFidelityReportWriter;
+    private final SourceRebuildFidelityComparator sourceRebuildFidelityComparator;
+    private final SourceRebuildFidelityReportWriter sourceRebuildFidelityReportWriter;
     private final RestorationScorer restorationScorer;
     private final RestorationScoreWriter restorationScoreWriter;
     private final GapSummaryWriter gapSummaryWriter;
@@ -40,6 +43,8 @@ public class BuildPostProcessor {
         this.rawArtifactPackager = new RawArtifactPackager();
         this.artifactFidelityComparator = new ArtifactFidelityComparator();
         this.artifactFidelityReportWriter = new ArtifactFidelityReportWriter();
+        this.sourceRebuildFidelityComparator = new SourceRebuildFidelityComparator();
+        this.sourceRebuildFidelityReportWriter = new SourceRebuildFidelityReportWriter();
         this.restorationScorer = new RestorationScorer();
         this.restorationScoreWriter = new RestorationScoreWriter();
         this.gapSummaryWriter = new GapSummaryWriter();
@@ -98,6 +103,12 @@ public class BuildPostProcessor {
                         + verification.getFailureType() + " (exit " + verification.getExitCode() + ")");
                 return result;
             }
+            SourceRebuildFidelityResult sourceRebuildFidelity = verifySourceRebuildBytecode(originalArtifact,
+                    outputDir, verification);
+            result.setSourceRebuildFidelity(sourceRebuildFidelity);
+            refreshRestorationScore(outputDir, analysis);
+            log(logger, "源码重编译 class 字节保真: exact="
+                    + sourceRebuildFidelity.isSourceRecompiledClassBytesSame());
             if (config.isByteExactPackage() && runsPackagePhase(config.getVerifyGoal())) {
                 ArtifactFidelityResult packageFidelity = verifyByteExactPackage(originalArtifact, outputDir);
                 result.setPackageFidelity(packageFidelity);
@@ -280,6 +291,17 @@ public class BuildPostProcessor {
         return fidelity;
     }
 
+    private SourceRebuildFidelityResult verifySourceRebuildBytecode(File originalArtifact, File outputDir,
+                                                                    VerificationResult verification)
+            throws IOException {
+        SourceRebuildFidelityResult fidelity = sourceRebuildFidelityComparator.compare(
+                originalArtifact,
+                outputDir,
+                verification == null ? null : verification.getCompileFallbackClassPaths());
+        sourceRebuildFidelityReportWriter.write(outputDir, fidelity);
+        return fidelity;
+    }
+
     private boolean canAttemptRecordLevelRestoration(ArtifactFidelityResult fidelity) {
         if (fidelity.isContentEntriesMatch()) {
             return true;
@@ -336,6 +358,7 @@ public class BuildPostProcessor {
         private ArtifactFidelityResult rawArtifactFidelity;
         private RuntimeSmokeRunner.SmokeRunResult smokeRunResult;
         private VerificationResult verificationResult;
+        private SourceRebuildFidelityResult sourceRebuildFidelity;
         private ArtifactFidelityResult packageFidelity;
         private String blockingFailure;
 
@@ -353,6 +376,10 @@ public class BuildPostProcessor {
 
         public VerificationResult getVerificationResult() {
             return verificationResult;
+        }
+
+        public SourceRebuildFidelityResult getSourceRebuildFidelity() {
+            return sourceRebuildFidelity;
         }
 
         public ArtifactFidelityResult getPackageFidelity() {
@@ -381,6 +408,10 @@ public class BuildPostProcessor {
 
         private void setVerificationResult(VerificationResult verificationResult) {
             this.verificationResult = verificationResult;
+        }
+
+        private void setSourceRebuildFidelity(SourceRebuildFidelityResult sourceRebuildFidelity) {
+            this.sourceRebuildFidelity = sourceRebuildFidelity;
         }
 
         private void setPackageFidelity(ArtifactFidelityResult packageFidelity) {

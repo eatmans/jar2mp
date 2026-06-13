@@ -31,6 +31,7 @@ public class RestorationScoreWriter {
         appendBucket(report, "runtime", 20, effectiveScore.getBreakdown().get("runtime"));
         appendBucket(report, "verification", 20, effectiveScore.getBreakdown().get("verification"));
 
+        appendSourceRebuildFidelityEvidence(report, outputDir);
         appendPackageFidelityEvidence(report, outputDir);
 
         report.append("\n## Top gaps\n\n");
@@ -103,6 +104,36 @@ public class RestorationScoreWriter {
                     .append(item.getFormattedRebuiltArchiveSha256())
                     .append(" |\n");
         }
+    }
+
+    private void appendSourceRebuildFidelityEvidence(StringBuilder report, File outputDir) throws IOException {
+        SourceRebuildFidelityEvidence evidence = SourceRebuildFidelityEvidence.read(outputDir);
+        if (evidence == null) {
+            return;
+        }
+
+        report.append("\n## Source rebuild class bytecode fidelity\n\n");
+        report.append("| Source-recompiled class bytes same | Original app classes | Recompiled classes | Common | Same class bytes | Different class bytes | Missing | Extra | Compile fallback classes |\n");
+        report.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+        report.append("| ")
+                .append(evidence.getSourceRecompiledClassBytesSame())
+                .append(" | ")
+                .append(evidence.getOriginalAppClasses())
+                .append(" | ")
+                .append(evidence.getRecompiledClasses())
+                .append(" | ")
+                .append(evidence.getCommonClasses())
+                .append(" | ")
+                .append(evidence.getSameClassBytes())
+                .append(" | ")
+                .append(evidence.getDifferentClassBytes())
+                .append(" | ")
+                .append(evidence.getMissingRecompiledClasses())
+                .append(" | ")
+                .append(evidence.getExtraRecompiledClasses())
+                .append(" | ")
+                .append(evidence.getCompileFallbackClasses())
+                .append(" |\n");
     }
 
     private String safe(String value) {
