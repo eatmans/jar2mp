@@ -157,7 +157,7 @@ public class RestorationScorer {
                              RestorationScore score) {
         RuntimeSmokeRunner.SmokeRunResult smokeResult = analysis == null ? null : analysis.getRuntimeSmokeResult();
         if (isStartupFailureStatus(smokeResult)) {
-            score.addGap("runtime_status", runtimeStartupFailureDetail(smokeResult), RUNTIME_WEIGHT);
+            addRuntimeStartupFailureGap(smokeResult, score);
             return 0;
         }
 
@@ -204,7 +204,7 @@ public class RestorationScorer {
             return evidenceScore;
         }
         if ("STARTUP_FAILED_TIMEOUT".equals(status) || "STARTUP_FAILED_EXIT".equals(status)) {
-            score.addGap("runtime_status", runtimeStartupFailureDetail(smokeResult), RUNTIME_WEIGHT);
+            addRuntimeStartupFailureGap(smokeResult, score);
             return 0;
         }
         if ("TRACE_COLLECTED_TIMEOUT".equals(status)) {
@@ -223,6 +223,23 @@ public class RestorationScorer {
     private boolean isStartupFailureStatus(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
         String status = smokeResult == null ? "" : safeValue(smokeResult.getRunStatus()).toUpperCase(Locale.ROOT);
         return "STARTUP_FAILED_TIMEOUT".equals(status) || "STARTUP_FAILED_EXIT".equals(status);
+    }
+
+    private void addRuntimeStartupFailureGap(RuntimeSmokeRunner.SmokeRunResult smokeResult, RestorationScore score) {
+        score.addGap(runtimeStartupFailureCategory(smokeResult), runtimeStartupFailureDetail(smokeResult), RUNTIME_WEIGHT);
+    }
+
+    private String runtimeStartupFailureCategory(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        String output = (safeValue(smokeResult == null ? null : smokeResult.getFailureMessage()) + "\n"
+                + safeValue(smokeResult == null ? null : smokeResult.getStdout()) + "\n"
+                + safeValue(smokeResult == null ? null : smokeResult.getStderr())).toLowerCase(Locale.ROOT);
+        if (output.contains("redisconnectionexception")
+                || output.contains("unable to connect to redis server")
+                || output.contains("connectexception: connection refused")
+                || output.contains("connection refused")) {
+            return "runtime_environment";
+        }
+        return "runtime_status";
     }
 
     private String runtimeStartupFailureDetail(RuntimeSmokeRunner.SmokeRunResult smokeResult) {

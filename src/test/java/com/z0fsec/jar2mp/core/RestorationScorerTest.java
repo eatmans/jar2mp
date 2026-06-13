@@ -361,8 +361,8 @@ class RestorationScorerTest {
         smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
         smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
         smokeResult.setStderr("Application run failed\n"
-                + "Caused by: org.redisson.client.RedisConnectionException: "
-                + "Unable to connect to Redis server: localhost/127.0.0.1:6379\n");
+                + "Caused by: org.springframework.context.ApplicationContextException: "
+                + "Failed to start bean 'sample'\n");
         smokeResult.setTraceResult(traceResult);
         analysis.setRuntimeSmokeResult(smokeResult);
 
@@ -375,10 +375,48 @@ class RestorationScorerTest {
                 .orElseThrow(() -> new AssertionError("missing runtime_status gap"))
                 .getDetail();
         assertEquals("Runtime startup failure was detected before non-zero exit. Cause: "
-                + "org.redisson.client.RedisConnectionException: "
-                + "Unable to connect to Redis server: localhost/127.0.0.1:6379.", detail);
+                + "org.springframework.context.ApplicationContextException: "
+                + "Failed to start bean 'sample'.", detail);
         assertFalse(detail.contains("detected: Runtime"));
         assertFalse(detail.contains(".."));
+    }
+
+    @Test
+    void runtimeScoreClassifiesRedisStartupFailureAsEnvironmentDependency() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setStdout("APPLICATION FAILED TO START\n"
+                + "Caused by: org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379\n");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(0, score.getBreakdown().get("runtime").intValue());
+        String detail = score.getGaps().stream()
+                .filter(g -> "runtime_environment".equals(g.getCategory()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing runtime_environment gap"))
+                .getDetail();
+        assertTrue(detail.contains("RedisConnectionException"));
+        assertFalse(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
     }
 
     @Test

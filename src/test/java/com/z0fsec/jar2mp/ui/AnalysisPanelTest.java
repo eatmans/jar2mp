@@ -62,7 +62,7 @@ class AnalysisPanelTest {
         score.putBucket("resource", 100);
         score.putBucket("runtime", 0);
         score.putBucket("verification", 100);
-        score.addGap("runtime_status", "Runtime startup failure was detected before non-zero exit.", 20);
+        score.addGap("runtime_environment", "Runtime startup failure was detected before non-zero exit.", 20);
         result.setRestorationScore(score);
 
         panel.updateAnalysis(result);
@@ -81,7 +81,7 @@ class AnalysisPanelTest {
         assertEquals("org.redisson.client.RedisConnectionException: "
                         + "Unable to connect to Redis server: localhost/127.0.0.1:6379",
                 valueFor(model, "运行失败原因"));
-        assertEquals("runtime_status=20", valueFor(model, "剩余缺口"));
+        assertEquals("runtime_environment=20", valueFor(model, "剩余缺口"));
     }
 
     private JTable summaryTable(AnalysisPanel panel) throws Exception {
