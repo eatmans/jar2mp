@@ -10,6 +10,7 @@ import javax.tools.ToolProvider;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
@@ -39,6 +40,33 @@ class DecompileParityReporterTest {
         assertTrue(method.getMethodCalls().contains("java/lang/Class.forName(Ljava/lang/String;)Ljava/lang/Class;"));
         assertTrue(method.getStringConstants().contains("java.lang.String"));
         assertTrue(method.getBranchOpcodeCount() > 0);
+    }
+
+    @Test
+    void extractsLocalVariableGenericTypesFromDebugMetadata() throws Exception {
+        byte[] classBytes = TestClassCompiler.compile(
+                "demo.LocalGenerics",
+                "package demo;\n"
+                        + "import java.util.ArrayList;\n"
+                        + "import java.util.List;\n"
+                        + "import java.util.Set;\n"
+                        + "import java.util.LinkedHashSet;\n"
+                        + "class LocalGenerics {\n"
+                        + "    void run() {\n"
+                        + "        List<Long> disableFailUserIdList = new ArrayList<Long>();\n"
+                        + "        Set<String> names = new LinkedHashSet<String>();\n"
+                        + "        System.out.println(disableFailUserIdList.size() + names.size());\n"
+                        + "    }\n"
+                        + "}\n");
+
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(classBytes);
+        BytecodeFingerprint.MethodFingerprint method = fingerprint.getMethodsByKey().get("run()V");
+        assertNotNull(method);
+
+        Map<String, String> genericTypes = method.getLocalVariableGenericTypes();
+        assertEquals("java.util.List<java.lang.Long>", genericTypes.get("disableFailUserIdList"));
+        assertEquals("java.util.Set<java.lang.String>", genericTypes.get("names"));
+        assertEquals(genericTypes, fingerprint.getUniqueLocalVariableGenericTypes());
     }
 
     @Test

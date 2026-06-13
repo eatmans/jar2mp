@@ -213,8 +213,9 @@ public class ProjectBuilder {
                     continue;
                 }
 
+                byte[] rawClassBytes = null;
                 if (shouldDecompile()) {
-                    byte[] rawClassBytes = readRawClassBytes(jf, entry);
+                    rawClassBytes = readRawClassBytes(jf, entry);
                     if (isKotlinMetadataClass(rawClassBytes)) {
                         DecompileFinding finding = rawClassFallbackFinding(
                                 classPath,
@@ -250,8 +251,9 @@ public class ProjectBuilder {
                 String contextSource = findContextSource(contextSources, classPath, rawEntryPath);
                 if (contextSource != null && isContextSourceUsable(contextSource)) {
                     String className = classPath.replace('/', '.').replace(".class", "");
+                    Map<String, String> localGenericTypes = localGenericTypes(rawClassBytes);
                     String javaSource = sourcePostProcessor.process(contextSource, className, syntheticSwitchMaps,
-                            mapstructInputTypes);
+                            mapstructInputTypes, localGenericTypes);
                     NestedClassSourceMerger.MergeResult mergeResult = mergeMissingInnerSources(
                             javaSource, classPath, jf, analysis, syntheticSwitchMaps, mapstructInputTypes);
                     if (!mergeResult.getUnresolvedClassPaths().isEmpty()) {
@@ -288,8 +290,9 @@ public class ProjectBuilder {
                         Files.copy(is, outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                         preserveLastModified(outputFile.toPath(), entry);
                     } else {
-                        byte[] bytes = readAllBytes(is);
+                        byte[] bytes = rawClassBytes == null ? readAllBytes(is) : rawClassBytes;
                         String className = classPath.replace('/', '.').replace(".class", "");
+                        Map<String, String> localGenericTypes = localGenericTypes(bytes);
 
                         if (callback != null && processed % 20 == 0) {
                             callback.onProgress("Decompiling: " + className, percent);
@@ -306,7 +309,8 @@ public class ProjectBuilder {
                         finding.setEngineSummary(decompileResult.getEngineSummary());
                         if (decompileResult.isSuccess()) {
                             String javaSource = sourcePostProcessor.process(
-                                    decompileResult.getSource(), className, syntheticSwitchMaps, mapstructInputTypes);
+                                    decompileResult.getSource(), className, syntheticSwitchMaps, mapstructInputTypes,
+                                    localGenericTypes);
                             NestedClassSourceMerger.MergeResult mergeResult = mergeMissingInnerSources(
                                     javaSource, classPath, jf, analysis, syntheticSwitchMaps, mapstructInputTypes);
                             if (!mergeResult.getUnresolvedClassPaths().isEmpty()) {
@@ -573,6 +577,17 @@ public class ProjectBuilder {
     private byte[] readRawClassBytes(JarFile jarFile, JarEntry entry) throws IOException {
         try (InputStream input = jarFile.getInputStream(entry)) {
             return readAllBytes(input);
+        }
+    }
+
+    private Map<String, String> localGenericTypes(byte[] classBytes) {
+        if (classBytes == null || classBytes.length == 0) {
+            return Collections.emptyMap();
+        }
+        try {
+            return BytecodeFingerprint.fromClassFile(classBytes).getUniqueLocalVariableGenericTypes();
+        } catch (RuntimeException e) {
+            return Collections.emptyMap();
         }
     }
 

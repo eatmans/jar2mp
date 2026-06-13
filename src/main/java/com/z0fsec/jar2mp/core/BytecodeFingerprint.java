@@ -62,6 +62,26 @@ public class BytecodeFingerprint {
         return methodsByKey;
     }
 
+    public Map<String, String> getUniqueLocalVariableGenericTypes() {
+        Map<String, String> uniqueTypes = new LinkedHashMap<>();
+        Set<String> ambiguousNames = new HashSet<>();
+        for (MethodFingerprint method : methodsByKey.values()) {
+            for (Map.Entry<String, String> entry : method.getLocalVariableGenericTypes().entrySet()) {
+                if (ambiguousNames.contains(entry.getKey())) {
+                    continue;
+                }
+                String existing = uniqueTypes.get(entry.getKey());
+                if (existing == null) {
+                    uniqueTypes.put(entry.getKey(), entry.getValue());
+                } else if (!existing.equals(entry.getValue())) {
+                    uniqueTypes.remove(entry.getKey());
+                    ambiguousNames.add(entry.getKey());
+                }
+            }
+        }
+        return uniqueTypes;
+    }
+
     public boolean isEnumClass() {
         return (accessFlags & 0x4000) != 0;
     }
@@ -78,6 +98,7 @@ public class BytecodeFingerprint {
         private final Set<String> thrownExceptions;
         private final Set<String> invokedynamicCalls;
         private final Set<String> genericSignatures;
+        private final Map<String, String> localVariableGenericTypes;
         private final Set<Integer> localStoreSlots;
         private final Set<Integer> compilerTempLocalStoreSlots;
         private final int exceptionHandlerCount;
@@ -91,7 +112,8 @@ public class BytecodeFingerprint {
                                   Set<String> localVariableNames, Set<String> fieldReferences,
                                   Set<String> annotations, Set<String> thrownExceptions,
                                   Set<String> invokedynamicCalls, Set<String> genericSignatures,
-                                  Set<Integer> localStoreSlots, Set<Integer> compilerTempLocalStoreSlots,
+                                  Map<String, String> localVariableGenericTypes, Set<Integer> localStoreSlots,
+                                  Set<Integer> compilerTempLocalStoreSlots,
                                   int exceptionHandlerCount, int branchOpcodeCount,
                                   int lineNumberCount, boolean hasCode, int accessFlags) {
             this.name = name;
@@ -105,6 +127,7 @@ public class BytecodeFingerprint {
             this.thrownExceptions = thrownExceptions;
             this.invokedynamicCalls = invokedynamicCalls;
             this.genericSignatures = genericSignatures;
+            this.localVariableGenericTypes = localVariableGenericTypes;
             this.localStoreSlots = localStoreSlots;
             this.compilerTempLocalStoreSlots = compilerTempLocalStoreSlots;
             this.exceptionHandlerCount = exceptionHandlerCount;
@@ -160,6 +183,10 @@ public class BytecodeFingerprint {
 
         public Set<String> getGenericSignatures() {
             return genericSignatures;
+        }
+
+        public Map<String, String> getLocalVariableGenericTypes() {
+            return localVariableGenericTypes;
         }
 
         public int getExceptionHandlerCount() {
@@ -438,6 +465,7 @@ public class BytecodeFingerprint {
             Set<String> thrownExceptions = new LinkedHashSet<>();
             Set<String> invokedynamicCalls = new LinkedHashSet<>();
             Set<String> genericSignatures = new LinkedHashSet<>();
+            Map<String, String> localVariableGenericTypes = new LinkedHashMap<>();
             Set<Integer> localStoreSlots = new LinkedHashSet<>();
             Set<Integer> compilerTempLocalStoreSlots = new LinkedHashSet<>();
             int exceptionHandlerCount = 0;
@@ -460,6 +488,8 @@ public class BytecodeFingerprint {
                     localVariableNames.addAll(code.localVariableNames);
                     fieldReferences.addAll(code.fieldReferences);
                     invokedynamicCalls.addAll(code.invokedynamicCalls);
+                    mergeUniqueLocalVariableGenericTypes(localVariableGenericTypes,
+                            code.localVariableGenericTypes);
                     localStoreSlots.addAll(code.localStoreSlots);
                     compilerTempLocalStoreSlots.addAll(code.compilerTempLocalStoreSlots);
                     exceptionHandlerCount = code.exceptionHandlerCount;
@@ -482,8 +512,19 @@ public class BytecodeFingerprint {
 
             return new MethodFingerprint(name, descriptor, instructions, methodCalls, stringConstants,
                     localVariableNames, fieldReferences, annotations, thrownExceptions, invokedynamicCalls,
-                    genericSignatures, localStoreSlots, compilerTempLocalStoreSlots, exceptionHandlerCount,
-                    branchOpcodeCount, lineNumberCount, hasCode, accessFlags);
+                    genericSignatures, localVariableGenericTypes, localStoreSlots, compilerTempLocalStoreSlots,
+                    exceptionHandlerCount, branchOpcodeCount, lineNumberCount, hasCode, accessFlags);
+        }
+
+        private void mergeUniqueLocalVariableGenericTypes(Map<String, String> target, Map<String, String> source) {
+            for (Map.Entry<String, String> entry : source.entrySet()) {
+                String existing = target.get(entry.getKey());
+                if (existing == null) {
+                    target.put(entry.getKey(), entry.getValue());
+                } else if (!existing.equals(entry.getValue())) {
+                    target.remove(entry.getKey());
+                }
+            }
         }
 
         private CodeFingerprint readCodeAttribute() {
@@ -521,6 +562,20 @@ public class BytecodeFingerprint {
                             fingerprint.localVariableNames.add(variableName);
                         }
                     }
+                } else if ("LocalVariableTypeTable".equals(attributeName)) {
+                    int localVariableCount = readU2();
+                    for (int j = 0; j < localVariableCount; j++) {
+                        offset += 4; // start_pc + length
+                        String variableName = utf8(readU2());
+                        String signature = utf8(readU2());
+                        offset += 2; // index
+                        if (!"this".equals(variableName)) {
+                            String javaType = decodeGenericSignature(signature);
+                            if (javaType != null) {
+                                fingerprint.localVariableGenericTypes.put(variableName, javaType);
+                            }
+                        }
+                    }
                 } else if ("LineNumberTable".equals(attributeName)) {
                     int lineNumberCount = readU2();
                     fingerprint.lineNumberCount += lineNumberCount;
@@ -531,6 +586,15 @@ public class BytecodeFingerprint {
             }
 
             return fingerprint;
+        }
+
+        private String decodeGenericSignature(String signature) {
+            if (signature == null || signature.isEmpty()) {
+                return null;
+            }
+            SignatureParser parser = new SignatureParser(signature);
+            String type = parser.parseType();
+            return type == null || parser.hasRemaining() ? null : type;
         }
 
         private CodeFingerprint scanCode(byte[] code, Set<Integer> exceptionHandlerStarts) {
@@ -968,6 +1032,7 @@ public class BytecodeFingerprint {
         private final Set<String> localVariableNames = new LinkedHashSet<>();
         private final Set<String> fieldReferences = new LinkedHashSet<>();
         private final Set<String> invokedynamicCalls = new LinkedHashSet<>();
+        private final Map<String, String> localVariableGenericTypes = new LinkedHashMap<>();
         private final Set<Integer> localStoreSlots = new LinkedHashSet<>();
         private final Set<Integer> compilerTempLocalStoreSlots = new LinkedHashSet<>();
         private int exceptionHandlerCount;
@@ -1176,6 +1241,142 @@ public class BytecodeFingerprint {
                 return "ifnonnull";
             default:
                 return "op_" + Integer.toHexString(opcode);
+        }
+    }
+
+    private static class SignatureParser {
+        private final String signature;
+        private int index;
+
+        private SignatureParser(String signature) {
+            this.signature = signature;
+        }
+
+        private boolean hasRemaining() {
+            return index < signature.length();
+        }
+
+        private String parseType() {
+            if (index >= signature.length()) {
+                return null;
+            }
+            char marker = signature.charAt(index);
+            if (marker == '[') {
+                index++;
+                String component = parseType();
+                return component == null ? null : component + "[]";
+            }
+            if (marker == 'L') {
+                return parseObjectType();
+            }
+            if (marker == 'T') {
+                return parseTypeVariable();
+            }
+            if (isPrimitiveMarker(marker)) {
+                index++;
+                return primitiveType(marker);
+            }
+            return null;
+        }
+
+        private String parseObjectType() {
+            index++;
+            StringBuilder rawType = new StringBuilder();
+            List<String> arguments = new ArrayList<>();
+            while (index < signature.length()) {
+                char current = signature.charAt(index);
+                if (current == ';') {
+                    index++;
+                    return appendArguments(rawType.toString(), arguments);
+                }
+                if (current == '<') {
+                    index++;
+                    while (index < signature.length() && signature.charAt(index) != '>') {
+                        String argument = parseTypeArgument();
+                        if (argument == null) {
+                            return null;
+                        }
+                        arguments.add(argument);
+                    }
+                    if (index >= signature.length() || signature.charAt(index) != '>') {
+                        return null;
+                    }
+                    index++;
+                    continue;
+                }
+                rawType.append(current == '/' || current == '$' ? '.' : current);
+                index++;
+            }
+            return null;
+        }
+
+        private String appendArguments(String rawType, List<String> arguments) {
+            if (arguments.isEmpty()) {
+                return rawType;
+            }
+            return rawType + "<" + String.join(", ", arguments) + ">";
+        }
+
+        private String parseTypeArgument() {
+            if (index >= signature.length()) {
+                return null;
+            }
+            char marker = signature.charAt(index);
+            if (marker == '*') {
+                index++;
+                return "?";
+            }
+            if (marker == '+') {
+                index++;
+                String type = parseType();
+                return type == null ? null : "? extends " + type;
+            }
+            if (marker == '-') {
+                index++;
+                String type = parseType();
+                return type == null ? null : "? super " + type;
+            }
+            return parseType();
+        }
+
+        private String parseTypeVariable() {
+            index++;
+            int end = signature.indexOf(';', index);
+            if (end < 0) {
+                return null;
+            }
+            String type = signature.substring(index, end);
+            index = end + 1;
+            return type;
+        }
+
+        private boolean isPrimitiveMarker(char marker) {
+            return "BCDFIJSZV".indexOf(marker) >= 0;
+        }
+
+        private String primitiveType(char marker) {
+            switch (marker) {
+                case 'B':
+                    return "byte";
+                case 'C':
+                    return "char";
+                case 'D':
+                    return "double";
+                case 'F':
+                    return "float";
+                case 'I':
+                    return "int";
+                case 'J':
+                    return "long";
+                case 'S':
+                    return "short";
+                case 'Z':
+                    return "boolean";
+                case 'V':
+                    return "void";
+                default:
+                    return null;
+            }
         }
     }
 }
