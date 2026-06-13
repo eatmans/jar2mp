@@ -564,6 +564,23 @@ class RestorationScorerTest {
     }
 
     @Test
+    void sourceRebuildBytecodeMismatchCannotRoundToPerfectSourceScore() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        SourceRebuildFidelityResult fidelity = new SourceRebuildFidelityResult();
+        fidelity.setOriginalAppClasses(413);
+        fidelity.setRecompiledClasses(413);
+        fidelity.setCommonClasses(413);
+        fidelity.setSameClassBytes(412);
+        fidelity.setDifferentClassBytes(1);
+        fidelity.recordDifferentClass("demo/OneClass.class");
+        analysis.setSourceRebuildFidelity(fidelity);
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(99, score.getBreakdown().get("source").intValue());
+    }
+
+    @Test
     void packageFidelityMismatchLowersVerificationScore() {
         ArtifactFidelityResult packageFidelity = new ArtifactFidelityResult();
         packageFidelity.setOriginalEntryTotal(3);

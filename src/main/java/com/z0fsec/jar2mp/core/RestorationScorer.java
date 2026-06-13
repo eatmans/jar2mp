@@ -83,7 +83,7 @@ public class RestorationScorer {
         if (originalClasses <= 0) {
             return 0;
         }
-        return Math.max(0, Math.min(100, percent(sameClasses, originalClasses)));
+        return Math.max(0, Math.min(99, percent(sameClasses, originalClasses)));
     }
 
     private int sourceRebuildMismatchCount(SourceRebuildFidelityResult fidelity) {
