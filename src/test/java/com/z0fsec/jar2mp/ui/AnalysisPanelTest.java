@@ -3,8 +3,10 @@ package com.z0fsec.jar2mp.ui;
 import com.z0fsec.jar2mp.core.RuntimeSmokeRunner;
 import com.z0fsec.jar2mp.core.RuntimeTraceEvent;
 import com.z0fsec.jar2mp.core.RuntimeTraceResult;
+import com.z0fsec.jar2mp.model.DecompileFinding;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.VerificationError;
 import com.z0fsec.jar2mp.model.VerificationResult;
 import org.junit.jupiter.api.Test;
 
@@ -30,7 +32,13 @@ class AnalysisPanelTest {
         VerificationResult verification = new VerificationResult();
         verification.setFailureType("NONE");
         verification.setExitCode(0);
+        verification.getErrors().add(new VerificationError());
+        verification.getCompileFallbackClassPaths().add("demo/Broken.class");
         result.setVerificationResult(verification);
+        result.getDecompileFindings().add(new DecompileFinding("demo/Broken.class",
+                "src/main/original-classes/demo/Broken.class", "syntax recovery failed"));
+        result.getDecompileFindings().add(new DecompileFinding("demo/Plain.class",
+                null, "decompiler failed"));
 
         RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
                 new RuntimeTraceEvent("reflection", "demo.App", "main", "startup", "main",
@@ -63,6 +71,10 @@ class AnalysisPanelTest {
         assertEquals("80/100 (source=100, resource=100, runtime=0, verification=100)",
                 valueFor(model, "恢复评分"));
         assertEquals("BUILD SUCCESS (NONE, exit 0)", valueFor(model, "构建验证"));
+        assertEquals("1", valueFor(model, "构建错误数"));
+        assertEquals("1", valueFor(model, "编译回退类数"));
+        assertEquals("2", valueFor(model, "反编译失败数"));
+        assertEquals("1", valueFor(model, "保留原始 class 数"));
         assertEquals("STARTUP_FAILED_EXIT (events=2)", valueFor(model, "运行状态"));
         assertEquals("Runtime startup failure was detected before non-zero exit.",
                 valueFor(model, "运行失败信息"));

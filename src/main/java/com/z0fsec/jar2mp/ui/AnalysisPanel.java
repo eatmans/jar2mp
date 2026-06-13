@@ -112,7 +112,11 @@ public class AnalysisPanel extends BasePanel {
         VerificationResult verification = result.getVerificationResult();
         if (verification != null) {
             summaryModel.addRow(new Object[]{"构建验证", buildVerificationText(verification)});
+            summaryModel.addRow(new Object[]{"构建错误数", verification.getErrors().size()});
+            summaryModel.addRow(new Object[]{"编译回退类数", verification.getCompileFallbackClassPaths().size()});
         }
+        summaryModel.addRow(new Object[]{"反编译失败数", result.getDecompileFindings().size()});
+        summaryModel.addRow(new Object[]{"保留原始 class 数", retainedClassCount(result.getDecompileFindings())});
 
         RuntimeSmokeRunner.SmokeRunResult smokeResult = result.getRuntimeSmokeResult();
         if (smokeResult != null) {
@@ -137,6 +141,16 @@ public class AnalysisPanel extends BasePanel {
                 summaryModel.addRow(new Object[]{"剩余缺口", gapSummaryText(score)});
             }
         }
+    }
+
+    private int retainedClassCount(List<DecompileFinding> findings) {
+        int count = 0;
+        for (DecompileFinding finding : findings) {
+            if (finding != null && finding.hasRetainedClassPath()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private String buildVerificationText(VerificationResult verification) {
