@@ -158,7 +158,24 @@ public class BuildPostProcessor {
         if ("TRACE_COLLECTED_TIMEOUT".equals(runStatus)) {
             return "WARN";
         }
+        if (isEnvironmentStartupFailure(smokeResult)) {
+            return "ENVIRONMENT";
+        }
         return "FAILED";
+    }
+
+    private boolean isEnvironmentStartupFailure(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        String output = (smokeResult == null ? "" : safeValue(smokeResult.getFailureMessage()) + "\n"
+                + safeValue(smokeResult.getStdout()) + "\n"
+                + safeValue(smokeResult.getStderr())).toLowerCase(Locale.ROOT);
+        return output.contains("redisconnectionexception")
+                || output.contains("unable to connect to redis server")
+                || output.contains("connectexception: connection refused")
+                || output.contains("connection refused");
+    }
+
+    private String safeValue(String value) {
+        return value == null ? "" : value;
     }
 
     private void refreshRestorationScore(File outputDir, JarAnalysisResult result) throws IOException {

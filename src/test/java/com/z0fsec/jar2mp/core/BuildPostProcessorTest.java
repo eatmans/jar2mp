@@ -98,6 +98,27 @@ class BuildPostProcessorTest {
         assertFalse(messages.stream().anyMatch(message -> message.contains("运行时追踪: FAILED")));
     }
 
+    @Test
+    void postProcessLogsEnvironmentWhenStartupFailureIsExternalDependency() throws Exception {
+        Path jar = createRedisFailureTraceJar();
+        Path outputDir = tempDir.resolve("project-with-redis-failure");
+        Files.createDirectories(outputDir);
+
+        ProjectConfig config = new ProjectConfig();
+        config.setTraceRuntime(true);
+        config.setTraceTimeoutSeconds(10L);
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("demo.RedisFailureMain");
+        analysis.setManifestInfo(manifestInfo);
+        List<String> messages = new ArrayList<>();
+
+        new BuildPostProcessor().postProcess(jar.toFile(), analysis, outputDir.toFile(), config, messages::add);
+
+        assertTrue(messages.stream().anyMatch(message -> message.contains("运行时追踪: ENVIRONMENT (")));
+        assertFalse(messages.stream().anyMatch(message -> message.contains("运行时追踪: FAILED")));
+    }
+
     private void createJar(Path jar) throws Exception {
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
             JarEntry entry = new JarEntry("config.properties");
@@ -155,6 +176,52 @@ class BuildPostProcessorTest {
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
             out.putNextEntry(new JarEntry("demo/SlowTraceMain.class"));
             out.write(Files.readAllBytes(classesDir.resolve("demo/SlowTraceMain.class")));
+            out.closeEntry();
+        }
+        return jar;
+    }
+
+    private Path createRedisFailureTraceJar() throws Exception {
+        Path sourceDir = tempDir.resolve("redis-failure-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("RedisFailureMain.java");
+        Files.write(sourceFile, ("package demo;\n"
+                + "import java.nio.charset.StandardCharsets;\n"
+                + "import java.nio.file.Files;\n"
+                + "import java.nio.file.Paths;\n"
+                + "public class RedisFailureMain {\n"
+                + "  public static void main(String[] args) throws Exception {\n"
+                + "    String traceFile = System.getProperty(\"jar2mp.traceFile\");\n"
+                + "    String event = \"{\\\"kind\\\":\\\"reflection\\\",\\\"owner\\\":\\\"demo.RedisFailureMain\\\",\\\"target\\\":\\\"main\\\",\\\"value\\\":\\\"startup\\\",\\\"thread\\\":\\\"main\\\",\\\"stack\\\":[\\\"demo.RedisFailureMain.main\\\"]}\\n\";\n"
+                + "    Files.write(Paths.get(traceFile), event.getBytes(StandardCharsets.UTF_8));\n"
+                + "    System.out.println(\"APPLICATION FAILED TO START\");\n"
+                + "    System.out.println(\"Caused by: org.redisson.client.RedisConnectionException: Unable to connect to Redis server: localhost/127.0.0.1:6379\");\n"
+                + "    System.exit(1);\n"
+                + "  }\n"
+                + "}\n").getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("redis-failure-classes");
+        Files.createDirectories(classesDir);
+        int compileResult = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        if (compileResult != 0) {
+            throw new IllegalStateException("javac failed with exit code " + compileResult);
+        }
+
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "demo.RedisFailureMain");
+
+        Path jar = tempDir.resolve("redis-failure-trace.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
+            out.putNextEntry(new JarEntry("demo/RedisFailureMain.class"));
+            out.write(Files.readAllBytes(classesDir.resolve("demo/RedisFailureMain.class")));
             out.closeEntry();
         }
         return jar;
