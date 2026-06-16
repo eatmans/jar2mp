@@ -52,6 +52,25 @@ The script writes:
 
 Do not commit the generated artifacts or reports. Commit the script and this documentation only.
 
+## Byte-exact CLI Package Gate
+
+`scripts/regression/run-byte-exact-regression.sh` is a focused end-to-end gate for strict byte-level package restoration. It builds the jar2mp fat CLI, generates a clean plain Maven JAR locally, runs the real CLI with `--byte-exact-package --verify-build --verify-goal package`, and fails unless the generated package is byte-for-byte identical to the original sample.
+
+Run:
+
+```bash
+./scripts/regression/run-byte-exact-regression.sh
+```
+
+The script writes:
+
+- `target/byte-exact-regression/report/plain-maven-jar.cli.log`
+- generated source project under `target/byte-exact-regression/sources/`
+- restored jar2mp project under `target/byte-exact-regression/restored/`
+- byte-exact package reports under the restored project's `target/byte-exact-package-check/`
+
+The gate requires CLI exit code `0`, `artifact-fidelity-summary.csv` values `exact_match=true` and `archive_bytes_same=true`, and equal SHA-256 values for the original sample JAR and final packaged JAR. Any mismatch exits non-zero.
+
 ## GitHub Release Assets
 
 `scripts/regression/run-github-release-assets-regression.sh` downloads fixed GitHub Release JAR/WAR assets and restores them with Maven package verification, runtime tracing where safe, raw artifact preservation, and byte-exact package verification enabled.

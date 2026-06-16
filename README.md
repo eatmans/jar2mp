@@ -179,6 +179,14 @@ Options:
 
 汇总报告写入 `target/regression-samples/report/regression-summary.md` 和 `target/regression-samples/report/regression-summary.csv`。样本矩阵、阈值和 PASS/FAIL 规则见 `docs/regression-samples.md`。
 
+如需聚焦验证严格字节级 package 路径，可以运行独立 CLI 回归脚本。它会生成一个干净的 plain Maven JAR，调用真实 fat CLI 的 `--byte-exact-package --verify-build --verify-goal package`，并要求 `target/byte-exact-package-check/artifact-fidelity-summary.csv` 的 `exact_match=true`、`archive_bytes_same=true`，且最终 package 产物 SHA-256 与原始 JAR 完全一致；任一门禁失败都会非零退出：
+
+```bash
+./scripts/regression/run-byte-exact-regression.sh
+```
+
+输出写入 `target/byte-exact-regression/`，其中 CLI 日志位于 `target/byte-exact-regression/report/plain-maven-jar.cli.log`。
+
 也可以运行真实 GitHub 项目回归集，脚本会下载固定 ref 的 Spring Boot、Spring Security、MyBatis WAR、Shiro 样本，构建原始产物后再用 jar2mp 做 verify-only 还原验证：
 
 ```bash
