@@ -100,6 +100,26 @@ class MavenMetadataExtractorBuildMetadataTest {
         assertEquals("1.26.0-SNAPSHOT", info.getVersion());
     }
 
+    @Test
+    void extractsRelocatedSpringBootApplicationPomXml() throws Exception {
+        Path jar = tempDir.resolve("boot-app.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addText(out, "BOOT-INF/classes/META-INF/maven/com.example/demo/pom.xml", embeddedPom());
+        }
+
+        PomInfo info;
+        try (JarFile jarFile = new JarFile(jar.toFile())) {
+            info = new MavenMetadataExtractor().extract(jarFile);
+        }
+
+        assertEquals("com.example", info.getGroupId());
+        assertEquals("demo", info.getArtifactId());
+        assertEquals("1.0.0", info.getVersion());
+        assertEquals("org.springframework.boot", info.getParentGroupId());
+        assertEquals("17", info.getProperties().get("java.version"));
+        assertEquals(1, info.getDependencyManagement().size());
+    }
+
     private String embeddedPom() {
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
                 "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n" +

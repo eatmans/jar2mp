@@ -8,6 +8,8 @@ import java.io.*;
 import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class DependencyDetector {
 
@@ -37,9 +39,6 @@ public class DependencyDetector {
                                         List<String> applicationClassFiles,
                                         Map<String, String> classPathMapping) {
         Map<String, MavenDependency> deps = new LinkedHashMap<>();
-        boolean hasEmbeddedDependencies = pomInfo != null
-                && pomInfo.getDependencies() != null
-                && !pomInfo.getDependencies().isEmpty();
 
         // Strategy 1: Embedded POM dependencies (highest confidence)
         if (pomInfo != null && pomInfo.getDependencies() != null) {
@@ -50,7 +49,11 @@ public class DependencyDetector {
         }
         addEmbeddedPomDependencies(deps, pomInfo, embeddedPomInfos);
 
-        // Strategy 2: MANIFEST.MF Class-Path hints
+        // Strategy 2: Spring Boot/WAR bundled dependency jars
+        addNestedLibraryDependencies(deps, jarFile);
+        boolean hasEmbeddedDependencies = !deps.isEmpty();
+
+        // Strategy 3: MANIFEST.MF Class-Path hints
         if (manifestInfo != null && manifestInfo.getClassPath() != null) {
             String[] cpEntries = manifestInfo.getClassPath().split("\\s+");
             for (String cpEntry : cpEntries) {
@@ -62,9 +65,10 @@ public class DependencyDetector {
             }
         }
 
-        // Strategy 3: Class file scanning against package database. When an
-        // embedded POM exists, use scan data to fill missing/property versions
-        // and add only external packages that the selected POM did not name.
+        // Strategy 4: Class file scanning against package database. When
+        // embedded metadata or bundled libs exist, use scan data to fill
+        // missing/property versions and add only external packages not already
+        // covered by higher-confidence evidence.
         Set<String> packages = classFileScanner.scanPackages(jarFile, applicationClassFiles, classPathMapping);
         for (String pkg : packages) {
             MavenCoordinates coord = packageDb.lookup(pkg);
@@ -96,10 +100,77 @@ public class DependencyDetector {
             }
         }
 
-        // Strategy 4: Filename heuristic for WAR files
+        // Strategy 5: Filename heuristic for WAR files
         // (handled separately in WarAnalyzer)
 
         return new ArrayList<>(deps.values());
+    }
+
+    private void addNestedLibraryDependencies(Map<String, MavenDependency> deps, JarFile jarFile) {
+        if (jarFile == null) {
+            return;
+        }
+        Enumeration<JarEntry> entries = jarFile.entries();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            String name = entry.getName();
+            if (!isNestedLibraryPath(name)) {
+                continue;
+            }
+            MavenDependency dependency = null;
+            try (InputStream inputStream = jarFile.getInputStream(entry)) {
+                dependency = readNestedLibraryDependency(inputStream);
+            } catch (IOException ignored) {
+                // Filename parsing below remains the fallback for unreadable nested JARs.
+            }
+            if (dependency == null) {
+                dependency = guessFromFilename(fileName(name));
+            }
+            if (dependency != null) {
+                deps.putIfAbsent(dependency.getKey(), dependency);
+            }
+        }
+    }
+
+    private boolean isNestedLibraryPath(String name) {
+        return name != null
+                && (name.startsWith("BOOT-INF/lib/") || name.startsWith("WEB-INF/lib/"))
+                && name.endsWith(".jar");
+    }
+
+    private MavenDependency readNestedLibraryDependency(InputStream inputStream) throws IOException {
+        try (ZipInputStream zipInputStream = new ZipInputStream(inputStream)) {
+            ZipEntry entry;
+            while ((entry = zipInputStream.getNextEntry()) != null) {
+                String name = entry.getName();
+                if (name == null || !name.startsWith("META-INF/maven/")
+                        || !name.endsWith("/pom.properties")) {
+                    continue;
+                }
+                Properties properties = new Properties();
+                properties.load(zipInputStream);
+                String groupId = trimToNull(properties.getProperty("groupId"));
+                String artifactId = trimToNull(properties.getProperty("artifactId"));
+                String version = trimToNull(properties.getProperty("version"));
+                if (groupId != null && artifactId != null && version != null) {
+                    return new MavenDependency(groupId, artifactId, version, MavenDependency.Confidence.HIGH);
+                }
+            }
+        }
+        return null;
+    }
+
+    private String fileName(String path) {
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private void addEmbeddedPomDependencies(Map<String, MavenDependency> deps,

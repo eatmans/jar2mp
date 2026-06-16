@@ -131,9 +131,11 @@ public class PomGenerator {
         List<MavenDependency> deps = analysis.getDetectedDependencies();
         List<MavenDependency> included = new java.util.ArrayList<>();
         boolean dependencyManagementIncluded = embeddedPom != null && !embeddedPom.getDependencyManagement().isEmpty();
+        Set<String> originalNestedDependencyKeys = originalNestedDependencyKeys(originalNestedLibraryCoordinates);
         for (MavenDependency dep : deps) {
             if (dep.isIncluded()
                     && !isBundledByteExactDependency(dep, analysis, byteExactPackage)
+                    && !originalNestedDependencyKeys.contains(dependencyKey(dep))
                     && canRenderDependency(dep, parentIncluded || dependencyManagementIncluded,
                     groupId, version, properties)) {
                 included.add(dep);
@@ -301,6 +303,9 @@ public class PomGenerator {
         if (dep == null) {
             return false;
         }
+        if (!hasKnownValue(dep.getGroupId()) || !hasKnownValue(dep.getArtifactId())) {
+            return false;
+        }
         String version = dep.getVersion();
         if (hasKnownValue(version)) {
             if (!hasResolvablePropertyReferences(version, properties)) {
@@ -431,6 +436,28 @@ public class PomGenerator {
         return coordinates;
     }
 
+    private Set<String> originalNestedDependencyKeys(
+            Map<String, EmbeddedLibraryCoordinates> originalNestedLibraryCoordinates) {
+        Set<String> keys = new LinkedHashSet<>();
+        if (originalNestedLibraryCoordinates == null) {
+            return keys;
+        }
+        for (EmbeddedLibraryCoordinates coordinates : originalNestedLibraryCoordinates.values()) {
+            if (coordinates != null && hasKnownValue(coordinates.getGroupId())
+                    && hasKnownValue(coordinates.getArtifactId())) {
+                keys.add(coordinates.getGroupId() + ":" + coordinates.getArtifactId());
+            }
+        }
+        return keys;
+    }
+
+    private String dependencyKey(MavenDependency dependency) {
+        if (dependency == null || dependency.getGroupId() == null || dependency.getArtifactId() == null) {
+            return "";
+        }
+        return dependency.getGroupId() + ":" + dependency.getArtifactId();
+    }
+
     private List<MavenDependency> bootRepackageResolvedDependencyExcludes(
             List<MavenDependency> includedDependencies,
             Map<String, EmbeddedLibraryCoordinates> originalNestedLibraryCoordinates) {
@@ -483,6 +510,7 @@ public class PomGenerator {
                             String classifier = baseName.substring(classifierPrefix.length());
                             return new EmbeddedLibraryCoordinates(groupId, artifactId, version, classifier);
                         }
+                        return new EmbeddedLibraryCoordinates(groupId, artifactId, version);
                     }
                 }
             }

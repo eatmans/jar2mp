@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -273,6 +274,65 @@ class PomGeneratorTest {
                 "<exclude><groupId>io.projectreactor</groupId><artifactId>reactor-core</artifactId></exclude>"));
         assertTrue(pomXml.contains(
                 "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/reactor-core-3.6.11.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootResolvedNestedLibraryDoesNotRenderDuplicateDependencyEntries() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/io.projectreactor/reactor-core/pom.properties",
+                "groupId=io.projectreactor\nartifactId=reactor-core\nversion=3.6.11\n");
+        Path outerJar = tempDir.resolve("boot-reactor-exact.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/reactor-core-3.6.11.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactor-core-3.6.11.jar");
+        analysis.setSourceFile(outerJar.toFile());
+        analysis.getDetectedDependencies().add(new MavenDependency("io.projectreactor", "reactor-core", "3.6.11",
+                MavenDependency.Confidence.HIGH));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertEquals(1, countOccurrences(pomXml, "<artifactId>reactor-core</artifactId>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/reactor-core-3.6.11.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootResolvedNestedLibraryTrustsPomPropertiesWhenFileNameDiffers() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/org.jacoco/org.jacoco.agent.rt/pom.properties",
+                "groupId=org.jacoco\nartifactId=org.jacoco.agent.rt\nversion=0.8.5\n");
+        Path outerJar = tempDir.resolve("boot-jacoco-runtime.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/org.jacoco.agent-0.8.5-runtime.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib(
+                "BOOT-INF/lib/org.jacoco.agent-0.8.5-runtime.jar");
+        analysis.setSourceFile(outerJar.toFile());
+        analysis.getDetectedDependencies().add(new MavenDependency("org.jacoco", "org.jacoco.agent.rt", "0.8.5",
+                MavenDependency.Confidence.HIGH));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertEquals(1, countOccurrences(pomXml, "<artifactId>org.jacoco.agent.rt</artifactId>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/org.jacoco.agent-0.8.5-runtime.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootFilenameFallbackWithUnknownGroupUsesOnlyLocalSystemDependency() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/vendor-helper-1.2.3.jar");
+        analysis.getDetectedDependencies().add(new MavenDependency("unknown", "vendor-helper", "1.2.3",
+                MavenDependency.Confidence.GUESS));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<groupId>unknown</groupId>"));
+        assertTrue(pomXml.contains("<groupId>jar2mp.embedded</groupId>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/vendor-helper-1.2.3.jar</systemPath>"));
     }
 
     @Test
@@ -908,6 +968,16 @@ class PomGeneratorTest {
             out.closeEntry();
         }
         return nestedJar;
+    }
+
+    private int countOccurrences(String text, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(needle, index)) >= 0) {
+            count++;
+            index += needle.length();
+        }
+        return count;
     }
 
     private JarAnalysisResult springBootAnalysisWithOriginalLib(String originalLibPath) {

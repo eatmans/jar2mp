@@ -45,9 +45,9 @@ public class MavenMetadataExtractor {
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
             String name = entry.getName();
-            if (name.startsWith("META-INF/maven/") && name.endsWith("pom.properties")) {
+            if (isMavenMetadataPath(name) && name.endsWith("pom.properties")) {
                 mergeCandidate(candidates, parsePomProperties(jarFile, entry, warningsOut));
-            } else if (name.startsWith("META-INF/maven/") && name.endsWith("pom.xml")
+            } else if (isMavenMetadataPath(name) && name.endsWith("pom.xml")
                     && !name.contains("/target/")) {
                 mergeCandidate(candidates, parsePomXml(jarFile, entry, warningsOut));
             } else if (classNamesOut != null && name.endsWith(".class")) {
@@ -56,6 +56,23 @@ public class MavenMetadataExtractor {
         }
 
         return new ArrayList<>(candidates.values());
+    }
+
+    private boolean isMavenMetadataPath(String name) {
+        return name != null
+                && (name.startsWith("META-INF/maven/")
+                || name.startsWith("BOOT-INF/classes/META-INF/maven/")
+                || name.startsWith("WEB-INF/classes/META-INF/maven/"));
+    }
+
+    private String mavenMetadataRelativePath(String name) {
+        if (name.startsWith("BOOT-INF/classes/")) {
+            return name.substring("BOOT-INF/classes/".length());
+        }
+        if (name.startsWith("WEB-INF/classes/")) {
+            return name.substring("WEB-INF/classes/".length());
+        }
+        return name;
     }
 
     /** Backward-compatible form — re-scans the JAR. Prefer the three-arg overload. */
@@ -199,7 +216,7 @@ public class MavenMetadataExtractor {
 
             // Extract parent path info as fallback
             // META-INF/maven/{groupId}/{artifactId}/pom.properties
-            String[] parts = entry.getName().split("/");
+            String[] parts = mavenMetadataRelativePath(entry.getName()).split("/");
             if (parts.length >= 4) {
                 if (info.getGroupId() == null) info.setGroupId(parts[2]);
                 if (info.getArtifactId() == null) info.setArtifactId(parts[3]);

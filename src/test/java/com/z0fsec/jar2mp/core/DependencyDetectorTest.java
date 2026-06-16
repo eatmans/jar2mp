@@ -7,6 +7,7 @@ import com.z0fsec.jar2mp.model.PomInfo;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -227,6 +228,31 @@ class DependencyDetectorTest {
         }
     }
 
+    @Test
+    void detectsSpringBootNestedLibraryCoordinatesFromPomProperties() throws Exception {
+        Path jarPath = tempDir.resolve("boot-with-nested-lib.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            addEntry(jar, "BOOT-INF/classes/com/example/App.class",
+                    classFileWithUtf8Constant(52, "com/example/App"));
+            addEntry(jar, "BOOT-INF/lib/foo-1.2.3.jar", nestedLibraryJarBytes(
+                    "META-INF/maven/com.example/foo/pom.properties",
+                    "groupId=com.example\nartifactId=foo\nversion=1.2.3\n"));
+        }
+
+        DependencyDetector detector = new DependencyDetector(new PackagePrefixDatabase());
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            List<MavenDependency> dependencies = detector.detect(jarFile, null, null);
+
+            MavenDependency dependency = dependencies.stream()
+                    .filter(dep -> "com.example".equals(dep.getGroupId())
+                            && "foo".equals(dep.getArtifactId()))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("Expected com.example:foo dependency"));
+            assertEquals("1.2.3", dependency.getVersion());
+            assertEquals(MavenDependency.Confidence.HIGH, dependency.getConfidence());
+        }
+    }
+
     private static void addClassEntry(JarOutputStream jar, String name, int majorVersion) throws IOException {
         addEntry(jar, name, minimalClassFileBytes(majorVersion));
     }
@@ -235,6 +261,14 @@ class DependencyDetectorTest {
         jar.putNextEntry(new JarEntry(name));
         jar.write(bytes);
         jar.closeEntry();
+    }
+
+    private static byte[] nestedLibraryJarBytes(String pomPropertiesPath, String pomProperties) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (JarOutputStream nested = new JarOutputStream(bytes)) {
+            addEntry(nested, pomPropertiesPath, pomProperties.getBytes(StandardCharsets.UTF_8));
+        }
+        return bytes.toByteArray();
     }
 
     private static byte[] minimalClassFileBytes(int majorVersion) {
