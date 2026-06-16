@@ -10,11 +10,17 @@ import net.bytebuddy.matcher.ElementMatcher;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URLConnection;
+import java.nio.file.CopyOption;
 import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
@@ -70,6 +76,17 @@ public class TraceTransformer {
     private static final AtomicReference<Method> HTTP_CONNECT = new AtomicReference<Method>();
     private static final AtomicReference<Method> HTTP_GET_INPUT_STREAM = new AtomicReference<Method>();
     private static final AtomicReference<Method> HTTP_GET_OUTPUT_STREAM = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILE_READER_STRING = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILE_READER_FILE = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILE_WRITER_STRING = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILE_WRITER_FILE = new AtomicReference<Method>();
+    private static final AtomicReference<Method> RANDOM_ACCESS_FILE_STRING = new AtomicReference<Method>();
+    private static final AtomicReference<Method> RANDOM_ACCESS_FILE_FILE = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILES_READ_ALL_BYTES = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILES_WRITE = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILES_COPY_PATH_PATH = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILES_COPY_IN_PATH = new AtomicReference<Method>();
+    private static final AtomicReference<Method> FILES_COPY_PATH_OUT = new AtomicReference<Method>();
     private static final AtomicReference<Method> FOR_NAME = new AtomicReference<Method>();
 
     private final TraceEventSink sink;
@@ -235,6 +252,39 @@ public class TraceTransformer {
                         .and(takesArgument(0, Path.class))
                         .and(takesArgument(1, java.nio.charset.Charset.class)))
                 .replaceWith(method(FILES_LINES_CS, TraceHooks.class, "lines", Path.class, java.nio.charset.Charset.class))
+                .constructor(isDeclaredBy(FileReader.class).and(takesArguments(String.class)))
+                .replaceWith(method(FILE_READER_STRING, TraceHooks.class, "newFileReader", String.class))
+                .constructor(isDeclaredBy(FileReader.class).and(takesArguments(File.class)))
+                .replaceWith(method(FILE_READER_FILE, TraceHooks.class, "newFileReader", File.class))
+                .constructor(isDeclaredBy(FileWriter.class).and(takesArguments(String.class)))
+                .replaceWith(method(FILE_WRITER_STRING, TraceHooks.class, "newFileWriter", String.class))
+                .constructor(isDeclaredBy(FileWriter.class).and(takesArguments(File.class)))
+                .replaceWith(method(FILE_WRITER_FILE, TraceHooks.class, "newFileWriter", File.class))
+                .constructor(isDeclaredBy(RandomAccessFile.class).and(takesArguments(String.class, String.class)))
+                .replaceWith(method(RANDOM_ACCESS_FILE_STRING, TraceHooks.class, "newRandomAccessFile", String.class, String.class))
+                .constructor(isDeclaredBy(RandomAccessFile.class).and(takesArguments(File.class, String.class)))
+                .replaceWith(method(RANDOM_ACCESS_FILE_FILE, TraceHooks.class, "newRandomAccessFile", File.class, String.class))
+                .method(named("readAllBytes").and(isDeclaredBy(Files.class)).and(takesArguments(Path.class)))
+                .replaceWith(method(FILES_READ_ALL_BYTES, TraceHooks.class, "readAllBytes", Path.class))
+                .method(named("write").and(isDeclaredBy(Files.class)).and(takesArguments(3))
+                        .and(takesArgument(0, Path.class))
+                        .and(takesArgument(1, byte[].class))
+                        .and(takesArgument(2, OpenOption[].class)))
+                .replaceWith(method(FILES_WRITE, TraceHooks.class, "write", Path.class, byte[].class, OpenOption[].class))
+                .method(named("copy").and(isDeclaredBy(Files.class)).and(takesArguments(3))
+                        .and(takesArgument(0, Path.class))
+                        .and(takesArgument(1, Path.class))
+                        .and(takesArgument(2, CopyOption[].class)))
+                .replaceWith(method(FILES_COPY_PATH_PATH, TraceHooks.class, "copy", Path.class, Path.class, CopyOption[].class))
+                .method(named("copy").and(isDeclaredBy(Files.class)).and(takesArguments(3))
+                        .and(takesArgument(0, InputStream.class))
+                        .and(takesArgument(1, Path.class))
+                        .and(takesArgument(2, CopyOption[].class)))
+                .replaceWith(method(FILES_COPY_IN_PATH, TraceHooks.class, "copy", InputStream.class, Path.class, CopyOption[].class))
+                .method(named("copy").and(isDeclaredBy(Files.class)).and(takesArguments(2))
+                        .and(takesArgument(0, Path.class))
+                        .and(takesArgument(1, OutputStream.class)))
+                .replaceWith(method(FILES_COPY_PATH_OUT, TraceHooks.class, "copy", Path.class, OutputStream.class))
                 .on(any());
     }
 

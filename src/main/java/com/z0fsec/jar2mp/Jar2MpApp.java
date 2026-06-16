@@ -20,11 +20,18 @@ public class Jar2MpApp {
         createAndShowGUI();
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
         // CLI mode if arguments are provided
         if (args.length > 0) {
-            int exitCode = new CliRunner().run(args);
-            System.exit(exitCode);
+            // Run in a thread with a larger stack: some JARs contain deeply nested
+            // anonymous classes whose decompiled source triggers deep regex recursion.
+            int[] exitCode = {1};
+            Thread cliThread = new Thread(null, () -> {
+                exitCode[0] = new CliRunner().run(args);
+            }, "jar2mp-cli", 64 * 1024 * 1024L);
+            cliThread.start();
+            cliThread.join();
+            System.exit(exitCode[0]);
             return;
         }
 

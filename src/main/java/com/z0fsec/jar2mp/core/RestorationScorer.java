@@ -25,6 +25,8 @@ import java.util.jar.JarFile;
 
 public class RestorationScorer {
 
+    private final EnvironmentFailureDetector envFailureDetector = new EnvironmentFailureDetector();
+
     private static final String SOURCE = "source";
     private static final String RESOURCE = "resource";
     private static final String RUNTIME = "runtime";
@@ -136,7 +138,7 @@ public class RestorationScorer {
         if (fidelity == null) {
             return 100;
         }
-        if (fidelity.isExactMatch()) {
+        if (fidelity.isExactMatch() || fidelity.isContentEntriesMatch()) {
             return 100;
         }
         score.addGap("package_fidelity", packageFidelityDetail(fidelity), VERIFICATION_WEIGHT);
@@ -332,13 +334,7 @@ public class RestorationScorer {
     }
 
     private String runtimeStartupFailureCategory(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
-        String output = (safeValue(smokeResult == null ? null : smokeResult.getFailureMessage()) + "\n"
-                + safeValue(smokeResult == null ? null : smokeResult.getStdout()) + "\n"
-                + safeValue(smokeResult == null ? null : smokeResult.getStderr())).toLowerCase(Locale.ROOT);
-        if (output.contains("redisconnectionexception")
-                || output.contains("unable to connect to redis server")
-                || output.contains("connectexception: connection refused")
-                || output.contains("connection refused")) {
+        if (envFailureDetector.isEnvironmentFailure(smokeResult)) {
             return "runtime_environment";
         }
         return "runtime_status";
@@ -405,10 +401,22 @@ public class RestorationScorer {
 
     private Set<String> expectedRuntimeKinds(JarAnalysisResult analysis) {
         Set<String> expectedKinds = new LinkedHashSet<>();
-        if (analysis == null || analysis.getSourceFile() == null || !analysis.getSourceFile().isFile()) {
+        if (analysis == null) {
             return expectedKinds;
         }
 
+        // Use fingerprints cached during analysis (avoids re-opening the JAR)
+        if (!analysis.getClassBytecodeFingerprints().isEmpty()) {
+            for (BytecodeFingerprint fingerprint : analysis.getClassBytecodeFingerprints().values()) {
+                collectExpectedRuntimeKinds(fingerprint, expectedKinds);
+            }
+            return expectedKinds;
+        }
+
+        // Fallback: read JAR directly when cache is absent (e.g. result built without JarAnalyzer)
+        if (analysis.getSourceFile() == null || !analysis.getSourceFile().isFile()) {
+            return expectedKinds;
+        }
         try (JarFile jarFile = new JarFile(analysis.getSourceFile())) {
             for (String classPath : safeFindings(analysis.getClassFiles())) {
                 String rawEntryPath = analysis.getClassPathMapping().get(classPath);
@@ -475,10 +483,16 @@ public class RestorationScorer {
     private boolean isFileCall(String call) {
         return call.startsWith("java/io/FileInputStream.<init>")
                 || call.startsWith("java/io/FileOutputStream.<init>")
+                || call.startsWith("java/io/FileReader.<init>")
+                || call.startsWith("java/io/FileWriter.<init>")
+                || call.startsWith("java/io/RandomAccessFile.<init>")
                 || call.startsWith("java/nio/file/Files.newInputStream")
                 || call.startsWith("java/nio/file/Files.newOutputStream")
                 || call.startsWith("java/nio/file/Files.newBufferedReader")
                 || call.startsWith("java/nio/file/Files.readAllLines")
+                || call.startsWith("java/nio/file/Files.readAllBytes")
+                || call.startsWith("java/nio/file/Files.write")
+                || call.startsWith("java/nio/file/Files.copy")
                 || call.startsWith("java/nio/file/Files.lines");
     }
 

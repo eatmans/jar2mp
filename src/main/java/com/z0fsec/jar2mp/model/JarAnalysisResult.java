@@ -1,5 +1,7 @@
 package com.z0fsec.jar2mp.model;
 
+import com.z0fsec.jar2mp.core.BytecodeFingerprint;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -23,6 +25,8 @@ public class JarAnalysisResult {
     private final List<ResourceFinding> resourceFindings = new ArrayList<>();
     private final List<StartupFinding> startupFindings = new ArrayList<>();
     private final List<DecompileFinding> decompileFindings = new ArrayList<>();
+    private final List<String> metadataWarnings = new ArrayList<>();
+    private final Map<String, BytecodeFingerprint> classBytecodeFingerprints = new LinkedHashMap<>();
     private com.z0fsec.jar2mp.core.RuntimeTraceResult runtimeTraceResult;
     private com.z0fsec.jar2mp.core.RuntimeSmokeRunner.SmokeRunResult runtimeSmokeResult;
     private VerificationResult verificationResult;
@@ -58,6 +62,8 @@ public class JarAnalysisResult {
     public List<ResourceFinding> getResourceFindings() { return resourceFindings; }
     public List<StartupFinding> getStartupFindings() { return startupFindings; }
     public List<DecompileFinding> getDecompileFindings() { return decompileFindings; }
+    public List<String> getMetadataWarnings() { return metadataWarnings; }
+    public Map<String, BytecodeFingerprint> getClassBytecodeFingerprints() { return classBytecodeFingerprints; }
     public com.z0fsec.jar2mp.core.RuntimeTraceResult getRuntimeTraceResult() { return runtimeTraceResult; }
     public void setRuntimeTraceResult(com.z0fsec.jar2mp.core.RuntimeTraceResult runtimeTraceResult) {
         this.runtimeTraceResult = runtimeTraceResult;

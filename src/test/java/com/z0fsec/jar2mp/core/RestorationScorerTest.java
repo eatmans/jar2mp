@@ -609,6 +609,28 @@ class RestorationScorerTest {
                         && g.getDetail().contains("classDiff=1")));
     }
 
+    @Test
+    void packageFidelityContentMatchScoresVerificationFull() {
+        ArtifactFidelityResult packageFidelity = new ArtifactFidelityResult();
+        packageFidelity.setOriginalEntryTotal(3);
+        packageFidelity.setRebuiltEntryTotal(3);
+        packageFidelity.setCommonEntries(3);
+        packageFidelity.setSameSha256(3);
+        packageFidelity.setDifferentSha256(0);
+        packageFidelity.setArchiveBytesSame(false);
+        packageFidelity.setArchiveMetadataDiffEntries(2);
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setPackageFidelity(packageFidelity);
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(0);
+        verification.setFailureType("NONE");
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, verification);
+
+        assertEquals(100, score.getBreakdown().get("verification").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "package_fidelity".equals(g.getCategory())));
+    }
+
     private VerificationError verificationError(String category) {
         VerificationError error = new VerificationError();
         error.setCategory(category);

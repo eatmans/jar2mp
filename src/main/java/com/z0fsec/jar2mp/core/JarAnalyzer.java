@@ -5,6 +5,7 @@ import com.z0fsec.jar2mp.model.*;
 import com.z0fsec.jar2mp.util.ClassFileUtils;
 
 import java.io.*;
+import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -90,14 +91,18 @@ public class JarAnalyzer {
             // Phase 3: Extract embedded Maven metadata
             if (callback != null) callback.onProgress("Extracting Maven metadata...", 50);
 
-            List<PomInfo> embeddedPomInfos = metadataExtractor.extractAll(jf);
+            List<String> pomClassNames = new ArrayList<>();
+            List<String> metadataWarnings = new ArrayList<>();
+            List<PomInfo> embeddedPomInfos = metadataExtractor.extractAll(jf, pomClassNames, metadataWarnings);
             result.getEmbeddedPomInfos().addAll(embeddedPomInfos);
-            PomInfo pomInfo = metadataExtractor.selectPrimary(embeddedPomInfos, jf);
+            result.getMetadataWarnings().addAll(metadataWarnings);
+            PomInfo pomInfo = metadataExtractor.selectPrimary(embeddedPomInfos, pomClassNames, jf.getName());
             result.setEmbeddedPomInfo(pomInfo);
 
             determineCoordinates(result, jarFile);
             populateClassFiles(result, rawClassEntries, hasBootApplicationClasses,
                     hasWebApplicationClasses, manifestInfo, pomInfo, embeddedPomInfos);
+            populateBytecodeFingerprints(result, jf);
 
             // Phase 4: Detect dependencies
             if (shouldDetectDependencies()) {
@@ -383,6 +388,38 @@ public class JarAnalyzer {
 
     private static boolean isSpringBootLoaderClass(String entryName) {
         return entryName != null && entryName.startsWith("org/springframework/boot/loader/");
+    }
+
+    private void populateBytecodeFingerprints(JarAnalysisResult result, JarFile jf) {
+        for (String classPath : result.getClassFiles()) {
+            String rawEntryPath = result.getClassPathMapping().get(classPath);
+            if (rawEntryPath == null) {
+                rawEntryPath = classPath;
+            }
+            JarEntry entry = jf.getJarEntry(rawEntryPath);
+            if (entry == null) {
+                continue;
+            }
+            try {
+                byte[] bytes = readClassBytes(jf, entry);
+                BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(bytes);
+                result.getClassBytecodeFingerprints().put(classPath, fingerprint);
+            } catch (Exception ignored) {
+                // Best-effort; skip classes that cannot be fingerprinted
+            }
+        }
+    }
+
+    private static byte[] readClassBytes(JarFile jf, JarEntry entry) throws IOException {
+        try (java.io.InputStream in = jf.getInputStream(entry);
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        }
     }
 
     private boolean shouldDetectDependencies() {

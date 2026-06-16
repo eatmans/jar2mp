@@ -17,6 +17,7 @@ public class SourceRebuildFidelityResult {
     private final List<String> sampleDifferentClasses = new ArrayList<>();
     private final List<String> sampleMissingRecompiledClasses = new ArrayList<>();
     private final List<String> sampleExtraRecompiledClasses = new ArrayList<>();
+    private final List<String> allDifferentClasses = new ArrayList<>();
 
     public boolean isSourceRecompiledClassBytesSame() {
         return originalAppClasses == recompiledClasses
@@ -104,8 +105,15 @@ public class SourceRebuildFidelityResult {
         return sampleExtraRecompiledClasses;
     }
 
+    public List<String> getAllDifferentClasses() {
+        return allDifferentClasses;
+    }
+
     public void recordDifferentClass(String classPath) {
         addSample(sampleDifferentClasses, classPath);
+        if (classPath != null && !allDifferentClasses.contains(classPath)) {
+            allDifferentClasses.add(classPath);
+        }
     }
 
     public void recordMissingRecompiledClass(String classPath) {

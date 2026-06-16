@@ -124,6 +124,11 @@ public class AnalysisPanel extends BasePanel {
         if (packageFidelity != null) {
             summaryModel.addRow(new Object[]{"字节级 package 保真", packageFidelityText(packageFidelity)});
         }
+        if (!result.getMetadataWarnings().isEmpty()) {
+            summaryModel.addRow(new Object[]{"元数据解析警告", result.getMetadataWarnings().size()
+                    + " 条: " + result.getMetadataWarnings().get(0)
+                    + (result.getMetadataWarnings().size() > 1 ? " ..." : "")});
+        }
         summaryModel.addRow(new Object[]{"反编译失败数", result.getDecompileFindings().size()});
         summaryModel.addRow(new Object[]{"保留原始 class 数", retainedClassCount(result.getDecompileFindings())});
 

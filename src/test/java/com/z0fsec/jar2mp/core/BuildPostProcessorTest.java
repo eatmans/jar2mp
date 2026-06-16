@@ -1,5 +1,6 @@
 package com.z0fsec.jar2mp.core;
 
+import com.z0fsec.jar2mp.core.PostBuildResult;
 import com.z0fsec.jar2mp.model.JarAnalysisResult;
 import com.z0fsec.jar2mp.model.ManifestInfo;
 import com.z0fsec.jar2mp.model.ProjectConfig;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.jar.Attributes;
@@ -17,6 +19,7 @@ import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import javax.tools.ToolProvider;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -38,7 +41,7 @@ class BuildPostProcessorTest {
         config.setByteExactPackage(true);
         List<String> messages = new ArrayList<>();
 
-        BuildPostProcessor.PostBuildResult result = new BuildPostProcessor()
+        PostBuildResult result = new BuildPostProcessor()
                 .postProcess(jar.toFile(), new JarAnalysisResult(), outputDir.toFile(), config, messages::add);
 
         assertTrue(Files.exists(outputDir.resolve("target/raw-artifact/sample-1.0.jar")));
@@ -137,6 +140,43 @@ class BuildPostProcessorTest {
         new BuildPostProcessor().postProcess(jar.toFile(), analysis, outputDir.toFile(), config, message -> { });
 
         assertNotNull(analysis.getPackageFidelity());
+    }
+
+    @Test
+    void byteExactPackageRestoresOriginalArtifactWhenRecompiledClassBytesDiffer() throws Exception {
+        Path rawClasses = tempDir.resolve("byte-exact-original-classes");
+        compileRawClass(rawClasses, "demo.App",
+                "package demo;\npublic class App { public String value() { return \"original\"; } }\n");
+        Path jar = tempDir.resolve("byte-exact.jar");
+        createJarFromClass(jar, rawClasses.resolve("demo/App.class"), "demo/App.class");
+        Path outputDir = tempDir.resolve("project-byte-exact-different-classes");
+        Files.createDirectories(outputDir.resolve("src/main/java/demo"));
+        Files.write(outputDir.resolve("pom.xml"), pomXml().getBytes(StandardCharsets.UTF_8));
+        Files.write(outputDir.resolve("src/main/java/demo/App.java"),
+                "package demo;\npublic class App { public String value() { return \"rebuilt\"; } }\n"
+                        .getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/App.class");
+        ProjectConfig config = new ProjectConfig();
+        config.setVerifyBuild(true);
+        config.setVerifyGoal("package");
+        config.setByteExactPackage(true);
+
+        PostBuildResult result = new BuildPostProcessor()
+                .postProcess(jar.toFile(), analysis, outputDir.toFile(), config, message -> { });
+        Path packagedArtifact = outputDir.resolve("target/verified-project-1.0.0.jar");
+
+        assertNotNull(result.getVerificationResult());
+        assertEquals(0, result.getVerificationResult().getExitCode());
+        assertEquals(1, result.getBackfilledClassCount(),
+                "test fixture must exercise the realistic differing-class-byte path");
+        assertNotNull(result.getPackageFidelity());
+        assertTrue(result.getPackageFidelity().isExactMatch(),
+                "byte-exact mode must only report success after archive bytes match");
+        assertFalse(result.hasBlockingFailure(), result.getBlockingFailure());
+        assertEquals(sha256(jar), sha256(packagedArtifact),
+                "restored package artifact must be byte-for-byte identical to the original");
     }
 
     @Test
@@ -332,5 +372,15 @@ class BuildPostProcessorTest {
                 "    <maven.compiler.target>8</maven.compiler.target>\n" +
                 "  </properties>\n" +
                 "</project>\n";
+    }
+
+    private String sha256(Path file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(Files.readAllBytes(file));
+        StringBuilder hex = new StringBuilder(hash.length * 2);
+        for (byte value : hash) {
+            hex.append(String.format("%02x", value & 0xff));
+        }
+        return hex.toString();
     }
 }

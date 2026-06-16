@@ -3,9 +3,12 @@ package com.z0fsec.jar2mp.core;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.CRC32;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
@@ -138,6 +141,34 @@ class ZipRecordOrderRestorerTest {
         assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
     }
 
+    @Test
+    void restoresZip64ArchiveEntryOrder() throws Exception {
+        TestEntry first = entry("first.txt", "one");
+        TestEntry second = entry("second.txt", "two");
+        Path original = writeMinimalZip64Zip("original.jar", first, second);
+        Path rebuilt = writeMinimalZip64Zip("rebuilt.jar", second, first);
+
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+    }
+
+    @Test
+    void restoresArchiveWithDataDescriptors() throws Exception {
+        TestEntry first = entry("first.txt", "one");
+        TestEntry second = entry("second.txt", "two");
+        Path original = writeDataDescriptorZip("original.jar", first, second);
+        Path rebuilt = writeDataDescriptorZip("rebuilt.jar", second, first);
+
+        Path restored = new ZipRecordOrderRestorer()
+                .restore(original.toFile(), rebuilt.toFile(), tempDir.resolve("out").toFile())
+                .toPath();
+
+        assertArrayEquals(Files.readAllBytes(original), Files.readAllBytes(restored));
+    }
+
     private Path writeStoredZip(String fileName, long entryTime, TestEntry... entries) throws Exception {
         Path zip = tempDir.resolve(fileName);
         try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(zip))) {
@@ -201,6 +232,168 @@ class ZipRecordOrderRestorerTest {
 
     private TestEntry deflatedEntry(String name, byte[] content) {
         return new TestEntry(name, content, ZipEntry.DEFLATED);
+    }
+
+    /**
+     * Builds a hand-crafted ZIP64 archive: regular EOCD fields use 0xFFFF / 0xFFFFFFFF markers
+     * while actual values live in the ZIP64 EOCD64 + Locator block, exercising the ZIP64 code path.
+     */
+    private Path writeMinimalZip64Zip(String fileName, TestEntry... entries) throws Exception {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        List<Long> localOffsets = new ArrayList<>();
+        for (TestEntry entry : entries) {
+            localOffsets.add((long) buf.size());
+            byte[] nameBytes = entry.name.getBytes(StandardCharsets.UTF_8);
+            writeLE4(buf, 0x04034b50L);
+            writeLE2(buf, 20);
+            writeLE2(buf, 0);
+            writeLE2(buf, ZipEntry.STORED);
+            writeLE4(buf, 0L);
+            writeLE4(buf, crc32(entry.content));
+            writeLE4(buf, entry.content.length);
+            writeLE4(buf, entry.content.length);
+            writeLE2(buf, nameBytes.length);
+            writeLE2(buf, 0);
+            buf.write(nameBytes);
+            buf.write(entry.content);
+        }
+        long cdOffset = buf.size();
+        for (int i = 0; i < entries.length; i++) {
+            byte[] nameBytes = entries[i].name.getBytes(StandardCharsets.UTF_8);
+            writeLE4(buf, 0x02014b50L);
+            writeLE2(buf, 20);
+            writeLE2(buf, 20);
+            writeLE2(buf, 0);
+            writeLE2(buf, ZipEntry.STORED);
+            writeLE4(buf, 0L);
+            writeLE4(buf, crc32(entries[i].content));
+            writeLE4(buf, entries[i].content.length);
+            writeLE4(buf, entries[i].content.length);
+            writeLE2(buf, nameBytes.length);
+            writeLE2(buf, 0);
+            writeLE2(buf, 0);
+            writeLE2(buf, 0);
+            writeLE2(buf, 0);
+            writeLE4(buf, 0L);
+            writeLE4(buf, localOffsets.get(i));
+            buf.write(nameBytes);
+        }
+        long cdSize = buf.size() - cdOffset;
+        long zip64EocdOffset = buf.size();
+        // ZIP64 EOCD64
+        writeLE4(buf, 0x06064b50L);
+        writeLE8(buf, 44L);
+        writeLE2(buf, 45);
+        writeLE2(buf, 45);
+        writeLE4(buf, 0L);
+        writeLE4(buf, 0L);
+        writeLE8(buf, entries.length);
+        writeLE8(buf, entries.length);
+        writeLE8(buf, cdSize);
+        writeLE8(buf, cdOffset);
+        // ZIP64 EOCD Locator
+        writeLE4(buf, 0x07064b50L);
+        writeLE4(buf, 0L);
+        writeLE8(buf, zip64EocdOffset);
+        writeLE4(buf, 1L);
+        // Regular EOCD with ZIP64 markers
+        writeLE4(buf, 0x06054b50L);
+        writeLE2(buf, 0);
+        writeLE2(buf, 0);
+        writeLE2(buf, 0xffff);
+        writeLE2(buf, 0xffff);
+        writeLE4(buf, 0xffffffffL);
+        writeLE4(buf, 0xffffffffL);
+        writeLE2(buf, 0);
+        Path zip = tempDir.resolve(fileName);
+        Files.write(zip, buf.toByteArray());
+        return zip;
+    }
+
+    /**
+     * Builds a ZIP where bit 3 of the general purpose flag is set (Data Descriptor follows data).
+     * Local headers have CRC and sizes zeroed; a Data Descriptor block follows each entry's payload.
+     * Central directory records always carry the correct CRC and sizes.
+     */
+    private Path writeDataDescriptorZip(String fileName, TestEntry... entries) throws Exception {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        List<Long> localOffsets = new ArrayList<>();
+        for (TestEntry entry : entries) {
+            localOffsets.add((long) buf.size());
+            byte[] nameBytes = entry.name.getBytes(StandardCharsets.UTF_8);
+            writeLE4(buf, 0x04034b50L);
+            writeLE2(buf, 20);
+            writeLE2(buf, 0x0008);
+            writeLE2(buf, ZipEntry.STORED);
+            writeLE4(buf, 0L);
+            writeLE4(buf, 0L);
+            writeLE4(buf, 0L);
+            writeLE4(buf, 0L);
+            writeLE2(buf, nameBytes.length);
+            writeLE2(buf, 0);
+            buf.write(nameBytes);
+            buf.write(entry.content);
+            writeLE4(buf, 0x08074b50L);
+            writeLE4(buf, crc32(entry.content));
+            writeLE4(buf, entry.content.length);
+            writeLE4(buf, entry.content.length);
+        }
+        long cdOffset = buf.size();
+        for (int i = 0; i < entries.length; i++) {
+            byte[] nameBytes = entries[i].name.getBytes(StandardCharsets.UTF_8);
+            writeLE4(buf, 0x02014b50L);
+            writeLE2(buf, 20);
+            writeLE2(buf, 20);
+            writeLE2(buf, 0x0008);
+            writeLE2(buf, ZipEntry.STORED);
+            writeLE4(buf, 0L);
+            writeLE4(buf, crc32(entries[i].content));
+            writeLE4(buf, entries[i].content.length);
+            writeLE4(buf, entries[i].content.length);
+            writeLE2(buf, nameBytes.length);
+            writeLE2(buf, 0);
+            writeLE2(buf, 0);
+            writeLE2(buf, 0);
+            writeLE2(buf, 0);
+            writeLE4(buf, 0L);
+            writeLE4(buf, localOffsets.get(i));
+            buf.write(nameBytes);
+        }
+        long cdSize = buf.size() - cdOffset;
+        writeLE4(buf, 0x06054b50L);
+        writeLE2(buf, 0);
+        writeLE2(buf, 0);
+        writeLE2(buf, entries.length);
+        writeLE2(buf, entries.length);
+        writeLE4(buf, cdSize);
+        writeLE4(buf, cdOffset);
+        writeLE2(buf, 0);
+        Path zip = tempDir.resolve(fileName);
+        Files.write(zip, buf.toByteArray());
+        return zip;
+    }
+
+    private static void writeLE2(ByteArrayOutputStream buf, int value) {
+        buf.write(value & 0xff);
+        buf.write((value >>> 8) & 0xff);
+    }
+
+    private static void writeLE4(ByteArrayOutputStream buf, long value) {
+        buf.write((int) (value & 0xff));
+        buf.write((int) ((value >>> 8) & 0xff));
+        buf.write((int) ((value >>> 16) & 0xff));
+        buf.write((int) ((value >>> 24) & 0xff));
+    }
+
+    private static void writeLE8(ByteArrayOutputStream buf, long value) {
+        buf.write((int) (value & 0xff));
+        buf.write((int) ((value >>> 8) & 0xff));
+        buf.write((int) ((value >>> 16) & 0xff));
+        buf.write((int) ((value >>> 24) & 0xff));
+        buf.write((int) ((value >>> 32) & 0xff));
+        buf.write((int) ((value >>> 40) & 0xff));
+        buf.write((int) ((value >>> 48) & 0xff));
+        buf.write((int) ((value >>> 56) & 0xff));
     }
 
     private static class TestEntry {

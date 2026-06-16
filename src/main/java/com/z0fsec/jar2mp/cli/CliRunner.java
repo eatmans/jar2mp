@@ -118,7 +118,7 @@ public class CliRunner {
                         }
                     });
 
-                    BuildPostProcessor.PostBuildResult postBuildResult = postProcessor.postProcess(
+                    PostBuildResult postBuildResult = postProcessor.postProcess(
                             jarFile,
                             result,
                             outputDir,

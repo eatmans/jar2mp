@@ -18,12 +18,13 @@ import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.jar.JarFile;
 
 public class BuildPostProcessor {
 
-    private final ProjectVerifier verifier;
+    private final BuildVerifier verifier;
     private final RuntimeSmokeRunner smokeRunner;
     private final RuntimeTraceReportWriter traceReportWriter;
     private final RawArtifactPackager rawArtifactPackager;
@@ -35,20 +36,54 @@ public class BuildPostProcessor {
     private final RestorationScoreWriter restorationScoreWriter;
     private final GapSummaryWriter gapSummaryWriter;
     private final DecompileParityReporter parityReporter;
+    private final EnvironmentFailureDetector envFailureDetector;
+    private final BytecodeBackfiller bytecodeBackfiller;
 
     public BuildPostProcessor() {
-        this.verifier = new ProjectVerifier();
-        this.smokeRunner = new RuntimeSmokeRunner();
-        this.traceReportWriter = new RuntimeTraceReportWriter();
-        this.rawArtifactPackager = new RawArtifactPackager();
-        this.artifactFidelityComparator = new ArtifactFidelityComparator();
-        this.artifactFidelityReportWriter = new ArtifactFidelityReportWriter();
-        this.sourceRebuildFidelityComparator = new SourceRebuildFidelityComparator();
-        this.sourceRebuildFidelityReportWriter = new SourceRebuildFidelityReportWriter();
-        this.restorationScorer = new RestorationScorer();
-        this.restorationScoreWriter = new RestorationScoreWriter();
-        this.gapSummaryWriter = new GapSummaryWriter();
-        this.parityReporter = new DecompileParityReporter();
+        this(new ProjectVerifier(),
+                new RuntimeSmokeRunner(),
+                new RuntimeTraceReportWriter(),
+                new RawArtifactPackager(),
+                new ArtifactFidelityComparator(),
+                new ArtifactFidelityReportWriter(),
+                new SourceRebuildFidelityComparator(),
+                new SourceRebuildFidelityReportWriter(),
+                new RestorationScorer(),
+                new RestorationScoreWriter(),
+                new GapSummaryWriter(),
+                new DecompileParityReporter(),
+                new EnvironmentFailureDetector(),
+                new BytecodeBackfiller());
+    }
+
+    BuildPostProcessor(BuildVerifier verifier,
+                       RuntimeSmokeRunner smokeRunner,
+                       RuntimeTraceReportWriter traceReportWriter,
+                       RawArtifactPackager rawArtifactPackager,
+                       ArtifactFidelityComparator artifactFidelityComparator,
+                       ArtifactFidelityReportWriter artifactFidelityReportWriter,
+                       SourceRebuildFidelityComparator sourceRebuildFidelityComparator,
+                       SourceRebuildFidelityReportWriter sourceRebuildFidelityReportWriter,
+                       RestorationScorer restorationScorer,
+                       RestorationScoreWriter restorationScoreWriter,
+                       GapSummaryWriter gapSummaryWriter,
+                       DecompileParityReporter parityReporter,
+                       EnvironmentFailureDetector envFailureDetector,
+                       BytecodeBackfiller bytecodeBackfiller) {
+        this.verifier = verifier;
+        this.smokeRunner = smokeRunner;
+        this.traceReportWriter = traceReportWriter;
+        this.rawArtifactPackager = rawArtifactPackager;
+        this.artifactFidelityComparator = artifactFidelityComparator;
+        this.artifactFidelityReportWriter = artifactFidelityReportWriter;
+        this.sourceRebuildFidelityComparator = sourceRebuildFidelityComparator;
+        this.sourceRebuildFidelityReportWriter = sourceRebuildFidelityReportWriter;
+        this.restorationScorer = restorationScorer;
+        this.restorationScoreWriter = restorationScoreWriter;
+        this.gapSummaryWriter = gapSummaryWriter;
+        this.parityReporter = parityReporter;
+        this.envFailureDetector = envFailureDetector;
+        this.bytecodeBackfiller = bytecodeBackfiller;
     }
 
     public PostBuildResult postProcess(File originalArtifact, JarAnalysisResult analysis, File outputDir,
@@ -73,17 +108,25 @@ public class BuildPostProcessor {
         }
 
         if (config.isTraceRuntime() || config.isSmokeOnly()) {
+            Optional<File> agentJar = resolveTraceAgentJar();
+            if (!agentJar.isPresent()) {
+                log(logger, "[WARN] trace-agent jar 未找到，跳过运行时冒烟测试。"
+                        + "请确保 jar2mp-*-trace-agent.jar 与主 jar 位于同一目录，"
+                        + "或通过 -Djar2mp.traceAgentJar=<路径> 指定。");
+                result.setBlockingFailure("trace-agent jar not found; runtime smoke skipped");
+                return result;
+            }
             RuntimeSmokeRunner.SmokeRunResult smokeResult = smokeRunner.runSmoke(
                     originalArtifact,
                     analysis,
-                    resolveTraceAgentJar(),
+                    agentJar.get(),
                     resolveTraceFile(config, outputDir),
                     config.getTraceArgs(),
                     config.getTraceTimeoutSeconds());
             traceReportWriter.write(outputDir, smokeResult);
             analysis.setRuntimeSmokeResult(smokeResult);
             analysis.setRuntimeTraceResult(smokeResult.getTraceResult());
-            refreshRestorationScore(outputDir, analysis);
+            updateRestorationScore(analysis);
             result.setSmokeRunResult(smokeResult);
             logSmokeSummary(logger, smokeResult);
         }
@@ -93,7 +136,7 @@ public class BuildPostProcessor {
             analysis.setVerificationResult(verification);
             verifier.writeReport(outputDir, verification);
             rewriteParityReport(originalArtifact, analysis, outputDir);
-            refreshRestorationScore(outputDir, analysis);
+            updateRestorationScore(analysis);
             result.setVerificationResult(verification);
             log(logger, "构建验证报告: " + new File(outputDir, "verification-report.md").getAbsolutePath());
             log(logger, "构建验证: " + verification.getFailureType()
@@ -101,20 +144,28 @@ public class BuildPostProcessor {
             if (isVerificationFailure(verification)) {
                 result.setBlockingFailure("build verification failed: "
                         + verification.getFailureType() + " (exit " + verification.getExitCode() + ")");
+                flushRestorationScore(outputDir, analysis);
                 return result;
             }
             SourceRebuildFidelityResult sourceRebuildFidelity = verifySourceRebuildBytecode(originalArtifact,
                     outputDir, verification);
+            int backfilled = bytecodeBackfiller.backfill(originalArtifact, outputDir,
+                    sourceRebuildFidelity.getAllDifferentClasses());
+            if (backfilled > 0) {
+                result.setBackfilledClassCount(backfilled);
+                log(logger, "字节回填: 从原始 JAR 复制了 " + backfilled + " 个 class 到 target/classes");
+                sourceRebuildFidelity = verifySourceRebuildBytecode(originalArtifact, outputDir, verification);
+            }
             analysis.setSourceRebuildFidelity(sourceRebuildFidelity);
             result.setSourceRebuildFidelity(sourceRebuildFidelity);
-            refreshRestorationScore(outputDir, analysis);
+            updateRestorationScore(analysis);
             log(logger, "源码重编译 class 字节保真: "
                     + sourceRebuildFidelitySummary(sourceRebuildFidelity));
             if (config.isByteExactPackage() && runsPackagePhase(config.getVerifyGoal())) {
                 ArtifactFidelityResult packageFidelity = verifyByteExactPackage(originalArtifact, outputDir);
                 result.setPackageFidelity(packageFidelity);
                 analysis.setPackageFidelity(packageFidelity);
-                refreshRestorationScore(outputDir, analysis);
+                updateRestorationScore(analysis);
                 log(logger, "字节级 package 保真: exact=" + packageFidelity.isExactMatch());
                 if (!packageFidelity.isExactMatch()) {
                     result.setBlockingFailure("byte-exact package fidelity failed");
@@ -127,7 +178,7 @@ public class BuildPostProcessor {
                         outputDir);
                 result.setPackageFidelity(packageFidelity);
                 analysis.setPackageFidelity(packageFidelity);
-                refreshRestorationScore(outputDir, analysis);
+                updateRestorationScore(analysis);
                 log(logger, "包记录回放保真: exact=" + packageFidelity.isExactMatch());
                 if (!packageFidelity.isExactMatch()) {
                     result.setBlockingFailure("package record restoration fidelity failed");
@@ -135,6 +186,7 @@ public class BuildPostProcessor {
             }
         }
 
+        flushRestorationScore(outputDir, analysis);
         return result;
     }
 
@@ -168,23 +220,30 @@ public class BuildPostProcessor {
     }
 
     private boolean isEnvironmentStartupFailure(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
-        String output = (smokeResult == null ? "" : safeValue(smokeResult.getFailureMessage()) + "\n"
-                + safeValue(smokeResult.getStdout()) + "\n"
-                + safeValue(smokeResult.getStderr())).toLowerCase(Locale.ROOT);
-        return output.contains("redisconnectionexception")
-                || output.contains("unable to connect to redis server")
-                || output.contains("connectexception: connection refused")
-                || output.contains("connection refused");
+        return envFailureDetector.isEnvironmentFailure(smokeResult);
     }
 
     private String safeValue(String value) {
         return value == null ? "" : value;
     }
 
+    /** Updates the in-memory restoration score without touching disk. */
     private void refreshRestorationScore(File outputDir, JarAnalysisResult result) throws IOException {
+        updateRestorationScore(result);
+        flushRestorationScore(outputDir, result);
+    }
+
+    private void updateRestorationScore(JarAnalysisResult result) {
         RestorationScore score = restorationScorer.score(result, result.getRuntimeTraceResult(),
                 result.getVerificationResult());
         result.setRestorationScore(score);
+    }
+
+    private void flushRestorationScore(File outputDir, JarAnalysisResult result) throws IOException {
+        RestorationScore score = result.getRestorationScore();
+        if (score == null) {
+            return;
+        }
         restorationScoreWriter.write(outputDir, score);
         gapSummaryWriter.write(outputDir, score);
     }
@@ -208,16 +267,17 @@ public class BuildPostProcessor {
         return outputDir.toPath().resolve("runtime-trace.jsonl");
     }
 
-    private File resolveTraceAgentJar() {
+    private Optional<File> resolveTraceAgentJar() {
         String override = System.getProperty("jar2mp.traceAgentJar");
         if (override != null && !override.trim().isEmpty()) {
-            return new File(override.trim());
+            File f = new File(override.trim());
+            return f.isFile() ? Optional.of(f) : Optional.<File>empty();
         }
 
         String agentName = "jar2mp-" + Jar2MpConstants.VERSION + "-trace-agent.jar";
         File targetAgent = new File("target", agentName);
         if (targetAgent.isFile()) {
-            return targetAgent;
+            return Optional.of(targetAgent);
         }
 
         File codeLocation = resolveCodeLocation();
@@ -225,7 +285,7 @@ public class BuildPostProcessor {
             File baseDir = codeLocation.isFile() ? codeLocation.getParentFile() : codeLocation;
             File sibling = new File(baseDir, agentName);
             if (sibling.isFile()) {
-                return sibling;
+                return Optional.of(sibling);
             }
         }
 
@@ -233,9 +293,9 @@ public class BuildPostProcessor {
         File[] candidates = targetDir.listFiles((dir, name) -> name.endsWith(".jar") && name.contains("trace-agent"));
         if (candidates != null && candidates.length > 0) {
             Arrays.sort(candidates, Comparator.comparing(File::getName));
-            return candidates[0];
+            return Optional.of(candidates[0]);
         }
-        return targetAgent;
+        return Optional.empty();
     }
 
     private File resolveCodeLocation() {
@@ -281,14 +341,18 @@ public class BuildPostProcessor {
         ArtifactFidelityResult fidelity = artifactFidelityComparator.compare(originalArtifact, packagedArtifact);
         if (!fidelity.isExactMatch()
                 && !fidelity.isArchiveBytesSame()
-                && canAttemptRecordLevelRestoration(fidelity)) {
+                && canAttemptRecordLevelRestoration(originalArtifact, packagedArtifact)) {
             File restoredDir = new File(new File(outputDir, "target"), "byte-exact-package-restored");
             try {
                 File restoredArtifact = new ZipRecordOrderRestorer().restore(originalArtifact, packagedArtifact,
                         restoredDir);
-                Files.copy(restoredArtifact.toPath(), packagedArtifact.toPath(),
-                        StandardCopyOption.REPLACE_EXISTING);
-                fidelity = artifactFidelityComparator.compare(originalArtifact, packagedArtifact);
+                ArtifactFidelityResult restoredFidelity = artifactFidelityComparator.compare(originalArtifact,
+                        restoredArtifact);
+                if (restoredFidelity.isArchiveBytesSame()) {
+                    Files.copy(restoredArtifact.toPath(), packagedArtifact.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING);
+                    fidelity = artifactFidelityComparator.compare(originalArtifact, packagedArtifact);
+                }
             } catch (IOException ignored) {
                 // Keep the original comparison report when record-level restoration is not applicable.
             }
@@ -331,16 +395,13 @@ public class BuildPostProcessor {
         return fidelity;
     }
 
-    private boolean canAttemptRecordLevelRestoration(ArtifactFidelityResult fidelity) {
-        if (fidelity.isContentEntriesMatch()) {
-            return true;
-        }
-        return fidelity.getMissingEntries() == 0
-                && fidelity.getExtraEntries() == 0
-                && fidelity.getDifferentSha256() == 1
-                && fidelity.isManifestOriginalPresent()
-                && fidelity.isManifestRebuiltPresent()
-                && !fidelity.isManifestSame();
+    private boolean canAttemptRecordLevelRestoration(File originalArtifact, File packagedArtifact) {
+        return originalArtifact != null
+                && originalArtifact.isFile()
+                && originalArtifact.canRead()
+                && packagedArtifact != null
+                && packagedArtifact.isFile()
+                && packagedArtifact.canRead();
     }
 
     private File findPackagedArtifact(File outputDir, File originalArtifact) {
@@ -382,73 +443,4 @@ public class BuildPostProcessor {
         }
     }
 
-    public static class PostBuildResult {
-        private File preservedRawArtifact;
-        private ArtifactFidelityResult rawArtifactFidelity;
-        private RuntimeSmokeRunner.SmokeRunResult smokeRunResult;
-        private VerificationResult verificationResult;
-        private SourceRebuildFidelityResult sourceRebuildFidelity;
-        private ArtifactFidelityResult packageFidelity;
-        private String blockingFailure;
-
-        public File getPreservedRawArtifact() {
-            return preservedRawArtifact;
-        }
-
-        public ArtifactFidelityResult getRawArtifactFidelity() {
-            return rawArtifactFidelity;
-        }
-
-        public RuntimeSmokeRunner.SmokeRunResult getSmokeRunResult() {
-            return smokeRunResult;
-        }
-
-        public VerificationResult getVerificationResult() {
-            return verificationResult;
-        }
-
-        public SourceRebuildFidelityResult getSourceRebuildFidelity() {
-            return sourceRebuildFidelity;
-        }
-
-        public ArtifactFidelityResult getPackageFidelity() {
-            return packageFidelity;
-        }
-
-        public boolean hasBlockingFailure() {
-            return blockingFailure != null;
-        }
-
-        public String getBlockingFailure() {
-            return blockingFailure;
-        }
-
-        private void setPreservedRawArtifact(File preservedRawArtifact) {
-            this.preservedRawArtifact = preservedRawArtifact;
-        }
-
-        private void setRawArtifactFidelity(ArtifactFidelityResult rawArtifactFidelity) {
-            this.rawArtifactFidelity = rawArtifactFidelity;
-        }
-
-        private void setSmokeRunResult(RuntimeSmokeRunner.SmokeRunResult smokeRunResult) {
-            this.smokeRunResult = smokeRunResult;
-        }
-
-        private void setVerificationResult(VerificationResult verificationResult) {
-            this.verificationResult = verificationResult;
-        }
-
-        private void setSourceRebuildFidelity(SourceRebuildFidelityResult sourceRebuildFidelity) {
-            this.sourceRebuildFidelity = sourceRebuildFidelity;
-        }
-
-        private void setPackageFidelity(ArtifactFidelityResult packageFidelity) {
-            this.packageFidelity = packageFidelity;
-        }
-
-        private void setBlockingFailure(String blockingFailure) {
-            this.blockingFailure = blockingFailure;
-        }
-    }
 }

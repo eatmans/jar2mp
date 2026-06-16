@@ -5,9 +5,12 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -16,6 +19,7 @@ import java.net.Socket;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.charset.Charset;
+import java.nio.file.CopyOption;
 import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
@@ -120,6 +124,36 @@ public final class TraceHooks {
         return new FileOutputStream(file);
     }
 
+    public static FileReader newFileReader(String name) throws FileNotFoundException {
+        record(FILE, "java.io.FileReader", "new", name);
+        return new FileReader(name);
+    }
+
+    public static FileReader newFileReader(File file) throws FileNotFoundException {
+        record(FILE, "java.io.FileReader", "new", fileValue(file));
+        return new FileReader(file);
+    }
+
+    public static FileWriter newFileWriter(String name) throws IOException {
+        record(FILE, "java.io.FileWriter", "new", name);
+        return new FileWriter(name);
+    }
+
+    public static FileWriter newFileWriter(File file) throws IOException {
+        record(FILE, "java.io.FileWriter", "new", fileValue(file));
+        return new FileWriter(file);
+    }
+
+    public static RandomAccessFile newRandomAccessFile(String name, String mode) throws FileNotFoundException {
+        record(FILE, "java.io.RandomAccessFile", "new", name + "(" + mode + ")");
+        return new RandomAccessFile(name, mode);
+    }
+
+    public static RandomAccessFile newRandomAccessFile(File file, String mode) throws FileNotFoundException {
+        record(FILE, "java.io.RandomAccessFile", "new", fileValue(file) + "(" + mode + ")");
+        return new RandomAccessFile(file, mode);
+    }
+
     public static InputStream newInputStream(Path path, OpenOption[] options) throws IOException {
         record(FILE, "java.nio.file.Files", "newInputStream", pathValue(path));
         return Files.newInputStream(path, options);
@@ -158,6 +192,31 @@ public final class TraceHooks {
     public static Stream<String> lines(Path path, Charset charset) throws IOException {
         record(FILE, "java.nio.file.Files", "lines", pathValue(path));
         return Files.lines(path, charset);
+    }
+
+    public static byte[] readAllBytes(Path path) throws IOException {
+        record(FILE, "java.nio.file.Files", "readAllBytes", pathValue(path));
+        return Files.readAllBytes(path);
+    }
+
+    public static Path write(Path path, byte[] bytes, OpenOption[] options) throws IOException {
+        record(FILE, "java.nio.file.Files", "write", pathValue(path));
+        return Files.write(path, bytes, options);
+    }
+
+    public static Path copy(Path source, Path target, CopyOption[] options) throws IOException {
+        record(FILE, "java.nio.file.Files", "copy", pathValue(source) + " -> " + pathValue(target));
+        return Files.copy(source, target, options);
+    }
+
+    public static long copy(InputStream in, Path target, CopyOption[] options) throws IOException {
+        record(FILE, "java.nio.file.Files", "copy", pathValue(target));
+        return Files.copy(in, target, options);
+    }
+
+    public static long copy(Path source, OutputStream out) throws IOException {
+        record(FILE, "java.nio.file.Files", "copy", pathValue(source));
+        return Files.copy(source, out);
     }
 
     public static Socket newSocket(String host, int port) throws IOException {

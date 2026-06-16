@@ -17,8 +17,11 @@ public class ZipRecordOrderRestorer {
     private static final long LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50L;
     private static final long CENTRAL_FILE_HEADER_SIGNATURE = 0x02014b50L;
     private static final long END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50L;
+    private static final long ZIP64_EOCD_SIGNATURE = 0x06064b50L;
+    private static final long ZIP64_EOCD_LOCATOR_SIGNATURE = 0x07064b50L;
     private static final long ZIP64_MARKER = 0xffffffffL;
     private static final int ZIP64_ENTRY_COUNT_MARKER = 0xffff;
+    private static final int ZIP64_EXTRA_TAG = 0x0001;
     public File restore(File originalArtifact, File rebuiltArtifact, File outputDir) throws IOException {
         if (originalArtifact == null || !originalArtifact.isFile()) {
             throw new IOException("Original artifact not found: " + describe(originalArtifact));
@@ -47,16 +50,33 @@ public class ZipRecordOrderRestorer {
         long centralDirectoryOffset = output.size();
         for (String name : original.entryOrder) {
             byte[] centralRecord = selectRestoredCentralRecord(original, rebuilt, name);
-            writeUInt32(centralRecord, 42, newOffsets.get(name).longValue());
+            updateCentralRecordLocalOffset(centralRecord, newOffsets.get(name).longValue());
             output.write(centralRecord);
         }
         long centralDirectorySize = output.size() - centralDirectoryOffset;
 
         byte[] eocd = original.endOfCentralDirectory.clone();
-        writeUInt16(eocd, 8, original.entryOrder.size());
-        writeUInt16(eocd, 10, original.entryOrder.size());
-        writeUInt32(eocd, 12, centralDirectorySize);
-        writeUInt32(eocd, 16, centralDirectoryOffset);
+        if (original.zip64) {
+            int z = original.zip64EocdOffsetInEndBlock;
+            int zip64EocdTotalSize = 12 + (int) readUInt64(eocd, z + 4);
+            int locatorOffset = z + zip64EocdTotalSize;
+            int regularEocdOffset = locatorOffset + 20;
+            writeUInt64(eocd, z + 24, original.entryOrder.size());
+            writeUInt64(eocd, z + 32, original.entryOrder.size());
+            writeUInt64(eocd, z + 40, centralDirectorySize);
+            writeUInt64(eocd, z + 48, centralDirectoryOffset);
+            long zip64EocdNewOffset = centralDirectoryOffset + centralDirectorySize;
+            writeUInt64(eocd, locatorOffset + 8, zip64EocdNewOffset);
+            writeUInt16(eocd, regularEocdOffset + 8, ZIP64_ENTRY_COUNT_MARKER);
+            writeUInt16(eocd, regularEocdOffset + 10, ZIP64_ENTRY_COUNT_MARKER);
+            writeUInt32(eocd, regularEocdOffset + 12, ZIP64_MARKER);
+            writeUInt32(eocd, regularEocdOffset + 16, ZIP64_MARKER);
+        } else {
+            writeUInt16(eocd, 8, original.entryOrder.size());
+            writeUInt16(eocd, 10, original.entryOrder.size());
+            writeUInt32(eocd, 12, centralDirectorySize);
+            writeUInt32(eocd, 16, centralDirectoryOffset);
+        }
         output.write(eocd);
 
         Files.write(restored.toPath(), output.toByteArray());
@@ -197,12 +217,93 @@ public class ZipRecordOrderRestorer {
         data[offset + 3] = (byte) ((value >>> 24) & 0xff);
     }
 
+    private static long readUInt64(byte[] data, int offset) {
+        return ((long) data[offset] & 0xff)
+                | (((long) data[offset + 1] & 0xff) << 8)
+                | (((long) data[offset + 2] & 0xff) << 16)
+                | (((long) data[offset + 3] & 0xff) << 24)
+                | (((long) data[offset + 4] & 0xff) << 32)
+                | (((long) data[offset + 5] & 0xff) << 40)
+                | (((long) data[offset + 6] & 0xff) << 48)
+                | (((long) data[offset + 7] & 0xff) << 56);
+    }
+
+    private static void writeUInt64(byte[] data, int offset, long value) {
+        data[offset]     = (byte) (value & 0xff);
+        data[offset + 1] = (byte) ((value >>> 8) & 0xff);
+        data[offset + 2] = (byte) ((value >>> 16) & 0xff);
+        data[offset + 3] = (byte) ((value >>> 24) & 0xff);
+        data[offset + 4] = (byte) ((value >>> 32) & 0xff);
+        data[offset + 5] = (byte) ((value >>> 40) & 0xff);
+        data[offset + 6] = (byte) ((value >>> 48) & 0xff);
+        data[offset + 7] = (byte) ((value >>> 56) & 0xff);
+    }
+
+    private static void updateCentralRecordLocalOffset(byte[] centralRecord, long offset) {
+        long existing = readUInt32(centralRecord, 42);
+        if (existing == ZIP64_MARKER) {
+            // Update the ZIP64 extra field's local header offset subfield
+            int nameLength = readUInt16(centralRecord, 28);
+            int extraLength = readUInt16(centralRecord, 30);
+            int extraStart = 46 + nameLength;
+            int extraEnd = extraStart + extraLength;
+            // Count 8-byte ZIP64 fields that precede local header offset
+            int fieldsBefore = 0;
+            if (readUInt32(centralRecord, 24) == ZIP64_MARKER) fieldsBefore++;
+            if (readUInt32(centralRecord, 20) == ZIP64_MARKER) fieldsBefore++;
+            int pos = extraStart;
+            while (pos + 4 <= extraEnd) {
+                int tag = readUInt16(centralRecord, pos);
+                int size = readUInt16(centralRecord, pos + 2);
+                if (tag == ZIP64_EXTRA_TAG) {
+                    int fieldOffset = pos + 4 + fieldsBefore * 8;
+                    if (fieldOffset + 8 <= pos + 4 + size) {
+                        writeUInt64(centralRecord, fieldOffset, offset);
+                        return;
+                    }
+                }
+                pos += 4 + size;
+            }
+            // ZIP64 extra not found - fall back to writing as 32-bit (offset must fit)
+            writeUInt32(centralRecord, 42, offset);
+        } else {
+            writeUInt32(centralRecord, 42, offset);
+        }
+    }
+
+    private static long readZip64LocalOffset(byte[] bytes, int centralPosition,
+            int nameLength, int extraLength) throws IOException {
+        // Count 8-byte ZIP64 fields that appear before local header offset in the extra field.
+        // Per APPNOTE.TXT 4.5.3: only fields whose 4-byte counterpart is 0xFFFFFFFF are present,
+        // in order: uncompressedSize, compressedSize, localHeaderOffset, diskStart.
+        int fieldsBefore = 0;
+        if (readUInt32(bytes, centralPosition + 24) == ZIP64_MARKER) fieldsBefore++;
+        if (readUInt32(bytes, centralPosition + 20) == ZIP64_MARKER) fieldsBefore++;
+        int extraStart = centralPosition + 46 + nameLength;
+        int extraEnd = extraStart + extraLength;
+        int pos = extraStart;
+        while (pos + 4 <= extraEnd) {
+            int tag = readUInt16(bytes, pos);
+            int size = readUInt16(bytes, pos + 2);
+            if (tag == ZIP64_EXTRA_TAG) {
+                int fieldPos = pos + 4 + fieldsBefore * 8;
+                if (fieldPos + 8 <= pos + 4 + size) {
+                    return readUInt64(bytes, fieldPos);
+                }
+            }
+            pos += 4 + size;
+        }
+        throw new IOException("ZIP64 extra field for local header offset not found in central directory.");
+    }
+
     private static class ZipLayout {
         private final byte[] bytes;
         private final List<String> entryOrder = new ArrayList<>();
         private final Map<String, byte[]> centralRecords = new LinkedHashMap<>();
         private final Map<String, byte[]> localRecords = new LinkedHashMap<>();
         private byte[] endOfCentralDirectory;
+        private boolean zip64;
+        private int zip64EocdOffsetInEndBlock;
 
         private ZipLayout(byte[] bytes) {
             this.bytes = bytes;
@@ -211,19 +312,49 @@ public class ZipRecordOrderRestorer {
         private static ZipLayout read(File file) throws IOException {
             ZipLayout layout = new ZipLayout(Files.readAllBytes(file.toPath()));
             int eocdOffset = findEndOfCentralDirectory(layout.bytes);
-            layout.endOfCentralDirectory = copy(layout.bytes, eocdOffset, layout.bytes.length);
             int totalEntries = readUInt16(layout.bytes, eocdOffset + 10);
             long centralDirectorySize = readUInt32(layout.bytes, eocdOffset + 12);
             long centralDirectoryOffset = readUInt32(layout.bytes, eocdOffset + 16);
+
+            int eocdBlockStart = eocdOffset;
             if (totalEntries == ZIP64_ENTRY_COUNT_MARKER
                     || centralDirectorySize == ZIP64_MARKER
                     || centralDirectoryOffset == ZIP64_MARKER) {
-                throw new IOException("ZIP64 archives are not supported for record-order restoration yet.");
+                // ZIP64 EOCD Locator is 20 bytes and sits immediately before the regular EOCD
+                int locatorOffset = eocdOffset - 20;
+                if (locatorOffset < 0
+                        || readUInt32(layout.bytes, locatorOffset) != ZIP64_EOCD_LOCATOR_SIGNATURE) {
+                    throw new IOException("ZIP64 EOCD locator not found; cannot restore record order.");
+                }
+                long zip64EocdAbsOffset = readUInt64(layout.bytes, locatorOffset + 8);
+                if (zip64EocdAbsOffset < 0 || zip64EocdAbsOffset > Integer.MAX_VALUE) {
+                    throw new IOException("ZIP64 EOCD offset too large for in-memory restoration.");
+                }
+                int zip64EocdPos = (int) zip64EocdAbsOffset;
+                if (readUInt32(layout.bytes, zip64EocdPos) != ZIP64_EOCD_SIGNATURE) {
+                    throw new IOException("ZIP64 end of central directory record not found.");
+                }
+                long actualEntries = readUInt64(layout.bytes, zip64EocdPos + 32);
+                long actualCDSize = readUInt64(layout.bytes, zip64EocdPos + 40);
+                long actualCDOffset = readUInt64(layout.bytes, zip64EocdPos + 48);
+                if (actualEntries > Integer.MAX_VALUE
+                        || actualCDOffset > Integer.MAX_VALUE
+                        || actualCDSize > Integer.MAX_VALUE) {
+                    throw new IOException("ZIP64 archive too large for in-memory restoration.");
+                }
+                totalEntries = (int) actualEntries;
+                centralDirectoryOffset = actualCDOffset;
+                centralDirectorySize = actualCDSize;
+                layout.zip64 = true;
+                layout.zip64EocdOffsetInEndBlock = 0;
+                eocdBlockStart = zip64EocdPos;
             }
+
             if (centralDirectoryOffset > Integer.MAX_VALUE || centralDirectorySize > Integer.MAX_VALUE) {
                 throw new IOException("ZIP central directory is too large to restore in memory.");
             }
 
+            layout.endOfCentralDirectory = copy(layout.bytes, eocdBlockStart, layout.bytes.length);
             Map<String, Long> localOffsets = layout.readCentralDirectory((int) centralDirectoryOffset,
                     totalEntries);
             layout.readLocalRecords(localOffsets, (int) centralDirectoryOffset);
@@ -248,7 +379,14 @@ public class ZipRecordOrderRestorer {
                 }
                 entryOrder.add(name);
                 centralRecords.put(name, copy(bytes, position, recordEnd));
-                localOffsets.put(name, Long.valueOf(readUInt32(bytes, position + 42)));
+                long localOffset = readUInt32(bytes, position + 42);
+                if (localOffset == ZIP64_MARKER) {
+                    localOffset = readZip64LocalOffset(bytes, position, nameLength, extraLength);
+                    if (localOffset > Integer.MAX_VALUE) {
+                        throw new IOException("ZIP64 local offset too large for in-memory restoration: " + name);
+                    }
+                }
+                localOffsets.put(name, Long.valueOf(localOffset));
                 position = recordEnd;
             }
             return localOffsets;

@@ -2,6 +2,7 @@ package com.z0fsec.jar2mp.ui;
 
 import com.formdev.flatlaf.util.SystemFileChooser;
 import com.z0fsec.jar2mp.core.BuildPostProcessor;
+import com.z0fsec.jar2mp.core.PostBuildResult;
 import com.z0fsec.jar2mp.core.JarAnalyzer;
 import com.z0fsec.jar2mp.core.PomGenerator;
 import com.z0fsec.jar2mp.core.ProjectBuilder;
@@ -57,6 +58,12 @@ public class MainPanel extends BasePanel {
     private JarAnalysisResult currentResult;
     private PackagePrefixDatabase packageDb;
     private ProjectConfig currentConfig;
+
+    private JProgressBar progressBar;
+    private JButton cancelBtn;
+    private JButton analyzeBtn;
+    private JButton buildBtn;
+    private SwingWorker<?, ?> currentWorker;
 
     public MainPanel(Consumer<String> logConsumer) {
         super(logConsumer);
@@ -204,7 +211,7 @@ public class MainPanel extends BasePanel {
         c.gridx = 0;
         c.gridy = 4;
         c.weightx = 0;
-        JButton analyzeBtn = new JButton("分析全部");
+        analyzeBtn = new JButton("分析全部");
         analyzeBtn.addActionListener(e -> doAnalyzeAll());
         panel.add(analyzeBtn, c);
 
@@ -216,7 +223,7 @@ public class MainPanel extends BasePanel {
 
         c.gridx = 2;
         c.weightx = 0;
-        JButton buildBtn = new JButton("构建全部");
+        buildBtn = new JButton("构建全部");
         buildBtn.addActionListener(e -> doBuildAll());
         panel.add(buildBtn, c);
 
@@ -227,6 +234,29 @@ public class MainPanel extends BasePanel {
         c.weightx = 1;
         c.fill = GridBagConstraints.HORIZONTAL;
         panel.add(createAdvancedOptionsPanel(), c);
+
+        // Row 6: 进度条 + 取消按钮
+        c.gridx = 0;
+        c.gridy = 6;
+        c.gridwidth = 2;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        progressBar = new JProgressBar(0, 1);
+        progressBar.setStringPainted(true);
+        progressBar.setVisible(false);
+        panel.add(progressBar, c);
+
+        c.gridx = 2;
+        c.gridwidth = 1;
+        c.weightx = 0;
+        cancelBtn = new JButton("取消");
+        cancelBtn.setEnabled(false);
+        cancelBtn.addActionListener(e -> {
+            if (currentWorker != null) {
+                currentWorker.cancel(true);
+            }
+        });
+        panel.add(cancelBtn, c);
 
         c.gridwidth = 1;
         c.gridheight = 1;
@@ -458,6 +488,10 @@ public class MainPanel extends BasePanel {
 
     // ========== 拖拽支持 ==========
     private void enableDragAndDrop() {
+        if (GraphicsEnvironment.isHeadless()) {
+            fileJList.setToolTipText("添加 JAR/WAR 文件或目录");
+            return;
+        }
         new DropTarget(fileJList, DnDConstants.ACTION_COPY_OR_MOVE, new DropTargetAdapter() {
             @Override
             public void drop(DropTargetDropEvent dtde) {
@@ -609,6 +643,32 @@ public class MainPanel extends BasePanel {
         }
     }
 
+    // ========== 进度控制 ==========
+
+    private void startOperation(int total, SwingWorker<?, ?> worker) {
+        currentWorker = worker;
+        progressBar.setMaximum(Math.max(total, 1));
+        progressBar.setValue(0);
+        progressBar.setString("0 / " + total);
+        progressBar.setVisible(true);
+        cancelBtn.setEnabled(true);
+        analyzeBtn.setEnabled(false);
+        buildBtn.setEnabled(false);
+    }
+
+    private void updateProgress(int done, int total) {
+        progressBar.setValue(done);
+        progressBar.setString(done + " / " + total);
+    }
+
+    private void finishOperation() {
+        currentWorker = null;
+        progressBar.setVisible(false);
+        cancelBtn.setEnabled(false);
+        analyzeBtn.setEnabled(true);
+        buildBtn.setEnabled(true);
+    }
+
     // ========== 分析 ==========
 
     private void doAnalyzeAll() {
@@ -630,47 +690,61 @@ public class MainPanel extends BasePanel {
             return;
         }
 
-        appendInfo("开始分析 " + toAnalyze.size() + " 个文件...");
+        final int total = toAnalyze.size();
+        appendInfo("开始分析 " + total + " 个文件...");
 
-        new Thread(() -> {
-            JarAnalyzer analyzer = new JarAnalyzer(packageDb);
-            int total = toAnalyze.size();
-            int done = 0;
-
-            for (File jarFile : toAnalyze) {
-                try {
-                    JarAnalysisResult result = analyzer.analyze(jarFile, (message, percent) -> {
-                        SwingUtilities.invokeLater(() -> appendDebug(message));
-                    });
-
-                    final int d = ++done;
-                    SwingUtilities.invokeLater(() -> {
-                        resultMap.put(jarFile, result);
-                        fileJList.repaint();
-                        appendSuccess("[" + d + "/" + total + "] 分析完成: " + jarFile.getName()
-                                + " -> " + result.getDetectedGroupId() + ":"
-                                + result.getDetectedArtifactId() + ":" + result.getDetectedVersion()
-                                + " (" + result.getDetectedDependencies().size() + " 个依赖)");
-
-                        // 自动选中第一个新分析的结果
-                        if (d == 1) {
-                            fileJList.setSelectedValue(jarFile, true);
-                        }
-                    });
-
-                } catch (Exception e) {
-                    final int d = ++done;
-                    SwingUtilities.invokeLater(() -> {
-                        appendError("[" + d + "/" + total + "] 分析失败: " + jarFile.getName() + " - " + e.getMessage());
-                    });
+        SwingWorker<Void, Runnable> worker = new SwingWorker<Void, Runnable>() {
+            @Override
+            protected Void doInBackground() {
+                JarAnalyzer analyzer = new JarAnalyzer(packageDb);
+                int done = 0;
+                for (File jarFile : toAnalyze) {
+                    if (isCancelled()) break;
+                    try {
+                        JarAnalysisResult result = analyzer.analyze(jarFile,
+                                (message, percent) -> publish(() -> appendDebug(message)));
+                        final int d = ++done;
+                        publish(() -> {
+                            resultMap.put(jarFile, result);
+                            fileJList.repaint();
+                            updateProgress(d, total);
+                            appendSuccess("[" + d + "/" + total + "] 分析完成: " + jarFile.getName()
+                                    + " -> " + result.getDetectedGroupId() + ":"
+                                    + result.getDetectedArtifactId() + ":" + result.getDetectedVersion()
+                                    + " (" + result.getDetectedDependencies().size() + " 个依赖)");
+                            if (d == 1) {
+                                fileJList.setSelectedValue(jarFile, true);
+                            }
+                        });
+                    } catch (Exception e) {
+                        final int d = ++done;
+                        publish(() -> {
+                            updateProgress(d, total);
+                            appendError("[" + d + "/" + total + "] 分析失败: "
+                                    + jarFile.getName() + " - " + e.getMessage());
+                        });
+                    }
                 }
+                return null;
             }
 
-            SwingUtilities.invokeLater(() -> {
-                appendSuccess("全部分析完成: " + resultMap.size() + "/" + fileListModel.size() + " 个文件");
-            });
+            @Override
+            protected void process(List<Runnable> chunks) {
+                for (Runnable r : chunks) r.run();
+            }
 
-        }).start();
+            @Override
+            protected void done() {
+                if (isCancelled()) {
+                    appendWarning("分析已取消");
+                } else {
+                    appendSuccess("全部分析完成: " + resultMap.size() + "/" + fileListModel.size() + " 个文件");
+                }
+                finishOperation();
+            }
+        };
+        startOperation(total, worker);
+        worker.execute();
     }
 
     // ========== 生成 pom.xml ==========
@@ -702,7 +776,6 @@ public class MainPanel extends BasePanel {
             return;
         }
 
-        // 保存当前编辑
         dependencyPanel.syncToResult();
         pomPreviewPanel.saveCurrentCache();
 
@@ -713,65 +786,77 @@ public class MainPanel extends BasePanel {
         final ProjectConfig config = currentConfig;
 
         final List<Map.Entry<File, JarAnalysisResult>> entries = new ArrayList<>(resultMap.entrySet());
+        final int total = entries.size();
 
-        appendInfo("开始构建 " + entries.size() + " 个 Maven 项目...");
+        appendInfo("开始构建 " + total + " 个 Maven 项目...");
 
-        new Thread(() -> {
-            PomGenerator gen = new PomGenerator();
-            ProjectBuilder builder = new ProjectBuilder(config);
-            BuildPostProcessor postProcessor = new BuildPostProcessor();
-            int total = entries.size();
-            int done = 0;
+        SwingWorker<Void, Runnable> worker = new SwingWorker<Void, Runnable>() {
+            @Override
+            protected Void doInBackground() {
+                PomGenerator gen = new PomGenerator();
+                ProjectBuilder builder = new ProjectBuilder(config);
+                BuildPostProcessor postProcessor = new BuildPostProcessor();
+                int done = 0;
 
-            for (Map.Entry<File, JarAnalysisResult> entry : entries) {
-                File jarFile = entry.getKey();
-                JarAnalysisResult result = entry.getValue();
+                for (Map.Entry<File, JarAnalysisResult> entry : entries) {
+                    if (isCancelled()) break;
+                    File jarFile = entry.getKey();
+                    JarAnalysisResult result = entry.getValue();
+                    File outDir = new File(outputDir, result.getDetectedArtifactId());
 
-                File outDir = new File(outputDir, result.getDetectedArtifactId());
-
-                if (outDir.exists()) {
-                    IoUtils.deleteRecursive(outDir);
-                }
-
-                try {
-                    String pomXml = gen.generate(result, config);
-
-                    final int d = ++done;
-                    builder.build(jarFile, result, pomXml, outDir, (message, percent) -> {
-                        SwingUtilities.invokeLater(() -> appendDebug(message));
-                    });
-                    BuildPostProcessor.PostBuildResult postBuildResult = postProcessor.postProcess(
-                            jarFile,
-                            result,
-                            outDir,
-                            config,
-                            message -> SwingUtilities.invokeLater(() -> appendDebug(message)));
-                    if (postBuildResult.hasBlockingFailure()) {
-                        throw new IOException(postBuildResult.getBlockingFailure());
+                    if (outDir.exists()) {
+                        IoUtils.deleteRecursive(outDir);
                     }
 
-                    SwingUtilities.invokeLater(() -> {
-                        appendSuccess("[" + d + "/" + total + "] 已生成: " + outDir.getAbsolutePath());
-                        appendReportPaths(outDir);
-                        refreshAnalysisIfSelected(jarFile, result);
-                    });
-
-                } catch (Exception e) {
-                    final int d = ++done;
-                    SwingUtilities.invokeLater(() -> {
-                        appendError("[" + d + "/" + total + "] 构建失败: " + jarFile.getName() + " - " + e.getMessage());
-                    });
+                    try {
+                        String pomXml = gen.generate(result, config);
+                        builder.build(jarFile, result, pomXml, outDir,
+                                (message, percent) -> publish(() -> appendDebug(message)));
+                        PostBuildResult postBuildResult = postProcessor.postProcess(
+                                jarFile, result, outDir, config,
+                                message -> publish(() -> appendDebug(message)));
+                        if (postBuildResult.hasBlockingFailure()) {
+                            throw new IOException(postBuildResult.getBlockingFailure());
+                        }
+                        final int d = ++done;
+                        publish(() -> {
+                            updateProgress(d, total);
+                            appendSuccess("[" + d + "/" + total + "] 已生成: " + outDir.getAbsolutePath());
+                            appendReportPaths(outDir);
+                            refreshAnalysisIfSelected(jarFile, result);
+                        });
+                    } catch (Exception e) {
+                        final int d = ++done;
+                        publish(() -> {
+                            updateProgress(d, total);
+                            appendError("[" + d + "/" + total + "] 构建失败: "
+                                    + jarFile.getName() + " - " + e.getMessage());
+                        });
+                    }
                 }
+                return null;
             }
 
-            SwingUtilities.invokeLater(() -> {
-                appendSuccess("全部构建完成!");
-                JOptionPane.showMessageDialog(MainPanel.this,
-                        entries.size() + " 个 Maven 项目已生成到:\n" + outputDir,
-                        "完成", JOptionPane.INFORMATION_MESSAGE);
-            });
+            @Override
+            protected void process(List<Runnable> chunks) {
+                for (Runnable r : chunks) r.run();
+            }
 
-        }).start();
+            @Override
+            protected void done() {
+                if (isCancelled()) {
+                    appendWarning("构建已取消");
+                } else {
+                    appendSuccess("全部构建完成!");
+                    JOptionPane.showMessageDialog(MainPanel.this,
+                            total + " 个 Maven 项目已生成到:\n" + outputDir,
+                            "完成", JOptionPane.INFORMATION_MESSAGE);
+                }
+                finishOperation();
+            }
+        };
+        startOperation(total, worker);
+        worker.execute();
     }
 
     public void onPanelReady() {

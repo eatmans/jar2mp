@@ -22,35 +22,54 @@ public class MavenMetadataExtractor {
         return selectPrimary(extractAll(jarFile), jarFile);
     }
 
+    /** Backward-compatible single-arg form. Prefer {@link #extractAll(JarFile, List, List)}. */
     public List<PomInfo> extractAll(JarFile jarFile) {
+        return extractAll(jarFile, null, null);
+    }
+
+    /**
+     * Single-pass scan: collects pom.properties, pom.xml, and optionally class
+     * names in ONE enumeration of the JAR entries (was two passes before).
+     *
+     * @param classNamesOut if non-null, class entry names are appended here so
+     *                      the caller can pass them to
+     *                      {@link #selectPrimary(Collection, List, String)}
+     *                      and avoid a second JAR scan.
+     * @param warningsOut   if non-null, parse-failure messages are appended here
+     *                      instead of being silently discarded.
+     */
+    public List<PomInfo> extractAll(JarFile jarFile, List<String> classNamesOut, List<String> warningsOut) {
         Map<String, PomInfo> candidates = new LinkedHashMap<>();
 
-        // 1. Look for all pom.properties files. Fat/assembly jars may contain
-        // dependency metadata before the application module metadata.
         Enumeration<JarEntry> entries = jarFile.entries();
         while (entries.hasMoreElements()) {
             JarEntry entry = entries.nextElement();
             String name = entry.getName();
             if (name.startsWith("META-INF/maven/") && name.endsWith("pom.properties")) {
-                mergeCandidate(candidates, parsePomProperties(jarFile, entry));
-            }
-        }
-
-        // 2. Merge all embedded pom.xml files with matching pom.properties.
-        entries = jarFile.entries();
-        while (entries.hasMoreElements()) {
-            JarEntry entry = entries.nextElement();
-            String name = entry.getName();
-            if (name.startsWith("META-INF/maven/") && name.endsWith("pom.xml") && !name.contains("/target/")) {
-                mergeCandidate(candidates, parsePomXml(jarFile, entry));
+                mergeCandidate(candidates, parsePomProperties(jarFile, entry, warningsOut));
+            } else if (name.startsWith("META-INF/maven/") && name.endsWith("pom.xml")
+                    && !name.contains("/target/")) {
+                mergeCandidate(candidates, parsePomXml(jarFile, entry, warningsOut));
+            } else if (classNamesOut != null && name.endsWith(".class")) {
+                classNamesOut.add(name);
             }
         }
 
         return new ArrayList<>(candidates.values());
     }
 
+    /** Backward-compatible form — re-scans the JAR. Prefer the three-arg overload. */
     public PomInfo selectPrimary(Collection<PomInfo> candidates, JarFile jarFile) {
-        return selectPrimaryPom(candidates, jarFile);
+        return selectPrimaryPom(candidates, null, jarFile.getName());
+    }
+
+    /**
+     * Selects the primary POM using pre-collected class names (no JAR I/O).
+     * Pass the same {@code classNamesOut} list that was filled by
+     * {@link #extractAll(JarFile, List, List)}.
+     */
+    public PomInfo selectPrimary(Collection<PomInfo> candidates, List<String> classNames, String jarName) {
+        return selectPrimaryPom(candidates, classNames, jarName);
     }
 
     private void mergeCandidate(Map<String, PomInfo> candidates, PomInfo candidate) {
@@ -93,11 +112,15 @@ public class MavenMetadataExtractor {
         }
     }
 
-    private PomInfo selectPrimaryPom(Collection<PomInfo> candidates, JarFile jarFile) {
+    /**
+     * @param classNames pre-collected class entry names; if null, falls back to
+     *                   scanning the JAR (used by the backward-compatible overload only).
+     */
+    private PomInfo selectPrimaryPom(Collection<PomInfo> candidates, List<String> classNames, String jarName) {
         PomInfo best = null;
         int bestScore = Integer.MIN_VALUE;
-        String fileArtifactId = inferArtifactId(jarFile.getName());
-        String fileVersion = inferVersion(jarFile.getName());
+        String fileArtifactId = inferArtifactId(jarName);
+        String fileVersion = inferVersion(jarName);
         for (PomInfo candidate : candidates) {
             int score = 0;
             if (equalsIgnoreCase(candidate.getArtifactId(), fileArtifactId)) {
@@ -106,7 +129,7 @@ public class MavenMetadataExtractor {
             if (equalsIgnoreCase(candidate.getVersion(), fileVersion)) {
                 score += 20;
             }
-            score += Math.min(30, countMatchingClassPrefix(jarFile, candidate));
+            score += Math.min(30, countMatchingClassPrefix(classNames, candidate));
             if (best == null || score > bestScore) {
                 best = candidate;
                 bestScore = score;
@@ -115,16 +138,15 @@ public class MavenMetadataExtractor {
         return best;
     }
 
-    private int countMatchingClassPrefix(JarFile jarFile, PomInfo candidate) {
-        if (candidate == null || candidate.getGroupId() == null) {
+    /** In-memory count — O(n) per candidate instead of one full JAR scan each. */
+    private int countMatchingClassPrefix(List<String> classNames, PomInfo candidate) {
+        if (classNames == null || candidate == null || candidate.getGroupId() == null) {
             return 0;
         }
         String prefix = candidate.getGroupId().replace('.', '/') + "/";
         int count = 0;
-        Enumeration<JarEntry> entries = jarFile.entries();
-        while (entries.hasMoreElements()) {
-            String name = entries.nextElement().getName();
-            if (name.endsWith(".class") && name.startsWith(prefix)) {
+        for (String name : classNames) {
+            if (name.startsWith(prefix)) {
                 count++;
             }
         }
@@ -165,7 +187,7 @@ public class MavenMetadataExtractor {
         return left != null && right != null && left.equalsIgnoreCase(right);
     }
 
-    private PomInfo parsePomProperties(JarFile jarFile, JarEntry entry) {
+    private PomInfo parsePomProperties(JarFile jarFile, JarEntry entry, List<String> warnings) {
         try (InputStream is = jarFile.getInputStream(entry)) {
             Properties props = new Properties();
             props.load(is);
@@ -176,9 +198,8 @@ public class MavenMetadataExtractor {
             info.setVersion(props.getProperty("version"));
 
             // Extract parent path info as fallback
-            String path = entry.getName();
             // META-INF/maven/{groupId}/{artifactId}/pom.properties
-            String[] parts = path.split("/");
+            String[] parts = entry.getName().split("/");
             if (parts.length >= 4) {
                 if (info.getGroupId() == null) info.setGroupId(parts[2]);
                 if (info.getArtifactId() == null) info.setArtifactId(parts[3]);
@@ -186,11 +207,14 @@ public class MavenMetadataExtractor {
 
             return info;
         } catch (IOException e) {
+            if (warnings != null) {
+                warnings.add("Failed to parse " + entry.getName() + ": " + e.getMessage());
+            }
             return null;
         }
     }
 
-    private PomInfo parsePomXml(JarFile jarFile, JarEntry entry) {
+    private PomInfo parsePomXml(JarFile jarFile, JarEntry entry, List<String> warnings) {
         try (InputStream is = jarFile.getInputStream(entry)) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setNamespaceAware(false);
@@ -226,6 +250,9 @@ public class MavenMetadataExtractor {
 
             return info;
         } catch (Exception e) {
+            if (warnings != null) {
+                warnings.add("Failed to parse " + entry.getName() + ": " + e.getMessage());
+            }
             return null;
         }
     }

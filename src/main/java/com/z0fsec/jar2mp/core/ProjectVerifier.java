@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class ProjectVerifier {
+public class ProjectVerifier implements BuildVerifier {
 
     private static final int MAX_CAPTURE_BYTES = 20 * 1024;
     private static final long TIMEOUT_SECONDS = 120;
