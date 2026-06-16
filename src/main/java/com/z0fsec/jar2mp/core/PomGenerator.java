@@ -490,6 +490,7 @@ public class PomGenerator {
     private EmbeddedLibraryCoordinates readNestedLibraryCoordinates(String resourcePath,
                                                                     InputStream inputStream) throws IOException {
         String baseName = embeddedLibraryArtifactId(resourcePath);
+        EmbeddedLibraryCoordinates fallbackCoordinates = null;
         try (ZipInputStream zipInputStream = new ZipInputStream(inputStream)) {
             ZipEntry entry;
             while ((entry = zipInputStream.getNextEntry()) != null) {
@@ -510,12 +511,14 @@ public class PomGenerator {
                             String classifier = baseName.substring(classifierPrefix.length());
                             return new EmbeddedLibraryCoordinates(groupId, artifactId, version, classifier);
                         }
-                        return new EmbeddedLibraryCoordinates(groupId, artifactId, version);
+                        if (fallbackCoordinates == null) {
+                            fallbackCoordinates = new EmbeddedLibraryCoordinates(groupId, artifactId, version);
+                        }
                     }
                 }
             }
         }
-        return null;
+        return fallbackCoordinates;
     }
 
     private String originalWarLibrarySystemPath(MavenDependency dep, Map<String, String> originalWarLibraryPaths) {

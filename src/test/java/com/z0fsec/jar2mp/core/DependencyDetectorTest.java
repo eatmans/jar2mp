@@ -253,6 +253,36 @@ class DependencyDetectorTest {
         }
     }
 
+    @Test
+    void detectsSpringBootNestedUberLibraryCoordinatesByFilenameMatchedPomProperties() throws Exception {
+        Path jarPath = tempDir.resolve("boot-with-nested-uber-lib.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            addEntry(jar, "BOOT-INF/classes/com/example/App.class",
+                    classFileWithUtf8Constant(52, "com/example/App"));
+            addEntry(jar, "BOOT-INF/lib/foo-1.2.3.jar", nestedLibraryJarBytes(
+                    "META-INF/maven/com.other/bar/pom.properties",
+                    "groupId=com.other\nartifactId=bar\nversion=9.9.9\n",
+                    "META-INF/maven/com.example/foo/pom.properties",
+                    "groupId=com.example\nartifactId=foo\nversion=1.2.3\n"));
+        }
+
+        DependencyDetector detector = new DependencyDetector(new PackagePrefixDatabase());
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            List<MavenDependency> dependencies = detector.detect(jarFile, null, null);
+
+            MavenDependency dependency = dependencies.stream()
+                    .filter(dep -> "com.example".equals(dep.getGroupId())
+                            && "foo".equals(dep.getArtifactId()))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("Expected filename-matched com.example:foo dependency"));
+            assertEquals("1.2.3", dependency.getVersion());
+            assertEquals(MavenDependency.Confidence.HIGH, dependency.getConfidence());
+            assertFalse(dependencies.stream()
+                    .anyMatch(dep -> "com.other".equals(dep.getGroupId())
+                            && "bar".equals(dep.getArtifactId())));
+        }
+    }
+
     private static void addClassEntry(JarOutputStream jar, String name, int majorVersion) throws IOException {
         addEntry(jar, name, minimalClassFileBytes(majorVersion));
     }
@@ -263,10 +293,12 @@ class DependencyDetectorTest {
         jar.closeEntry();
     }
 
-    private static byte[] nestedLibraryJarBytes(String pomPropertiesPath, String pomProperties) throws IOException {
+    private static byte[] nestedLibraryJarBytes(String... pomPropertiesEntries) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (JarOutputStream nested = new JarOutputStream(bytes)) {
-            addEntry(nested, pomPropertiesPath, pomProperties.getBytes(StandardCharsets.UTF_8));
+            for (int i = 0; i < pomPropertiesEntries.length; i += 2) {
+                addEntry(nested, pomPropertiesEntries[i], pomPropertiesEntries[i + 1].getBytes(StandardCharsets.UTF_8));
+            }
         }
         return bytes.toByteArray();
     }

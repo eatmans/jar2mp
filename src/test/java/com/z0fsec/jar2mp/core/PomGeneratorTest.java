@@ -230,6 +230,35 @@ class PomGeneratorTest {
     }
 
     @Test
+    void springBootEmbeddedLibrariesPreferFilenameMatchingPomPropertiesWhenWrongEntryAppearsFirst() throws Exception {
+        Path nestedJar = createNestedLibraryJar(
+                new String[] {
+                        "META-INF/maven/com.other/bar/pom.properties",
+                        "META-INF/maven/com.example/foo/pom.properties"
+                },
+                new String[] {
+                        "groupId=com.other\nartifactId=bar\nversion=9.9.9\n",
+                        "groupId=com.example\nartifactId=foo\nversion=1.2.3\n"
+                });
+        Path outerJar = tempDir.resolve("boot-wrong-first.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/foo-1.2.3.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/foo-1.2.3.jar");
+        analysis.setSourceFile(outerJar.toFile());
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        String compactPomXml = pomXml.replaceAll("\\s+", "");
+        assertTrue(compactPomXml.contains(
+                "<dependency><groupId>com.example</groupId><artifactId>foo</artifactId><version>1.2.3</version>"
+                        + "<scope>system</scope><systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/foo-1.2.3.jar</systemPath></dependency>"));
+        assertFalse(compactPomXml.contains("<groupId>com.other</groupId><artifactId>bar</artifactId>"));
+    }
+
+    @Test
     void springBootEmbeddedLibrariesInferClassifierFromOriginalFileName() throws Exception {
         Path nestedJar = createNestedLibraryJar("META-INF/maven/io.netty/netty-resolver-dns-native-macos/pom.properties",
                 "groupId=io.netty\nartifactId=netty-resolver-dns-native-macos\nversion=4.1.114.Final\n");
@@ -961,11 +990,17 @@ class PomGeneratorTest {
     }
 
     private Path createNestedLibraryJar(String pomPropertiesPath, String pomProperties) throws Exception {
+        return createNestedLibraryJar(new String[] { pomPropertiesPath }, new String[] { pomProperties });
+    }
+
+    private Path createNestedLibraryJar(String[] pomPropertiesPaths, String[] pomPropertiesEntries) throws Exception {
         Path nestedJar = tempDir.resolve("nested-lib-" + System.nanoTime() + ".jar");
         try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(nestedJar))) {
-            out.putNextEntry(new JarEntry(pomPropertiesPath));
-            out.write(pomProperties.getBytes(StandardCharsets.UTF_8));
-            out.closeEntry();
+            for (int i = 0; i < pomPropertiesPaths.length; i++) {
+                out.putNextEntry(new JarEntry(pomPropertiesPaths[i]));
+                out.write(pomPropertiesEntries[i].getBytes(StandardCharsets.UTF_8));
+                out.closeEntry();
+            }
         }
         return nestedJar;
     }

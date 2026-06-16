@@ -118,13 +118,14 @@ public class DependencyDetector {
                 continue;
             }
             MavenDependency dependency = null;
+            String nestedFilename = fileName(name);
             try (InputStream inputStream = jarFile.getInputStream(entry)) {
-                dependency = readNestedLibraryDependency(inputStream);
+                dependency = readNestedLibraryDependency(inputStream, nestedFilename);
             } catch (IOException ignored) {
                 // Filename parsing below remains the fallback for unreadable nested JARs.
             }
             if (dependency == null) {
-                dependency = guessFromFilename(fileName(name));
+                dependency = guessFromFilename(nestedFilename);
             }
             if (dependency != null) {
                 deps.putIfAbsent(dependency.getKey(), dependency);
@@ -138,7 +139,8 @@ public class DependencyDetector {
                 && name.endsWith(".jar");
     }
 
-    private MavenDependency readNestedLibraryDependency(InputStream inputStream) throws IOException {
+    private MavenDependency readNestedLibraryDependency(InputStream inputStream, String filename) throws IOException {
+        List<MavenDependency> candidates = new ArrayList<>();
         try (ZipInputStream zipInputStream = new ZipInputStream(inputStream)) {
             ZipEntry entry;
             while ((entry = zipInputStream.getNextEntry()) != null) {
@@ -153,11 +155,63 @@ public class DependencyDetector {
                 String artifactId = trimToNull(properties.getProperty("artifactId"));
                 String version = trimToNull(properties.getProperty("version"));
                 if (groupId != null && artifactId != null && version != null) {
-                    return new MavenDependency(groupId, artifactId, version, MavenDependency.Confidence.HIGH);
+                    candidates.add(new MavenDependency(groupId, artifactId, version, MavenDependency.Confidence.HIGH));
                 }
             }
         }
-        return null;
+        return selectNestedLibraryDependency(candidates, filename);
+    }
+
+    private MavenDependency selectNestedLibraryDependency(List<MavenDependency> candidates, String filename) {
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        String artifactId = inferArtifactId(filename);
+        String version = inferVersion(filename);
+        for (MavenDependency candidate : candidates) {
+            if (equals(candidate.getArtifactId(), artifactId) && equals(candidate.getVersion(), version)) {
+                return candidate;
+            }
+        }
+        for (MavenDependency candidate : candidates) {
+            if (equals(candidate.getArtifactId(), artifactId)) {
+                return candidate;
+            }
+        }
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+        return guessFromFilename(filename);
+    }
+
+    private String inferArtifactId(String jarName) {
+        String base = stripArchiveSuffix(jarName);
+        int split = findVersionSplit(base);
+        return split > 0 ? base.substring(0, split) : base;
+    }
+
+    private String inferVersion(String jarName) {
+        String base = stripArchiveSuffix(jarName);
+        int split = findVersionSplit(base);
+        return split > 0 ? base.substring(split + 1) : null;
+    }
+
+    private String stripArchiveSuffix(String jarName) {
+        String base = fileName(jarName);
+        int dot = base.lastIndexOf('.');
+        return dot > 0 ? base.substring(0, dot) : base;
+    }
+
+    private int findVersionSplit(String base) {
+        for (int i = base.length() - 1; i >= 0; i--) {
+            if (base.charAt(i) == '-') {
+                String version = base.substring(i + 1);
+                if (!version.isEmpty() && Character.isDigit(version.charAt(0))) {
+                    return i;
+                }
+            }
+        }
+        return -1;
     }
 
     private String fileName(String path) {
