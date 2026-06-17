@@ -31,6 +31,17 @@ public class ProjectVerifier implements BuildVerifier {
     private static final int MAX_COMPILE_FALLBACK_ROUNDS = 100;
     private static final String DEFAULT_LOMBOK_VERSION = "1.18.34";
     private final VerificationErrorParser errorParser = new VerificationErrorParser();
+    private final VineflowerDecompiler vineflowerDecompiler;
+
+    public ProjectVerifier() {
+        this(new VineflowerDecompiler());
+    }
+
+    ProjectVerifier(VineflowerDecompiler vineflowerDecompiler) {
+        this.vineflowerDecompiler = vineflowerDecompiler == null
+                ? new VineflowerDecompiler()
+                : vineflowerDecompiler;
+    }
 
     public VerificationResult verify(File projectDir, String goal) {
         String effectiveGoal = goal == null || goal.trim().isEmpty() ? "compile" : goal.trim();
@@ -245,6 +256,48 @@ public class ProjectVerifier implements BuildVerifier {
                     recovered.add(classPath);
                 } catch (IOException ignored) {
                     // Keep the raw-class fallback if the source cannot be restored safely.
+                }
+            }
+        }
+        Set<String> remaining = new LinkedHashSet<>(compileFallbacks);
+        remaining.removeAll(recovered);
+        if (!remaining.isEmpty()) {
+            recovered.addAll(recoverVineflowerFallbackSources(projectPath, remaining, classpath));
+        }
+        return recovered;
+    }
+
+    private Set<String> recoverVineflowerFallbackSources(Path projectPath, Set<String> compileFallbacks,
+            List<String> classpath) {
+        Path rawRoot = projectPath.resolve("target/raw-classes").normalize();
+        if (!Files.isDirectory(rawRoot)) {
+            return Collections.emptySet();
+        }
+        Path outputRoot = projectPath.resolve("target/vineflower-fallback-sources").normalize();
+        try {
+            deleteRecursively(outputRoot);
+            Files.createDirectories(outputRoot);
+        } catch (IOException e) {
+            return Collections.emptySet();
+        }
+        if (!vineflowerDecompiler.decompile(rawRoot, outputRoot)) {
+            return Collections.emptySet();
+        }
+
+        Set<String> recovered = new LinkedHashSet<>();
+        Path resourcesRoot = projectPath.resolve("src/main/resources").normalize();
+        for (String classPath : compileFallbacks) {
+            Path vineflowerSource = retainedSourceForClassPath(outputRoot, classPath);
+            if (vineflowerSource == null || !Files.isRegularFile(vineflowerSource)) {
+                continue;
+            }
+            if (compileRetainedSource(projectPath, vineflowerSource, classpath)) {
+                try {
+                    restoreRecoveredSource(projectPath, outputRoot, vineflowerSource);
+                    removeRawClassFamily(resourcesRoot, classPath);
+                    recovered.add(classPath);
+                } catch (IOException ignored) {
+                    // Keep the raw-class fallback if the Vineflower source cannot be restored safely.
                 }
             }
         }
@@ -528,6 +581,20 @@ public class ProjectVerifier implements BuildVerifier {
             }
             Files.deleteIfExists(current);
             current = current.getParent();
+        }
+    }
+
+    private void deleteRecursively(Path root) throws IOException {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.walk(root)) {
+            java.util.Iterator<Path> iterator = stream
+                    .sorted(Comparator.reverseOrder())
+                    .iterator();
+            while (iterator.hasNext()) {
+                Files.deleteIfExists(iterator.next());
+            }
         }
     }
 

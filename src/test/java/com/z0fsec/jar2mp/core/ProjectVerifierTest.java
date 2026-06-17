@@ -8,8 +8,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -64,7 +66,7 @@ class ProjectVerifierTest {
                 "demo.App",
                 "package demo;\npublic class App { public String run() { return \"ok\"; } }\n");
 
-        VerificationResult result = new ProjectVerifier().verify(projectDir.toFile(), "compile");
+        VerificationResult result = projectVerifierWithoutVineflower().verify(projectDir.toFile(), "compile");
 
         assertEquals(0, result.getExitCode());
         assertEquals("NONE", result.getFailureType());
@@ -97,7 +99,7 @@ class ProjectVerifierTest {
                 "package demo;\npublic class B { public String call() { return new A().run(); } }\n",
                 projectDir.resolve("target/raw-classes"));
 
-        VerificationResult result = new ProjectVerifier().verify(projectDir.toFile(), "compile");
+        VerificationResult result = projectVerifierWithoutVineflower().verify(projectDir.toFile(), "compile");
 
         assertEquals(0, result.getExitCode());
         assertEquals("NONE", result.getFailureType());
@@ -107,6 +109,36 @@ class ProjectVerifierTest {
         assertTrue(Files.exists(projectDir.resolve("src/main/java/demo/B.java")));
         assertTrue(Files.exists(projectDir.resolve("src/main/resources/demo/A.class")));
         assertFalse(Files.exists(projectDir.resolve("src/main/resources/demo/B.class")));
+    }
+
+    @Test
+    void recoversUncompilableFallbackSourceWithVineflowerCandidate() throws Exception {
+        Path vineflowerJar = createFakeVineflowerCliJar();
+        Path projectDir = createProject("public class App { public void broken() { missing } }");
+        compileRawClass(projectDir.resolve("target/raw-classes"),
+                "demo.App",
+                "package demo;\npublic class App { public String run() { return \"ok\"; } }\n");
+
+        String previousVineflowerJar = System.getProperty("jar2mp.vineflowerJar");
+        try {
+            System.setProperty("jar2mp.vineflowerJar", vineflowerJar.toString());
+
+            VerificationResult result = new ProjectVerifier().verify(projectDir.toFile(), "compile");
+
+            assertEquals(0, result.getExitCode());
+            assertEquals("NONE", result.getFailureType());
+            assertFalse(result.getCompileFallbackClassPaths().contains("demo/App.class"));
+            assertTrue(Files.exists(projectDir.resolve("src/main/java/demo/App.java")));
+            assertTrue(Files.exists(projectDir.resolve("target/vineflower-fallback-sources/demo/App.java")));
+            assertTrue(Files.exists(projectDir.resolve("target/vineflower-fallback-sources/called.txt")));
+            assertFalse(Files.exists(projectDir.resolve("src/main/resources/demo/App.class")));
+        } finally {
+            if (previousVineflowerJar == null) {
+                System.clearProperty("jar2mp.vineflowerJar");
+            } else {
+                System.setProperty("jar2mp.vineflowerJar", previousVineflowerJar);
+            }
+        }
     }
 
     @Test
@@ -165,7 +197,7 @@ class ProjectVerifierTest {
                             + " { public String run() { return \"ok\"; } }\n");
         }
 
-        VerificationResult result = new ProjectVerifier().verify(projectDir.toFile(), "compile");
+        VerificationResult result = projectVerifierWithoutVineflower().verify(projectDir.toFile(), "compile");
 
         assertEquals(0, result.getExitCode());
         assertEquals("NONE", result.getFailureType());
@@ -278,6 +310,19 @@ class ProjectVerifierTest {
         return projectDir;
     }
 
+    private ProjectVerifier projectVerifierWithoutVineflower() {
+        return new ProjectVerifier(disabledVineflowerDecompiler());
+    }
+
+    private VineflowerDecompiler disabledVineflowerDecompiler() {
+        return new VineflowerDecompiler() {
+            @Override
+            boolean decompile(Path inputDir, Path outputDir) {
+                return false;
+            }
+        };
+    }
+
     private Path createProjectWithRepository(Path repository, String javaSource) throws Exception {
         Path projectDir = tempDir.resolve("project-" + System.nanoTime());
         Path sourceDir = projectDir.resolve("src/main/java/demo");
@@ -370,6 +415,52 @@ class ProjectVerifierTest {
                         + "  <version>" + version + "</version>\n"
                         + "</project>\n")
                         .getBytes(StandardCharsets.UTF_8));
+    }
+
+    private Path createFakeVineflowerCliJar() throws Exception {
+        Path sourceDir = tempDir.resolve("fake-vineflower-src-" + System.nanoTime()).resolve("fake");
+        Path classesDir = tempDir.resolve("fake-vineflower-classes-" + System.nanoTime());
+        Files.createDirectories(sourceDir);
+        Files.createDirectories(classesDir);
+        Path sourceFile = sourceDir.resolve("VineflowerCli.java");
+        Files.write(sourceFile,
+                ("package fake;\n"
+                        + "import java.nio.charset.StandardCharsets;\n"
+                        + "import java.nio.file.Files;\n"
+                        + "import java.nio.file.Path;\n"
+                        + "import java.nio.file.Paths;\n"
+                        + "public class VineflowerCli {\n"
+                        + "    public static void main(String[] args) throws Exception {\n"
+                        + "        Path input = Paths.get(args[0]);\n"
+                        + "        Path output = Paths.get(args[1]);\n"
+                        + "        if (!Files.isDirectory(input)) {\n"
+                        + "            throw new IllegalArgumentException(\"missing input dir\");\n"
+                        + "        }\n"
+                        + "        Files.createDirectories(output.resolve(\"demo\"));\n"
+                        + "        Files.write(output.resolve(\"called.txt\"), input.toString().getBytes(StandardCharsets.UTF_8));\n"
+                        + "        Files.write(output.resolve(\"demo/App.java\"), (\"package demo;\\n\"\n"
+                        + "                + \"public class App { public String run() { return \\\"vineflower\\\"; } }\\n\")\n"
+                        + "                .getBytes(StandardCharsets.UTF_8));\n"
+                        + "    }\n"
+                        + "}\n")
+                        .getBytes(StandardCharsets.UTF_8));
+
+        int result = ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "-d", classesDir.toString(), sourceFile.toString());
+        if (result != 0) {
+            throw new IllegalStateException("javac failed with exit code " + result);
+        }
+
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "fake.VineflowerCli");
+        Path jarPath = tempDir.resolve("fake-vineflower-" + System.nanoTime() + ".jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath), manifest)) {
+            jar.putNextEntry(new JarEntry("fake/VineflowerCli.class"));
+            Files.copy(classesDir.resolve("fake/VineflowerCli.class"), jar);
+            jar.closeEntry();
+        }
+        return jarPath;
     }
 
     private String pomXml() {

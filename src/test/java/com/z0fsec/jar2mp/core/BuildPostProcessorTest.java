@@ -74,7 +74,8 @@ class BuildPostProcessorTest {
         ProjectConfig config = new ProjectConfig();
         config.setVerifyBuild(true);
 
-        new BuildPostProcessor().postProcess(jar.toFile(), analysis, outputDir.toFile(), config, message -> { });
+        postProcessorWithoutVineflower()
+                .postProcess(jar.toFile(), analysis, outputDir.toFile(), config, message -> { });
 
         String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
         assertTrue(report.contains("- Source coverage: missing"));
@@ -382,5 +383,32 @@ class BuildPostProcessorTest {
             hex.append(String.format("%02x", value & 0xff));
         }
         return hex.toString();
+    }
+
+    private BuildPostProcessor postProcessorWithoutVineflower() {
+        return new BuildPostProcessor(
+                new ProjectVerifier(disabledVineflowerDecompiler()),
+                new RuntimeSmokeRunner(),
+                new RuntimeTraceReportWriter(),
+                new RawArtifactPackager(),
+                new ArtifactFidelityComparator(),
+                new ArtifactFidelityReportWriter(),
+                new SourceRebuildFidelityComparator(),
+                new SourceRebuildFidelityReportWriter(),
+                new RestorationScorer(),
+                new RestorationScoreWriter(),
+                new GapSummaryWriter(),
+                new DecompileParityReporter(),
+                new EnvironmentFailureDetector(),
+                new BytecodeBackfiller());
+    }
+
+    private VineflowerDecompiler disabledVineflowerDecompiler() {
+        return new VineflowerDecompiler() {
+            @Override
+            boolean decompile(Path inputDir, Path outputDir) {
+                return false;
+            }
+        };
     }
 }
