@@ -1,10 +1,16 @@
 package com.z0fsec.jar2mp.core;
 
+import java.util.Map;
+
 public interface DecompilerEngine {
 
     String getName();
 
     Result decompile(byte[] classBytes, String className);
+
+    default Result decompile(byte[] classBytes, Map<String, byte[]> innerClassBytes, String className) {
+        return decompile(classBytes, className);
+    }
 
     static boolean isStubSource(String source) {
         if (source == null) {

@@ -390,6 +390,21 @@ class ProjectBuilderTest {
     }
 
     @Test
+    void allowsSelfInnerReferencesWhenRecordDeclarationIsPresent() {
+        ProjectBuilder builder = new ProjectBuilder(new ProjectConfig());
+        String source = "package demo;\n"
+                + "class Outer {\n"
+                + "  Node create() { return new Node(\"value\"); }\n"
+                + "  record Node(String value) {}\n"
+                + "}\n";
+
+        assertFalse(builder.hasMissingSelfInnerReferencesForTest(
+                source,
+                "demo/Outer.class",
+                Arrays.asList("demo/Outer.class", "demo/Outer$Node.class")));
+    }
+
+    @Test
     void treatsAnonymousInnerClassesRepresentedInOuterSourceAsRestored() throws Exception {
         Path jar = compileJar("demo.Outer",
                 "package demo;\n"

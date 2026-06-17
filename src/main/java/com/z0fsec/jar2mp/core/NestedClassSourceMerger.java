@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 class NestedClassSourceMerger {
 
     private static final String NAMED_INNER_DECLARATION_PATTERN =
-            "(?:class|interface|enum|@interface)\\s+%s\\b";
+            "(?:class|interface|enum|@interface|record)\\s+%s\\b";
 
     interface InnerSourceProvider {
         String sourceFor(String classPath) throws IOException;
@@ -191,7 +191,7 @@ class NestedClassSourceMerger {
         }
         Pattern declaration = Pattern.compile("(?m)^\\s*(?:"
                 + "(?:public|protected|private|abstract|static|final|strictfp)\\s+)*"
-                + "(?:class|interface|enum|@interface)\\s+"
+                + "(?:class|interface|enum|@interface|record)\\s+"
                 + Pattern.quote(outerSimpleName)
                 + "\\."
                 + Pattern.quote(innerSimpleName)

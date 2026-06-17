@@ -5,6 +5,7 @@ import com.z0fsec.jar2mp.model.ProjectConfig;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class DecompilerBridge {
 
@@ -115,10 +116,15 @@ public class DecompilerBridge {
     }
 
     public DecompileResult decompileDetailed(byte[] classBytes, String className) {
+        return decompileDetailed(classBytes, Collections.emptyMap(), className);
+    }
+
+    public DecompileResult decompileDetailed(byte[] classBytes, Map<String, byte[]> innerClassBytes, String className) {
+        Map<String, byte[]> safeInnerClassBytes = innerClassBytes == null ? Collections.emptyMap() : innerClassBytes;
         List<DecompilerEngine.Result> results = new ArrayList<>();
         for (DecompilerEngine engine : engines) {
             try {
-                results.add(normalizeResult(engine.decompile(classBytes, className), className));
+                results.add(normalizeResult(engine.decompile(classBytes, safeInnerClassBytes, className), className));
             } catch (Exception e) {
                 String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 results.add(DecompilerEngine.Result.failure(

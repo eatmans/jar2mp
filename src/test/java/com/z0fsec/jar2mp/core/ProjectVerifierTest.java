@@ -8,6 +8,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import javax.tools.ToolProvider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -69,6 +71,82 @@ class ProjectVerifierTest {
         assertTrue(result.getCompileFallbackClassPaths().contains("demo/App.class"));
         assertFalse(Files.exists(projectDir.resolve("src/main/java/demo/App.java")));
         assertTrue(Files.exists(projectDir.resolve("src/main/resources/demo/App.class")));
+    }
+
+    @Test
+    void recoversCascadeVictimSourceAfterRootClassFallsBackToRawClass() throws Exception {
+        Path projectDir = createProjectWithMaxCompilerErrors(10);
+        Path sourceDir = projectDir.resolve("src/main/java/demo");
+        Files.write(sourceDir.resolve("A.java"),
+                ("package demo;\n"
+                        + "public class A {\n"
+                        + "    private MissingType missing;\n"
+                        + "}\n")
+                        .getBytes(StandardCharsets.UTF_8));
+        Files.write(sourceDir.resolve("B.java"),
+                ("package demo;\n"
+                        + "public class B {\n"
+                        + "    public String call() { return new A().run(); }\n"
+                        + "}\n")
+                        .getBytes(StandardCharsets.UTF_8));
+        compileRawClass(projectDir.resolve("target/raw-classes"),
+                "demo.A",
+                "package demo;\npublic class A { public String run() { return \"ok\"; } }\n");
+        compileRawClass(projectDir.resolve("target/raw-classes"),
+                "demo.B",
+                "package demo;\npublic class B { public String call() { return new A().run(); } }\n",
+                projectDir.resolve("target/raw-classes"));
+
+        VerificationResult result = new ProjectVerifier().verify(projectDir.toFile(), "compile");
+
+        assertEquals(0, result.getExitCode());
+        assertEquals("NONE", result.getFailureType());
+        assertTrue(result.getCompileFallbackClassPaths().contains("demo/A.class"));
+        assertFalse(result.getCompileFallbackClassPaths().contains("demo/B.class"));
+        assertFalse(Files.exists(projectDir.resolve("src/main/java/demo/A.java")));
+        assertTrue(Files.exists(projectDir.resolve("src/main/java/demo/B.java")));
+        assertTrue(Files.exists(projectDir.resolve("src/main/resources/demo/A.class")));
+        assertFalse(Files.exists(projectDir.resolve("src/main/resources/demo/B.class")));
+    }
+
+    @Test
+    void injectsProvidedLombokDependencyForRecoveredFallbackSources() throws Exception {
+        Path mavenRepository = tempDir.resolve(".m2/repository");
+        createLombokArtifact(mavenRepository, "1.18.46");
+        Path projectDir = createProjectWithRepository(mavenRepository,
+                "import lombok.Generated;\n"
+                        + "@Generated\n"
+                        + "public class App { public String run() { return \"ok\"; } }");
+        compileRawClass(projectDir.resolve("target/raw-classes"),
+                "demo.App",
+                "package demo;\npublic class App { public String run() { return \"ok\"; } }\n");
+
+        String previousHome = System.getProperty("user.home");
+        try {
+            System.setProperty("user.home", tempDir.toString());
+            VerificationResult result = new ProjectVerifier().verify(projectDir.toFile(), "compile");
+
+            assertEquals(0, result.getExitCode());
+            assertTrue(Files.exists(projectDir.resolve("src/main/java/demo/App.java")));
+            assertFalse(result.getCompileFallbackClassPaths().contains("demo/App.class"));
+            assertFalse(Files.exists(projectDir.resolve("target/fallback-recovery-libs/lombok-1.18.46.jar")));
+
+            String pomXml = new String(Files.readAllBytes(projectDir.resolve("pom.xml")),
+                    StandardCharsets.UTF_8);
+            assertTrue(pomXml.contains("<groupId>org.projectlombok</groupId>"));
+            assertTrue(pomXml.contains("<artifactId>lombok</artifactId>"));
+            assertTrue(pomXml.contains("<version>1.18.46</version>"));
+            assertTrue(pomXml.contains("<scope>provided</scope>"));
+            assertFalse(pomXml.contains("<scope>system</scope>"));
+            assertFalse(pomXml.contains("<systemPath>"));
+            assertFalse(pomXml.contains("target/fallback-recovery-libs"));
+        } finally {
+            if (previousHome == null) {
+                System.clearProperty("user.home");
+            } else {
+                System.setProperty("user.home", previousHome);
+            }
+        }
     }
 
     @Test
@@ -200,6 +278,17 @@ class ProjectVerifierTest {
         return projectDir;
     }
 
+    private Path createProjectWithRepository(Path repository, String javaSource) throws Exception {
+        Path projectDir = tempDir.resolve("project-" + System.nanoTime());
+        Path sourceDir = projectDir.resolve("src/main/java/demo");
+        Files.createDirectories(sourceDir);
+        Files.write(projectDir.resolve("pom.xml"),
+                pomXmlWithRepository(repository).getBytes(StandardCharsets.UTF_8));
+        Files.write(sourceDir.resolve("App.java"),
+                ("package demo;\n" + javaSource + "\n").getBytes(StandardCharsets.UTF_8));
+        return projectDir;
+    }
+
     private Path createProjectWithMaxCompilerErrors(int maxErrors) throws Exception {
         Path projectDir = tempDir.resolve("project-" + System.nanoTime());
         Files.createDirectories(projectDir.resolve("src/main/java/demo"));
@@ -209,6 +298,10 @@ class ProjectVerifierTest {
     }
 
     private void compileRawClass(Path rawClassesDir, String className, String source) throws Exception {
+        compileRawClass(rawClassesDir, className, source, null);
+    }
+
+    private void compileRawClass(Path rawClassesDir, String className, String source, Path classPath) throws Exception {
         String packagePath = "";
         String simpleName = className;
         int lastDot = className.lastIndexOf('.');
@@ -223,15 +316,60 @@ class ProjectVerifierTest {
         Files.write(sourceFile, source.getBytes(StandardCharsets.UTF_8));
         Files.createDirectories(rawClassesDir);
 
-        int result = ToolProvider.getSystemJavaCompiler().run(
-                null,
-                null,
-                null,
-                "-d", rawClassesDir.toString(),
-                sourceFile.toString());
+        java.util.List<String> args = new java.util.ArrayList<>();
+        if (classPath != null) {
+            args.add("-cp");
+            args.add(classPath.toString());
+        }
+        args.add("-d");
+        args.add(rawClassesDir.toString());
+        args.add(sourceFile.toString());
+
+        int result = ToolProvider.getSystemJavaCompiler().run(null, null, null, args.toArray(new String[0]));
         if (result != 0) {
             throw new IllegalStateException("javac failed with exit code " + result);
         }
+    }
+
+    private void createLombokArtifact(Path repository, String version) throws Exception {
+        Path artifactDir = repository.resolve("org/projectlombok/lombok").resolve(version);
+        Files.createDirectories(artifactDir);
+        Path classesDir = tempDir.resolve("lombok-classes-" + System.nanoTime());
+        Path sourceDir = tempDir.resolve("lombok-src-" + System.nanoTime()).resolve("lombok");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("Generated.java");
+        Files.write(sourceFile,
+                ("package lombok;\n"
+                        + "import java.lang.annotation.ElementType;\n"
+                        + "import java.lang.annotation.Retention;\n"
+                        + "import java.lang.annotation.RetentionPolicy;\n"
+                        + "import java.lang.annotation.Target;\n"
+                        + "@Retention(RetentionPolicy.SOURCE)\n"
+                        + "@Target({ElementType.TYPE, ElementType.METHOD, ElementType.CONSTRUCTOR, ElementType.FIELD})\n"
+                        + "public @interface Generated {}\n")
+                        .getBytes(StandardCharsets.UTF_8));
+        Files.createDirectories(classesDir);
+
+        int result = ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "-d", classesDir.toString(), sourceFile.toString());
+        if (result != 0) {
+            throw new IllegalStateException("javac failed with exit code " + result);
+        }
+
+        try (JarOutputStream jar = new JarOutputStream(
+                Files.newOutputStream(artifactDir.resolve("lombok-" + version + ".jar")))) {
+            jar.putNextEntry(new JarEntry("lombok/Generated.class"));
+            Files.copy(classesDir.resolve("lombok/Generated.class"), jar);
+            jar.closeEntry();
+        }
+        Files.write(artifactDir.resolve("lombok-" + version + ".pom"),
+                ("<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n"
+                        + "  <modelVersion>4.0.0</modelVersion>\n"
+                        + "  <groupId>org.projectlombok</groupId>\n"
+                        + "  <artifactId>lombok</artifactId>\n"
+                        + "  <version>" + version + "</version>\n"
+                        + "</project>\n")
+                        .getBytes(StandardCharsets.UTF_8));
     }
 
     private String pomXml() {
@@ -247,6 +385,30 @@ class ProjectVerifierTest {
                 "    <maven.compiler.source>8</maven.compiler.source>\n" +
                 "    <maven.compiler.target>8</maven.compiler.target>\n" +
                 "  </properties>\n" +
+                "</project>\n";
+    }
+
+    private String pomXmlWithRepository(Path repository) {
+        return "<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\n" +
+                "         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n" +
+                "         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 " +
+                "https://maven.apache.org/xsd/maven-4.0.0.xsd\">\n" +
+                "  <modelVersion>4.0.0</modelVersion>\n" +
+                "  <groupId>demo</groupId>\n" +
+                "  <artifactId>verified-project</artifactId>\n" +
+                "  <version>1.0.0</version>\n" +
+                "  <properties>\n" +
+                "    <maven.compiler.source>8</maven.compiler.source>\n" +
+                "    <maven.compiler.target>8</maven.compiler.target>\n" +
+                "  </properties>\n" +
+                "  <repositories>\n" +
+                "    <repository>\n" +
+                "      <id>test-repository</id>\n" +
+                "      <url>" + repository.toUri() + "</url>\n" +
+                "    </repository>\n" +
+                "  </repositories>\n" +
+                "  <dependencies>\n" +
+                "  </dependencies>\n" +
                 "</project>\n";
     }
 

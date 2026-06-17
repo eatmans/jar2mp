@@ -20,7 +20,7 @@ public class ProjectBuilder {
     private static final String WEB_CLASSES_PREFIX = "WEB-INF/classes/";
     private static final String WEB_LIB_PREFIX = "WEB-INF/lib/";
     private static final String NAMED_INNER_DECLARATION_PATTERN =
-            "(?:class|interface|enum|@interface)\\s+%s\\b";
+            "(?:class|interface|enum|@interface|record)\\s+%s\\b";
     private static final Pattern ANONYMOUS_INNER_DECLARATION = Pattern.compile(
             "new\\s+[^;{}()]+(?:\\([^;{}]*\\))?\\s*\\{");
 
@@ -256,32 +256,18 @@ public class ProjectBuilder {
                             mapstructInputTypes, localGenericTypes);
                     NestedClassSourceMerger.MergeResult mergeResult = mergeMissingInnerSources(
                             javaSource, classPath, jf, analysis, syntheticSwitchMaps, mapstructInputTypes);
-                    if (!mergeResult.getUnresolvedClassPaths().isEmpty()) {
-                        DecompileFinding finding = rawClassFallbackFinding(
-                                classPath,
-                                "decompiled outer source references inner classes that are not declared",
-                                "Decompiled source was skipped because javac cannot resolve retained inner classes as "
-                                        + "members of the source type.");
-                        try (InputStream is = jf.getInputStream(entry)) {
-                            retainRawClassForFallback(readAllBytes(is), classPath, targetOriginalClasses,
-                                    srcMainResources, outputDir, finding, compilerFallbackJarEntries, false,
-                                    entry.getTime());
-                        }
-                        if (finding.hasRetainedClassPath()) {
-                            decompileFindings.add(finding);
-                        }
+                    if (mergeResult.getUnresolvedClassPaths().isEmpty()) {
+                        javaSource = mergeResult.getSource();
+                        sourceCoveredInnerClasses.addAll(mergeResult.getMergedClassPaths());
+                        IoUtils.ensureDirectory(outputFile.getParentFile());
+                        IoUtils.writeStringToFile(outputFile, javaSource);
+                        DecompileFinding finding = new DecompileFinding(classPath, null, null);
+                        finding.setSelectedEngine("cfr-context");
+                        finding.setEngineSummary("cfr-context=" + DecompilerEngine.scoreSource(javaSource)
+                                + innerMergeSummary(mergeResult));
+                        decompileFindings.add(finding);
                         continue;
                     }
-                    javaSource = mergeResult.getSource();
-                    sourceCoveredInnerClasses.addAll(mergeResult.getMergedClassPaths());
-                    IoUtils.ensureDirectory(outputFile.getParentFile());
-                    IoUtils.writeStringToFile(outputFile, javaSource);
-                    DecompileFinding finding = new DecompileFinding(classPath, null, null);
-                    finding.setSelectedEngine("cfr-context");
-                    finding.setEngineSummary("cfr-context=" + DecompilerEngine.scoreSource(javaSource)
-                            + innerMergeSummary(mergeResult));
-                    decompileFindings.add(finding);
-                    continue;
                 }
 
                 try (InputStream is = jf.getInputStream(entry)) {
@@ -293,13 +279,14 @@ public class ProjectBuilder {
                         byte[] bytes = rawClassBytes == null ? readAllBytes(is) : rawClassBytes;
                         String className = classPath.replace('/', '.').replace(".class", "");
                         Map<String, String> localGenericTypes = localGenericTypes(bytes);
+                        Map<String, byte[]> innerClassBytes = readInnerClassBytes(jf, analysis, classPath);
 
                         if (callback != null && processed % 20 == 0) {
                             callback.onProgress("Decompiling: " + className, percent);
                         }
 
                         DecompilerBridge.DecompileResult decompileResult =
-                                decompiler.decompileDetailed(bytes, className);
+                                decompiler.decompileDetailed(bytes, innerClassBytes, className);
                         DecompileFinding finding = new DecompileFinding(
                                 classPath,
                                 null,
@@ -329,6 +316,8 @@ public class ProjectBuilder {
                             }
                             javaSource = mergeResult.getSource();
                             sourceCoveredInnerClasses.addAll(mergeResult.getMergedClassPaths());
+                            sourceCoveredInnerClasses.addAll(innerClassPathsCoveredBySource(
+                                    javaSource, classPath, analysis.getClassFiles()));
                             IoUtils.ensureDirectory(outputFile.getParentFile());
                             IoUtils.writeStringToFile(outputFile, javaSource);
                             finding.setEngineSummary(safeEngineSummary(finding.getEngineSummary())
@@ -580,6 +569,34 @@ public class ProjectBuilder {
         }
     }
 
+    private Map<String, byte[]> readInnerClassBytes(JarFile jarFile,
+                                                    JarAnalysisResult analysis,
+                                                    String outerClassPath) throws IOException {
+        if (outerClassPath == null || !outerClassPath.endsWith(".class")) {
+            return Collections.emptyMap();
+        }
+        String innerPrefix = outerClassPath.substring(0, outerClassPath.length() - ".class".length()) + "$";
+        Map<String, byte[]> innerClassBytes = new LinkedHashMap<>();
+        for (String candidateClassPath : analysis.getClassFiles()) {
+            if (candidateClassPath == null
+                    || !candidateClassPath.startsWith(innerPrefix)
+                    || !candidateClassPath.endsWith(".class")) {
+                continue;
+            }
+            String rawEntryPath = analysis.getClassPathMapping().get(candidateClassPath);
+            if (rawEntryPath == null) {
+                rawEntryPath = candidateClassPath;
+            }
+            JarEntry entry = jarFile.getJarEntry(rawEntryPath);
+            if (entry == null) {
+                continue;
+            }
+            String binaryName = candidateClassPath.replace('/', '.').replace(".class", "");
+            innerClassBytes.put(binaryName, readRawClassBytes(jarFile, entry));
+        }
+        return innerClassBytes;
+    }
+
     private Map<String, String> localGenericTypes(byte[] classBytes) {
         if (classBytes == null || classBytes.length == 0) {
             return Collections.emptyMap();
@@ -669,6 +686,38 @@ public class ProjectBuilder {
         Pattern declaration = Pattern.compile(String.format(
                 NAMED_INNER_DECLARATION_PATTERN, Pattern.quote(innerSimpleName)));
         return declaration.matcher(source).find();
+    }
+
+    private List<String> innerClassPathsCoveredBySource(String source,
+                                                        String outerClassPath,
+                                                        Collection<String> classFiles) {
+        if (source == null || outerClassPath == null || !outerClassPath.endsWith(".class") || classFiles == null) {
+            return Collections.emptyList();
+        }
+        String innerPrefix = outerClassPath.substring(0, outerClassPath.length() - ".class".length()) + "$";
+        int anonymousDeclarations = countAnonymousInnerDeclarations(source);
+        List<String> covered = new ArrayList<>();
+        for (String candidateClassPath : classFiles) {
+            if (candidateClassPath == null
+                    || !candidateClassPath.startsWith(innerPrefix)
+                    || !candidateClassPath.endsWith(".class")) {
+                continue;
+            }
+            String innerSimpleName = innerSimpleName(candidateClassPath);
+            if (innerSimpleName == null || innerSimpleName.isEmpty()) {
+                continue;
+            }
+            if (Character.isDigit(innerSimpleName.charAt(0))) {
+                if (anonymousDeclarations >= anonymousInnerIndex(innerSimpleName)) {
+                    covered.add(candidateClassPath);
+                }
+                continue;
+            }
+            if (sourceDeclaresInnerType(source, innerSimpleName)) {
+                covered.add(candidateClassPath);
+            }
+        }
+        return covered;
     }
 
     private boolean hasLegalTopLevelJavaSourceName(String classPath) {

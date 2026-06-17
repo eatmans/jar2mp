@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -28,6 +29,7 @@ public class ProjectVerifier implements BuildVerifier {
     private static final int MAX_CAPTURE_BYTES = 20 * 1024;
     private static final long TIMEOUT_SECONDS = 120;
     private static final int MAX_COMPILE_FALLBACK_ROUNDS = 100;
+    private static final String DEFAULT_LOMBOK_VERSION = "1.18.34";
     private final VerificationErrorParser errorParser = new VerificationErrorParser();
 
     public VerificationResult verify(File projectDir, String goal) {
@@ -42,19 +44,30 @@ public class ProjectVerifier implements BuildVerifier {
             }
         }
 
-        List<String> compileFallbacks = new ArrayList<>();
+        Set<String> compileFallbacks = new LinkedHashSet<>();
         VerificationResult result = runMavenVerification(projectDir, command);
         for (int round = 0; shouldApplyCompileFallback(result) && round < MAX_COMPILE_FALLBACK_ROUNDS; round++) {
             List<String> applied = applyCompileFallbacks(projectDir, result);
             if (applied.isEmpty()) {
                 break;
             }
-            for (String classPath : applied) {
-                if (!compileFallbacks.contains(classPath)) {
-                    compileFallbacks.add(classPath);
+            compileFallbacks.addAll(applied);
+            result = runMavenVerification(projectDir, command);
+        }
+        if (result.getExitCode() == 0 && !compileFallbacks.isEmpty()) {
+            Set<String> recovered = recoverCompileFallbackSources(projectDir, compileFallbacks);
+            if (!recovered.isEmpty()) {
+                compileFallbacks.removeAll(recovered);
+                result = runMavenVerification(projectDir, command);
+                for (int round = 0; shouldApplyCompileFallback(result) && round < MAX_COMPILE_FALLBACK_ROUNDS; round++) {
+                    List<String> applied = applyCompileFallbacks(projectDir, result);
+                    if (applied.isEmpty()) {
+                        break;
+                    }
+                    compileFallbacks.addAll(applied);
+                    result = runMavenVerification(projectDir, command);
                 }
             }
-            result = runMavenVerification(projectDir, command);
         }
         result.getCompileFallbackClassPaths().addAll(compileFallbacks);
         return result;
@@ -115,6 +128,36 @@ public class ProjectVerifier implements BuildVerifier {
         return result;
     }
 
+    private int runProcess(File projectDir, List<String> command, long timeoutSeconds) {
+        Process process = null;
+        try {
+            ProcessBuilder builder = new ProcessBuilder(command);
+            builder.directory(projectDir);
+            process = builder.start();
+
+            StreamCollector stdout = new StreamCollector(process.getInputStream());
+            StreamCollector stderr = new StreamCollector(process.getErrorStream());
+            stdout.start();
+            stderr.start();
+
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+            }
+            stdout.join(1000);
+            stderr.join(1000);
+            return finished ? process.exitValue() : -1;
+        } catch (IOException e) {
+            return -1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            return -1;
+        }
+    }
+
     private boolean shouldApplyCompileFallback(VerificationResult result) {
         return result != null
                 && result.getExitCode() != 0
@@ -131,6 +174,7 @@ public class ProjectVerifier implements BuildVerifier {
         Path projectPath = projectDir.toPath().toAbsolutePath().normalize();
         Path rawRoot = projectPath.resolve("target/raw-classes").normalize();
         Path resourcesRoot = projectPath.resolve("src/main/resources").normalize();
+        Path fallbackSourceRoot = projectPath.resolve("target/fallback-sources").normalize();
         if (!Files.isDirectory(rawRoot)) {
             return applied;
         }
@@ -149,19 +193,371 @@ public class ProjectVerifier implements BuildVerifier {
                 continue;
             }
             try {
-                copyRawClassFamily(rawRoot, resourcesRoot, classPath);
                 Path sourceFile = resolveUnder(projectPath, "src/main/java/"
                         + classPath.substring(0, classPath.length() - ".class".length())
                         + ".java");
-                if (sourceFile != null) {
-                    Files.deleteIfExists(sourceFile);
+                if (sourceFile == null || !Files.isRegularFile(sourceFile)) {
+                    continue;
                 }
+                copyRawClassFamily(rawRoot, resourcesRoot, classPath);
+                moveSourceToFallbackRetention(projectPath, fallbackSourceRoot, sourceFile);
                 applied.add(classPath);
             } catch (IOException ignored) {
                 // Leave the original verification failure intact if the fallback cannot be applied.
             }
         }
         return applied;
+    }
+
+    private void moveSourceToFallbackRetention(Path projectPath, Path fallbackSourceRoot, Path sourceFile)
+            throws IOException {
+        Path sourceRoot = projectPath.resolve("src/main/java").normalize();
+        Path relativeSource = sourceRoot.relativize(sourceFile.toAbsolutePath().normalize());
+        Path retainedSource = fallbackSourceRoot.resolve(relativeSource).normalize();
+        if (!retainedSource.startsWith(fallbackSourceRoot)) {
+            return;
+        }
+        Files.createDirectories(retainedSource.getParent());
+        Files.move(sourceFile, retainedSource, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private Set<String> recoverCompileFallbackSources(File projectDir, Set<String> compileFallbacks) {
+        if (projectDir == null || compileFallbacks == null || compileFallbacks.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Path projectPath = projectDir.toPath().toAbsolutePath().normalize();
+        Path fallbackSourceRoot = projectPath.resolve("target/fallback-sources").normalize();
+        if (!Files.isDirectory(fallbackSourceRoot)) {
+            return Collections.emptySet();
+        }
+
+        List<String> classpath = buildRecoveryClasspath(projectDir);
+        Set<String> recovered = new LinkedHashSet<>();
+        for (String classPath : compileFallbacks) {
+            Path retainedSource = retainedSourceForClassPath(fallbackSourceRoot, classPath);
+            if (retainedSource == null || !Files.isRegularFile(retainedSource)) {
+                continue;
+            }
+            if (compileRetainedSource(projectPath, retainedSource, classpath)) {
+                try {
+                    restoreRecoveredSource(projectPath, fallbackSourceRoot, retainedSource);
+                    removeRawClassFamily(projectPath.resolve("src/main/resources").normalize(), classPath);
+                    recovered.add(classPath);
+                } catch (IOException ignored) {
+                    // Keep the raw-class fallback if the source cannot be restored safely.
+                }
+            }
+        }
+        return recovered;
+    }
+
+    private Path retainedSourceForClassPath(Path fallbackSourceRoot, String classPath) {
+        if (classPath == null || !classPath.endsWith(".class")) {
+            return null;
+        }
+        String relativeJavaPath = classPath.substring(0, classPath.length() - ".class".length()) + ".java";
+        return resolveUnder(fallbackSourceRoot, relativeJavaPath);
+    }
+
+    private List<String> buildRecoveryClasspath(File projectDir) {
+        List<String> classpath = new ArrayList<>();
+        Path projectPath = projectDir.toPath().toAbsolutePath().normalize();
+        Path classpathFile = projectPath.resolve("target/fallback-recovery-classpath.txt");
+        List<String> command = new ArrayList<>();
+        command.add(findMavenExecutable(projectDir, System.getenv()));
+        command.add("-q");
+        addVerificationSkipFlags(command);
+        command.add("dependency:build-classpath");
+        command.add("-Dmdep.outputFile=" + classpathFile.toString());
+        int exitCode = runProcess(projectDir, command, TIMEOUT_SECONDS);
+        if (exitCode == 0 && Files.isRegularFile(classpathFile)) {
+            try {
+                String value = new String(Files.readAllBytes(classpathFile), java.nio.charset.StandardCharsets.UTF_8)
+                        .trim();
+                if (!value.isEmpty()) {
+                    for (String entry : value.split(Pattern.quote(File.pathSeparator))) {
+                        if (!entry.trim().isEmpty()) {
+                            classpath.add(entry.trim());
+                        }
+                    }
+                }
+            } catch (IOException ignored) {
+                // Local project classpath entries below still allow app-class cascade recovery.
+            }
+        }
+        addClasspathEntry(classpath, projectPath.resolve("target/compiler-fallback-classes.jar"));
+        addClasspathEntry(classpath, projectPath.resolve("target/classes"));
+        addClasspathEntry(classpath, projectPath.resolve("target/raw-classes"));
+        addClasspathEntry(classpath, projectPath.resolve("src/main/resources"));
+        addClasspathArchives(classpath, projectPath.resolve("target/original-libs"));
+        addClasspathArchives(classpath, projectPath.resolve("src/main/original-libs"));
+        addKnownCompileOnlyDependencies(classpath, projectPath, projectPath.resolve("target/fallback-sources"));
+        return classpath;
+    }
+
+    private void addClasspathEntry(List<String> classpath, Path path) {
+        if (path != null && Files.exists(path)) {
+            String entry = path.toAbsolutePath().normalize().toString();
+            if (!classpath.contains(entry)) {
+                classpath.add(entry);
+            }
+        }
+    }
+
+    private void addClasspathArchives(List<String> classpath, Path root) {
+        if (root == null || !Files.isDirectory(root)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.walk(root)) {
+            java.util.Iterator<Path> iterator = stream
+                    .filter(Files::isRegularFile)
+                    .filter(this::isClasspathArchive)
+                    .iterator();
+            while (iterator.hasNext()) {
+                addClasspathEntry(classpath, iterator.next());
+            }
+        } catch (IOException ignored) {
+            // Maven-derived classpath and local entries may still be enough for smaller projects.
+        }
+    }
+
+    private boolean isClasspathArchive(Path path) {
+        if (path == null || path.getFileName() == null) {
+            return false;
+        }
+        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        return name.endsWith(".jar") || name.endsWith(".war");
+    }
+
+    private void addKnownCompileOnlyDependencies(List<String> classpath, Path projectPath, Path fallbackSourceRoot) {
+        if (sourcesContain(fallbackSourceRoot, "import lombok.")) {
+            Path jar = findLatestMavenRepositoryArtifact("org/projectlombok/lombok");
+            if (jar != null) {
+                addClasspathEntry(classpath, jar);
+            }
+            ensureProvidedDependency(projectPath, "org.projectlombok", "lombok", versionFromRepositoryJar(jar));
+        }
+    }
+
+    private boolean sourcesContain(Path root, String token) {
+        if (root == null || token == null || !Files.isDirectory(root)) {
+            return false;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.walk(root)) {
+            java.util.Iterator<Path> iterator = stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName() != null
+                            && path.getFileName().toString().endsWith(".java"))
+                    .iterator();
+            while (iterator.hasNext()) {
+                String content = new String(Files.readAllBytes(iterator.next()),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                if (content.contains(token)) {
+                    return true;
+                }
+            }
+        } catch (IOException ignored) {
+            return false;
+        }
+        return false;
+    }
+
+    private Path findLatestMavenRepositoryArtifact(String groupAndArtifactPath) {
+        String userHome = System.getProperty("user.home", "");
+        if (userHome.trim().isEmpty() || groupAndArtifactPath == null || groupAndArtifactPath.trim().isEmpty()) {
+            return null;
+        }
+        Path artifactRoot = new File(userHome, ".m2/repository/" + groupAndArtifactPath).toPath();
+        if (!Files.isDirectory(artifactRoot)) {
+            return null;
+        }
+        try (java.util.stream.Stream<Path> stream = Files.list(artifactRoot)) {
+            return stream
+                    .filter(Files::isDirectory)
+                    .max((left, right) -> compareVersionStrings(
+                            left.getFileName().toString(),
+                            right.getFileName().toString()))
+                    .map(path -> path.resolve(path.getParent().getFileName() + "-" + path.getFileName() + ".jar"))
+                    .filter(Files::isRegularFile)
+                    .orElse(null);
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private String versionFromRepositoryJar(Path jar) {
+        if (jar != null && jar.getParent() != null && jar.getParent().getFileName() != null) {
+            return jar.getParent().getFileName().toString();
+        }
+        return DEFAULT_LOMBOK_VERSION;
+    }
+
+    private void ensureProvidedDependency(Path projectPath, String groupId, String artifactId, String version) {
+        if (projectPath == null || groupId == null || artifactId == null || version == null) {
+            return;
+        }
+        Path pom = projectPath.resolve("pom.xml");
+        if (!Files.isRegularFile(pom)) {
+            return;
+        }
+        try {
+            String xml = new String(Files.readAllBytes(pom), java.nio.charset.StandardCharsets.UTF_8);
+            if (xml.contains("<artifactId>" + artifactId + "</artifactId>")) {
+                return;
+            }
+            String dependency = "        <dependency>\n"
+                    + "            <groupId>" + groupId + "</groupId>\n"
+                    + "            <artifactId>" + artifactId + "</artifactId>\n"
+                    + "            <version>" + version + "</version>\n"
+                    + "            <scope>provided</scope>\n"
+                    + "        </dependency>\n";
+            int dependencyManagementEnd = xml.indexOf("</dependencyManagement>");
+            int searchStart = dependencyManagementEnd < 0 ? 0
+                    : dependencyManagementEnd + "</dependencyManagement>".length();
+            int dependenciesStart = xml.indexOf("<dependencies>", searchStart);
+            if (dependenciesStart >= 0) {
+                int dependenciesEnd = xml.indexOf("</dependencies>", dependenciesStart);
+                if (dependenciesEnd >= 0) {
+                    xml = xml.substring(0, dependenciesEnd) + dependency + xml.substring(dependenciesEnd);
+                    Files.write(pom, xml.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            }
+        } catch (IOException ignored) {
+            // The final corrective fallback loop keeps the project buildable if dependency injection fails.
+        }
+    }
+
+    private int compareVersionStrings(String left, String right) {
+        String[] leftParts = nullToEmpty(left).split("[^0-9]+");
+        String[] rightParts = nullToEmpty(right).split("[^0-9]+");
+        int length = Math.max(leftParts.length, rightParts.length);
+        for (int i = 0; i < length; i++) {
+            int leftValue = i < leftParts.length && !leftParts[i].isEmpty() ? parseVersionInt(leftParts[i]) : 0;
+            int rightValue = i < rightParts.length && !rightParts[i].isEmpty() ? parseVersionInt(rightParts[i]) : 0;
+            if (leftValue != rightValue) {
+                return Integer.compare(leftValue, rightValue);
+            }
+        }
+        return nullToEmpty(left).compareTo(nullToEmpty(right));
+    }
+
+    private int parseVersionInt(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private boolean compileRetainedSource(Path projectPath, Path retainedSource, List<String> classpath) {
+        Path probeDir = projectPath.resolve("target/fallback-recovery-probe").normalize()
+                .resolve(Long.toString(System.nanoTime()));
+        try {
+            Files.createDirectories(probeDir);
+        } catch (IOException e) {
+            return false;
+        }
+
+        List<String> command = new ArrayList<>();
+        command.add(findJavacExecutable(System.getenv()));
+        command.add("-encoding");
+        command.add("UTF-8");
+        if (classpath != null && !classpath.isEmpty()) {
+            command.add("-cp");
+            command.add(joinClasspath(classpath));
+        }
+        command.add("-d");
+        command.add(probeDir.toString());
+        command.add(retainedSource.toString());
+        return runProcess(projectPath.toFile(), command, TIMEOUT_SECONDS) == 0;
+    }
+
+    private String joinClasspath(List<String> classpath) {
+        StringBuilder builder = new StringBuilder();
+        for (String entry : classpath) {
+            if (entry == null || entry.trim().isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(File.pathSeparator);
+            }
+            builder.append(entry);
+        }
+        return builder.toString();
+    }
+
+    private void restoreRecoveredSource(Path projectPath, Path fallbackSourceRoot, Path retainedSource)
+            throws IOException {
+        Path sourceRoot = projectPath.resolve("src/main/java").normalize();
+        Path relativeSource = fallbackSourceRoot.relativize(retainedSource.toAbsolutePath().normalize());
+        Path sourceFile = sourceRoot.resolve(relativeSource).normalize();
+        if (!sourceFile.startsWith(sourceRoot)) {
+            return;
+        }
+        Files.createDirectories(sourceFile.getParent());
+        Files.copy(retainedSource, sourceFile, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private void removeRawClassFamily(Path resourcesRoot, String classPath) throws IOException {
+        Path resourceClass = resolveUnder(resourcesRoot, classPath);
+        if (resourceClass == null) {
+            return;
+        }
+        Files.deleteIfExists(resourceClass);
+
+        Path parent = resourceClass.getParent();
+        String fileName = resourceClass.getFileName().toString();
+        if (parent != null && fileName.endsWith(".class") && Files.isDirectory(parent)) {
+            String innerClassGlob = fileName.substring(0, fileName.length() - ".class".length()) + "$*.class";
+            try (java.nio.file.DirectoryStream<Path> stream = Files.newDirectoryStream(parent, innerClassGlob)) {
+                for (Path sibling : stream) {
+                    Files.deleteIfExists(sibling);
+                }
+            }
+        }
+        deleteEmptyParents(resourcesRoot, parent);
+    }
+
+    private void deleteEmptyParents(Path root, Path path) throws IOException {
+        Path current = path;
+        while (current != null && current.startsWith(root) && !current.equals(root) && Files.isDirectory(current)) {
+            try (java.nio.file.DirectoryStream<Path> stream = Files.newDirectoryStream(current)) {
+                if (stream.iterator().hasNext()) {
+                    break;
+                }
+            }
+            Files.deleteIfExists(current);
+            current = current.getParent();
+        }
+    }
+
+    private static String findJavacExecutable(Map<String, String> environment) {
+        Map<String, String> env = environment == null ? java.util.Collections.emptyMap() : environment;
+        String javaHome = env.get("JAVA_HOME");
+        if (javaHome != null && !javaHome.trim().isEmpty()) {
+            File executable = new File(new File(javaHome.trim(), "bin"), javacExecutableName());
+            if (isExecutableFile(executable)) {
+                return executable.getAbsolutePath();
+            }
+        }
+        String path = env.get("PATH");
+        if (path != null && !path.trim().isEmpty()) {
+            String[] parts = path.split(Pattern.quote(File.pathSeparator));
+            for (String part : parts) {
+                if (part == null || part.trim().isEmpty()) {
+                    continue;
+                }
+                File executable = new File(part.trim(), javacExecutableName());
+                if (isExecutableFile(executable)) {
+                    return executable.getAbsolutePath();
+                }
+            }
+        }
+        return javacExecutableName();
+    }
+
+    private static String javacExecutableName() {
+        return isWindows() ? "javac.exe" : "javac";
     }
 
     private String classPathFromSourcePath(String sourcePath) {
@@ -549,4 +945,5 @@ public class ProjectVerifier implements BuildVerifier {
             }
         }
     }
+
 }

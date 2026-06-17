@@ -3,8 +3,16 @@ package com.z0fsec.jar2mp.core;
 import com.z0fsec.jar2mp.model.ProjectConfig;
 import org.junit.jupiter.api.Test;
 
+import javax.tools.JavaCompiler;
+import javax.tools.ToolProvider;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -114,6 +122,38 @@ class DecompilerBridgeTest {
     }
 
     @Test
+    void cfrGroupDecompileInlinesAnonymousInnerClass() throws Exception {
+        String source = "package demo;\n\n"
+                + "public class AnonymousOuter {\n"
+                + "  public Runnable task() {\n"
+                + "    return new Runnable() {\n"
+                + "      public void run() {\n"
+                + "        System.out.println(\"anon-run\");\n"
+                + "      }\n"
+                + "    };\n"
+                + "  }\n"
+                + "}\n";
+        Map<String, byte[]> compiledClasses = compileAll("demo.AnonymousOuter", source);
+        Map<String, byte[]> innerClasses = new LinkedHashMap<>();
+        innerClasses.put("demo.AnonymousOuter$1", compiledClasses.get("demo.AnonymousOuter$1"));
+        DecompilerBridge bridge = new DecompilerBridge(new ProjectConfig(), engines(
+                new CfrDecompilerEngine(new ProjectConfig())
+        ));
+
+        DecompilerBridge.DecompileResult result = bridge.decompileDetailed(
+                compiledClasses.get("demo.AnonymousOuter"), innerClasses, "demo.AnonymousOuter");
+
+        assertTrue(result.isSuccess(), result.getFailureMessage());
+        String decompiledSource = result.getSource();
+        assertTrue(decompiledSource.matches("(?s).*return\\s+new\\s+Runnable\\s*\\(\\)\\s*\\{.*"),
+                decompiledSource);
+        assertTrue(decompiledSource.matches("(?s).*public\\s+void\\s+run\\s*\\(\\)\\s*\\{.*"),
+                decompiledSource);
+        assertTrue(decompiledSource.contains("System.out.println(\"anon-run\")"), decompiledSource);
+        assertFalse(decompiledSource.contains("AnonymousOuter$1"), decompiledSource);
+    }
+
+    @Test
     void penalizesKnownUncompilablePlaceholders() {
         String source = "package demo;\n\npublic class Sample {\n"
                 + "  private static final Runnable R = new /* Unavailable Anonymous Inner Class!! */;\n"
@@ -139,6 +179,53 @@ class DecompilerBridgeTest {
 
     private List<DecompilerEngine> engines(DecompilerEngine... engines) {
         return Arrays.asList(engines);
+    }
+
+    private Map<String, byte[]> compileAll(String className, String source) throws Exception {
+        Path tempDir = Files.createTempDirectory("jar2mp_compile_all_");
+        String packageName = "";
+        String packagePath = "";
+        String simpleName = className;
+        int lastDot = className.lastIndexOf('.');
+        if (lastDot >= 0) {
+            packageName = className.substring(0, lastDot);
+            packagePath = packageName.replace('.', '/');
+            simpleName = className.substring(lastDot + 1);
+        }
+
+        Path sourceDir = tempDir.resolve("src").resolve(packagePath);
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve(simpleName + ".java");
+        Files.write(sourceFile, source.getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("classes");
+        Files.createDirectories(classesDir);
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler);
+        int result = compiler.run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+
+        Path packageClassesDir = packagePath.isEmpty() ? classesDir : classesDir.resolve(packagePath);
+        Map<String, byte[]> classes = new LinkedHashMap<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(packageClassesDir, simpleName + "*.class")) {
+            for (Path classFile : stream) {
+                String fileName = classFile.getFileName().toString();
+                String binaryName = fileName.substring(0, fileName.length() - ".class".length());
+                if (!packageName.isEmpty()) {
+                    binaryName = packageName + "." + binaryName;
+                }
+                classes.put(binaryName, Files.readAllBytes(classFile));
+            }
+        }
+        return classes;
     }
 
     private static class FixedEngine implements DecompilerEngine {
