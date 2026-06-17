@@ -73,6 +73,12 @@ class ProjectVerifierTest {
         assertTrue(result.getCompileFallbackClassPaths().contains("demo/App.class"));
         assertFalse(Files.exists(projectDir.resolve("src/main/java/demo/App.java")));
         assertTrue(Files.exists(projectDir.resolve("src/main/resources/demo/App.class")));
+        Path readableSource = projectDir.resolve("decompiled-readable/demo/App.java");
+        String readableContent = Files.readString(readableSource);
+        assertTrue(Files.exists(readableSource));
+        assertTrue(readableContent.contains("Readable decompiled source"));
+        assertTrue(readableContent.contains("source could not be recompiled"));
+        assertTrue(readableContent.contains("public void broken()"));
     }
 
     @Test

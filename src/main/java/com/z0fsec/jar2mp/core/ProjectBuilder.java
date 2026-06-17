@@ -36,6 +36,7 @@ public class ProjectBuilder {
     private final StandaloneByteExactPackageHelperWriter byteExactPackageHelperWriter;
     private final StandalonePackageRecordRestoreHelperWriter packageRecordRestoreHelperWriter;
     private final NestedClassSourceMerger nestedClassSourceMerger;
+    private final ReadableSourceRetainer readableSourceRetainer;
 
     public interface ProgressCallback {
         void onProgress(String message, int percent);
@@ -54,6 +55,7 @@ public class ProjectBuilder {
         this.byteExactPackageHelperWriter = new StandaloneByteExactPackageHelperWriter();
         this.packageRecordRestoreHelperWriter = new StandalonePackageRecordRestoreHelperWriter();
         this.nestedClassSourceMerger = new NestedClassSourceMerger();
+        this.readableSourceRetainer = new ReadableSourceRetainer();
     }
 
     public void build(File jarFile, JarAnalysisResult analysis, String pomXml,
@@ -268,6 +270,8 @@ public class ProjectBuilder {
                         decompileFindings.add(finding);
                         continue;
                     }
+                    retainReadableSource(outputDir, classPath, mergeResult.getSource(),
+                            unresolvedInnerFallbackReason(mergeResult), "cfr-context");
                 }
 
                 try (InputStream is = jf.getInputStream(entry)) {
@@ -306,6 +310,9 @@ public class ProjectBuilder {
                                         "decompiled outer source references inner classes that are not declared",
                                         "Decompiled source was skipped because javac cannot resolve retained inner "
                                                 + "classes as members of the source type.");
+                                retainReadableSource(outputDir, classPath, mergeResult.getSource(),
+                                        unresolvedInnerFallbackReason(mergeResult),
+                                        decompileResult.getSelectedEngine());
                                 retainRawClassForFallback(bytes, classPath, targetOriginalClasses,
                                         srcMainResources, outputDir, finding, compilerFallbackJarEntries, false,
                                         entry.getTime());
@@ -676,6 +683,26 @@ public class ProjectBuilder {
             return "";
         }
         return "; merged-inner-source=" + mergeResult.getMergedClassPaths().size();
+    }
+
+    private String unresolvedInnerFallbackReason(NestedClassSourceMerger.MergeResult mergeResult) {
+        if (mergeResult == null || mergeResult.getUnresolvedClassPaths().isEmpty()) {
+            return "decompiled outer source references inner classes that are not declared";
+        }
+        return "decompiled outer source references unresolved inner classes: "
+                + String.join(", ", mergeResult.getUnresolvedClassPaths());
+    }
+
+    private void retainReadableSource(File outputDir,
+                                      String classPath,
+                                      String sourceText,
+                                      String fallbackReason,
+                                      String engineName) {
+        try {
+            readableSourceRetainer.retain(outputDir, classPath, sourceText, fallbackReason, engineName, classPath);
+        } catch (IOException ignored) {
+            // Raw-bytecode fallback remains the source of truth if readable-source retention fails.
+        }
     }
 
     private String safeEngineSummary(String engineSummary) {

@@ -81,6 +81,7 @@ public class CliOptions {
         System.out.println("  每个项目会生成 restoration-score.md 和 gap-summary.md。");
         System.out.println("  启用 --verify-build 后额外生成 verification-report.md 和 verification-errors.md。");
         System.out.println("  启用 --verify-build 且构建成功后额外生成 source-rebuild-fidelity-report.md，比较 target/classes 与原始应用 class 字节。");
+        System.out.println("  原始 .class 退回路径的可读源码会写入 decompiled-readable/，该目录不参与 Maven 编译。");
         System.out.println("  启用 --trace-runtime 后额外生成 runtime-trace-report.md。");
         System.out.println("  启用 --emit-raw-artifact 后额外生成 target/raw-artifact/artifact-fidelity-summary.csv。");
         System.out.println("  启用 --byte-exact-package 后，生成项目会跳过 package-transforming 插件，并在 Maven package 执行 standalone record-level ZIP 修复。");

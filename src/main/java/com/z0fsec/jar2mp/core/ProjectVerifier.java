@@ -32,6 +32,7 @@ public class ProjectVerifier implements BuildVerifier {
     private static final String DEFAULT_LOMBOK_VERSION = "1.18.34";
     private final VerificationErrorParser errorParser = new VerificationErrorParser();
     private final VineflowerDecompiler vineflowerDecompiler;
+    private final ReadableSourceRetainer readableSourceRetainer = new ReadableSourceRetainer();
 
     public ProjectVerifier() {
         this(new VineflowerDecompiler());
@@ -81,6 +82,7 @@ public class ProjectVerifier implements BuildVerifier {
             }
         }
         result.getCompileFallbackClassPaths().addAll(compileFallbacks);
+        retainReadableSourcesForCompileFallbacks(projectDir, compileFallbacks);
         return result;
     }
 
@@ -265,6 +267,72 @@ public class ProjectVerifier implements BuildVerifier {
             recovered.addAll(recoverVineflowerFallbackSources(projectPath, remaining, classpath));
         }
         return recovered;
+    }
+
+    private void retainReadableSourcesForCompileFallbacks(File projectDir, Set<String> compileFallbacks) {
+        if (projectDir == null || compileFallbacks == null || compileFallbacks.isEmpty()) {
+            return;
+        }
+        Path projectPath = projectDir.toPath().toAbsolutePath().normalize();
+        Path cfrRoot = projectPath.resolve("target/fallback-sources").normalize();
+        Path vineflowerRoot = projectPath.resolve("target/vineflower-fallback-sources").normalize();
+        for (String classPath : compileFallbacks) {
+            RetainedReadableSource source = bestReadableSource(cfrRoot, vineflowerRoot, classPath);
+            if (source == null) {
+                continue;
+            }
+            try {
+                readableSourceRetainer.retain(
+                        projectDir,
+                        classPath,
+                        source.sourceText,
+                        "source could not be recompiled (type-inference/compile failure)",
+                        source.engineName,
+                        classPath);
+            } catch (IOException ignored) {
+                // Raw-bytecode fallback remains the source of truth if readable-source retention fails.
+            }
+        }
+    }
+
+    private RetainedReadableSource bestReadableSource(Path cfrRoot, Path vineflowerRoot, String classPath) {
+        RetainedReadableSource cfrSource = readRetainedSource(cfrRoot, classPath, "cfr");
+        RetainedReadableSource vineflowerSource = readRetainedSource(vineflowerRoot, classPath, "vineflower");
+        if (cfrSource == null) {
+            return vineflowerSource;
+        }
+        if (vineflowerSource == null) {
+            return cfrSource;
+        }
+        return vineflowerSource.score >= cfrSource.score ? vineflowerSource : cfrSource;
+    }
+
+    private RetainedReadableSource readRetainedSource(Path root, String classPath, String engineName) {
+        Path source = retainedSourceForClassPath(root, classPath);
+        if (source == null || !Files.isRegularFile(source)) {
+            return null;
+        }
+        try {
+            String sourceText = new String(Files.readAllBytes(source), java.nio.charset.StandardCharsets.UTF_8);
+            if (sourceText.trim().isEmpty()) {
+                return null;
+            }
+            return new RetainedReadableSource(engineName, sourceText, DecompilerEngine.scoreSource(sourceText));
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static final class RetainedReadableSource {
+        private final String engineName;
+        private final String sourceText;
+        private final int score;
+
+        private RetainedReadableSource(String engineName, String sourceText, int score) {
+            this.engineName = engineName;
+            this.sourceText = sourceText;
+            this.score = score;
+        }
     }
 
     private Set<String> recoverVineflowerFallbackSources(Path projectPath, Set<String> compileFallbacks,
