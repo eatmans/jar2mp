@@ -149,25 +149,109 @@ JAVA
   printf '%s\n' "${dir}/target/plain-maven-jar-1.0.0.jar"
 }
 
-main() {
-  rm -rf "${WORK_DIR}"
-  mkdir -p "${SOURCES_DIR}" "${RESTORE_DIR}" "${REPORT_DIR}"
+# Builds a JAR with lambda expressions and a string switch compiled with -g:none
+# (no LineNumberTable or LocalVariableTable). Decompiling then recompiling such
+# a class always produces different bytes because javac adds debug tables by
+# default, so BytecodeBackfiller and ZipRecordOrderRestorer are guaranteed to
+# exercise the "class bytes differ" restoration path.
+create_lambda_switch_jar() {
+  local dir="${SOURCES_DIR}/lambda-switch-jar"
+  rm -rf "${dir}"
+  mkdir -p "${dir}/src/main/java/com/example/lambdaswitch"
+  write_file "${dir}/pom.xml" <<XML
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example.regression</groupId>
+    <artifactId>lambda-switch-jar</artifactId>
+    <version>1.0.0</version>
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- -g:none strips all debug tables; recompilation always adds them back,
+                         guaranteeing different_class_bytes > 0 after the decompile step. -->
+                    <compilerArgs>
+                        <arg>-g:none</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+$(jar_plugin_with_main "com.example.lambdaswitch.LambdaSwitchMain")
+        </plugins>
+    </build>
+</project>
+XML
+  write_file "${dir}/src/main/java/com/example/lambdaswitch/LambdaSwitchMain.java" <<'JAVA'
+package com.example.lambdaswitch;
 
-  log "Building jar2mp fat CLI"
-  (cd "${ROOT_DIR}" && "${MVN}" -q -DskipTests package)
-  [[ -f "${JAR2MP_JAR}" ]] || fail "fat CLI jar missing: ${JAR2MP_JAR}"
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 
-  log "Generating clean plain Maven sample"
-  local sample_jar
-  sample_jar="$(create_plain_maven_jar)"
-  [[ -f "${sample_jar}" ]] || fail "sample jar missing: ${sample_jar}"
+public class LambdaSwitchMain {
 
-  local output_base="${RESTORE_DIR}/plain-maven-jar"
-  local cli_log="${REPORT_DIR}/plain-maven-jar.cli.log"
+    public static void main(String[] args) {
+        List<String> words = Arrays.asList("alpha", "beta", "gamma", "delta", "epsilon");
+        String prefix = "result-";
+
+        // Capturing lambda + method reference: both use invokedynamic in the class file.
+        List<String> tagged = words.stream()
+                .filter(w -> w.length() >= 5)
+                .map(String::toUpperCase)
+                .map(s -> prefix + s)
+                .collect(Collectors.toList());
+
+        for (String item : tagged) {
+            System.out.println(classify(item));
+        }
+    }
+
+    private static String classify(String word) {
+        // String switch compiles to a hashCode-based lookupswitch.
+        switch (word) {
+            case "result-ALPHA":   return "greek-1";
+            case "result-GAMMA":   return "greek-3";
+            case "result-DELTA":   return "greek-4";
+            case "result-EPSILON": return "greek-5";
+            default:               return "greek-other";
+        }
+    }
+}
+JAVA
+  run_maven "${dir}"
+  printf '%s\n' "${dir}/target/lambda-switch-jar-1.0.0.jar"
+}
+
+# Runs the fat CLI in --byte-exact-package mode against a single sample and
+# asserts byte-level fidelity.
+#
+# Parameters:
+#   $1  sample_name            - used for log messages and directory names
+#   $2  sample_jar             - path to the input JAR (original)
+#   $3  packaged_jar_name      - filename of the artifact Maven produces, e.g. "plain-maven-jar-1.0.0.jar"
+#   $4  assert_zip_restored    - "true" to require that target/byte-exact-package-restored/ was
+#                                created, proving ZipRecordOrderRestorer ran for a sample whose
+#                                class bytes are known to differ after the decompile step
+run_byte_exact_test() {
+  local sample_name="$1"
+  local sample_jar="$2"
+  local packaged_jar_name="$3"
+  local assert_zip_restored="${4:-false}"
+
+  local output_base="${RESTORE_DIR}/${sample_name}"
+  local cli_log="${REPORT_DIR}/${sample_name}.cli.log"
   rm -rf "${output_base}"
   mkdir -p "${output_base}"
 
-  log "Running real CLI with --byte-exact-package"
+  log "[${sample_name}] running CLI with --byte-exact-package"
   set +e
   java -jar "${JAR2MP_JAR}" \
     --verbose \
@@ -181,47 +265,95 @@ main() {
   set -e
   [[ "${cli_exit}" -eq 0 ]] || {
     tail -n 40 "${cli_log}" >&2 || true
-    fail "CLI exited ${cli_exit}"
+    fail "[${sample_name}] CLI exited ${cli_exit}"
   }
 
   local project_dir
   project_dir="$(find "${output_base}" -mindepth 1 -maxdepth 1 -type d | sort | head -n 1 || true)"
-  [[ -n "${project_dir}" && -d "${project_dir}" ]] || fail "generated project directory not found under ${output_base}"
+  [[ -n "${project_dir}" && -d "${project_dir}" ]] || \
+    fail "[${sample_name}] generated project directory not found under ${output_base}"
+
+  # For samples where decompiled class bytes are known to differ, assert that
+  # ZipRecordOrderRestorer ran (its output directory is created unconditionally
+  # before writing the restored artifact).
+  if [[ "${assert_zip_restored}" == "true" ]]; then
+    local zip_restored_dir="${project_dir}/target/byte-exact-package-restored"
+    [[ -d "${zip_restored_dir}" ]] || \
+      fail "[${sample_name}] target/byte-exact-package-restored/ missing - ZipRecordOrderRestorer was expected to run because original class bytes necessarily differ (compiled with -g:none)"
+    log "[${sample_name}] ZipRecordOrderRestorer ran (target/byte-exact-package-restored/ exists)"
+  fi
 
   local package_check_dir="${project_dir}/target/byte-exact-package-check"
   local summary_csv="${package_check_dir}/artifact-fidelity-summary.csv"
   local report_md="${package_check_dir}/artifact-fidelity-report.md"
-  [[ -d "${package_check_dir}" ]] || fail "byte-exact report directory missing: ${package_check_dir}"
-  [[ -f "${summary_csv}" ]] || fail "byte-exact summary CSV missing: ${summary_csv}"
+  [[ -d "${package_check_dir}" ]] || \
+    fail "[${sample_name}] byte-exact report directory missing: ${package_check_dir}"
+  [[ -f "${summary_csv}" ]] || \
+    fail "[${sample_name}] byte-exact summary CSV missing: ${summary_csv}"
 
   local exact_match
   local archive_bytes_same
   exact_match="$(csv_value "${summary_csv}" "exact_match")"
   archive_bytes_same="$(csv_value "${summary_csv}" "archive_bytes_same")"
-  [[ "${exact_match}" == "true" ]] || fail "artifact-fidelity exact_match=${exact_match:-missing}"
-  [[ "${archive_bytes_same}" == "true" ]] || fail "artifact-fidelity archive_bytes_same=${archive_bytes_same:-missing}"
+  [[ "${exact_match}" == "true" ]] || \
+    fail "[${sample_name}] artifact-fidelity exact_match=${exact_match:-missing}"
+  [[ "${archive_bytes_same}" == "true" ]] || \
+    fail "[${sample_name}] artifact-fidelity archive_bytes_same=${archive_bytes_same:-missing}"
 
-  local packaged_artifact="${project_dir}/target/plain-maven-jar-1.0.0.jar"
-  [[ -f "${packaged_artifact}" ]] || fail "packaged artifact missing: ${packaged_artifact}"
+  local packaged_artifact="${project_dir}/target/${packaged_jar_name}"
+  [[ -f "${packaged_artifact}" ]] || \
+    fail "[${sample_name}] packaged artifact missing: ${packaged_artifact}"
 
   local original_sha
   local packaged_sha
   original_sha="$(sha256_file "${sample_jar}")"
   packaged_sha="$(sha256_file "${packaged_artifact}")"
-  [[ "${original_sha}" == "${packaged_sha}" ]] || fail "SHA-256 mismatch: original=${original_sha} packaged=${packaged_sha}"
+  [[ "${original_sha}" == "${packaged_sha}" ]] || \
+    fail "[${sample_name}] SHA-256 mismatch: original=${original_sha} packaged=${packaged_sha}"
 
-  log "CLI log tail (${cli_log})"
-  tail -n 30 "${cli_log}"
-  log "Byte-exact summary (${summary_csv})"
+  log "[${sample_name}] CLI log tail (${cli_log})"
+  tail -n 20 "${cli_log}"
+  log "[${sample_name}] byte-exact summary (${summary_csv})"
   cat "${summary_csv}"
   if [[ -f "${report_md}" ]]; then
-    log "Report key lines (${report_md})"
+    log "[${sample_name}] report key lines (${report_md})"
     grep -E 'Exact match|Archive bytes same|Original archive SHA-256|Rebuilt archive SHA-256' "${report_md}" || true
   fi
-  log "SHA-256 original ${sample_jar}: ${original_sha}"
-  log "SHA-256 packaged ${packaged_artifact}: ${packaged_sha}"
-  log "Generated project: ${project_dir}"
-  log "PASS byte-exact package regression"
+  log "[${sample_name}] SHA-256 original  ${sample_jar}: ${original_sha}"
+  log "[${sample_name}] SHA-256 packaged  ${packaged_artifact}: ${packaged_sha}"
+  log "[${sample_name}] generated project: ${project_dir}"
+  log "[${sample_name}] PASS byte-exact package"
+}
+
+main() {
+  rm -rf "${WORK_DIR}"
+  mkdir -p "${SOURCES_DIR}" "${RESTORE_DIR}" "${REPORT_DIR}"
+
+  log "Building jar2mp fat CLI"
+  (cd "${ROOT_DIR}" && "${MVN}" -q -DskipTests package)
+  [[ -f "${JAR2MP_JAR}" ]] || fail "fat CLI jar missing: ${JAR2MP_JAR}"
+
+  # --- Sample 1/2: plain-maven-jar ---
+  # Baseline: source recompile produces class bytes identical to the original.
+  # Exercises the happy path where no record-level restoration is needed.
+  log "=== Sample 1/2: plain-maven-jar ==="
+  local plain_jar
+  plain_jar="$(create_plain_maven_jar)"
+  [[ -f "${plain_jar}" ]] || fail "plain-maven-jar sample missing: ${plain_jar}"
+  run_byte_exact_test "plain-maven-jar" "${plain_jar}" "plain-maven-jar-1.0.0.jar" "false"
+
+  # --- Sample 2/2: lambda-switch-jar ---
+  # Difference scenario: compiled with -g:none so decompile always yields class
+  # bytes that differ from the original (recompile adds LineNumberTable /
+  # LocalVariableTable). Exercises BytecodeBackfiller and ZipRecordOrderRestorer
+  # and asserts that --byte-exact-package still produces a byte-identical artifact.
+  log "=== Sample 2/2: lambda-switch-jar ==="
+  local lambda_switch_jar
+  lambda_switch_jar="$(create_lambda_switch_jar)"
+  [[ -f "${lambda_switch_jar}" ]] || fail "lambda-switch-jar sample missing: ${lambda_switch_jar}"
+  run_byte_exact_test "lambda-switch-jar" "${lambda_switch_jar}" "lambda-switch-jar-1.0.0.jar" "true"
+
+  log "PASS byte-exact package regression (2/2 samples)"
 }
 
 main "$@"

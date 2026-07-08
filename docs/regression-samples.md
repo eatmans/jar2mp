@@ -54,7 +54,12 @@ Do not commit the generated artifacts or reports. Commit the script and this doc
 
 ## Byte-exact CLI Package Gate
 
-`scripts/regression/run-byte-exact-regression.sh` is a focused end-to-end gate for strict byte-level package restoration. It builds the jar2mp fat CLI, generates a clean plain Maven JAR locally, runs the real CLI with `--byte-exact-package --verify-build --verify-goal package`, and fails unless the generated package is byte-for-byte identical to the original sample.
+`scripts/regression/run-byte-exact-regression.sh` is a focused end-to-end gate for strict byte-level package restoration. It builds the jar2mp fat CLI, generates two local Maven JARs covering both the identical-bytes scenario and the bytes-differ scenario, runs the real CLI with `--byte-exact-package --verify-build --verify-goal package` against each, and fails unless every generated package is byte-for-byte identical to the original sample.
+
+| Sample | Compile flags | Scenario |
+| --- | --- | --- |
+| `plain-maven-jar` | default (`-g`) | Baseline: decompile and recompile produce class bytes identical to the original. |
+| `lambda-switch-jar` | `-g:none` | Bytes-differ: capturing lambda, method reference, and string switch compiled without debug tables; recompiled class bytes always differ from the original, exercising `BytecodeBackfiller` and `ZipRecordOrderRestorer`. |
 
 Run:
 
@@ -64,12 +69,12 @@ Run:
 
 The script writes:
 
-- `target/byte-exact-regression/report/plain-maven-jar.cli.log`
-- generated source project under `target/byte-exact-regression/sources/`
-- restored jar2mp project under `target/byte-exact-regression/restored/`
-- byte-exact package reports under the restored project's `target/byte-exact-package-check/`
+- `target/byte-exact-regression/report/<sample>.cli.log`
+- generated source projects under `target/byte-exact-regression/sources/`
+- restored jar2mp projects under `target/byte-exact-regression/restored/`
+- byte-exact package reports under each restored project's `target/byte-exact-package-check/`
 
-The gate requires CLI exit code `0`, `artifact-fidelity-summary.csv` values `exact_match=true` and `archive_bytes_same=true`, and equal SHA-256 values for the original sample JAR and final packaged JAR. Any mismatch exits non-zero.
+For each sample the gate requires CLI exit code `0`, `artifact-fidelity-summary.csv` values `exact_match=true` and `archive_bytes_same=true`, and equal SHA-256 values for the original sample JAR and final packaged JAR. For `lambda-switch-jar` the gate additionally requires `target/byte-exact-package-restored/` to exist inside the generated project, confirming that `ZipRecordOrderRestorer` ran after detecting class-byte differences. Any assertion failure exits non-zero.
 
 ## GitHub Release Assets
 
