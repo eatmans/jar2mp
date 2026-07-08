@@ -11,6 +11,7 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.io.*;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 public class AnalysisPanel extends BasePanel {
@@ -85,6 +86,7 @@ public class AnalysisPanel extends BasePanel {
         summaryModel.addRow(new Object[]{"检测到 ArtifactId", result.getDetectedArtifactId()});
         summaryModel.addRow(new Object[]{"检测到 Version", result.getDetectedVersion()});
         summaryModel.addRow(new Object[]{"检测到依赖数", result.getDetectedDependencies().size()});
+        addBuildAndRuntimeSummary(result);
 
         // Manifest
         if (result.getManifestInfo() != null) {
@@ -104,6 +106,166 @@ public class AnalysisPanel extends BasePanel {
         }
 
         appendSuccess("分析结果已加载");
+    }
+
+    private void addBuildAndRuntimeSummary(JarAnalysisResult result) {
+        VerificationResult verification = result.getVerificationResult();
+        if (verification != null) {
+            summaryModel.addRow(new Object[]{"构建验证", buildVerificationText(verification)});
+            summaryModel.addRow(new Object[]{"构建错误数", verification.getErrors().size()});
+            summaryModel.addRow(new Object[]{"编译回退类数", verification.getCompileFallbackClassPaths().size()});
+        }
+        SourceRebuildFidelityResult sourceRebuildFidelity = result.getSourceRebuildFidelity();
+        if (sourceRebuildFidelity != null) {
+            summaryModel.addRow(new Object[]{"源码重编译 class 字节",
+                    sourceRebuildFidelityText(sourceRebuildFidelity)});
+        }
+        ArtifactFidelityResult packageFidelity = result.getPackageFidelity();
+        if (packageFidelity != null) {
+            summaryModel.addRow(new Object[]{"字节级 package 保真", packageFidelityText(packageFidelity)});
+        }
+        if (!result.getMetadataWarnings().isEmpty()) {
+            summaryModel.addRow(new Object[]{"元数据解析警告", result.getMetadataWarnings().size()
+                    + " 条: " + result.getMetadataWarnings().get(0)
+                    + (result.getMetadataWarnings().size() > 1 ? " ..." : "")});
+        }
+        summaryModel.addRow(new Object[]{"反编译失败数", result.getDecompileFindings().size()});
+        summaryModel.addRow(new Object[]{"保留原始 class 数", retainedClassCount(result.getDecompileFindings())});
+
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = result.getRuntimeSmokeResult();
+        if (smokeResult != null) {
+            summaryModel.addRow(new Object[]{"运行状态", runtimeStatusText(smokeResult)});
+            String failureMessage = trimToNull(smokeResult.getFailureMessage());
+            if (failureMessage != null) {
+                summaryModel.addRow(new Object[]{"运行失败信息", failureMessage});
+            }
+            String failureCause = firstCausedBy(smokeResult.getStdout());
+            if (failureCause == null) {
+                failureCause = firstCausedBy(smokeResult.getStderr());
+            }
+            if (failureCause != null) {
+                summaryModel.addRow(new Object[]{"运行失败原因", failureCause});
+            }
+        }
+
+        RestorationScore score = result.getRestorationScore();
+        if (score != null) {
+            summaryModel.addRow(new Object[]{"恢复评分", restorationScoreText(score)});
+            String gapSummary = gapSummaryText(score, true);
+            if (!gapSummary.isEmpty()) {
+                summaryModel.addRow(new Object[]{"剩余缺口", gapSummary});
+            }
+            String observationSummary = gapSummaryText(score, false);
+            if (!observationSummary.isEmpty()) {
+                summaryModel.addRow(new Object[]{"环境观察", observationSummary});
+            }
+        }
+    }
+
+    private int retainedClassCount(List<DecompileFinding> findings) {
+        int count = 0;
+        for (DecompileFinding finding : findings) {
+            if (finding != null && finding.hasRetainedClassPath()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private String buildVerificationText(VerificationResult verification) {
+        String failureType = safeValue(verification.getFailureType(), "UNKNOWN");
+        String status = verification.getExitCode() == 0 && "NONE".equals(failureType)
+                ? "BUILD SUCCESS"
+                : "BUILD FAILED";
+        return status + " (" + failureType + ", exit " + verification.getExitCode() + ")";
+    }
+
+    private String sourceRebuildFidelityText(SourceRebuildFidelityResult result) {
+        return "exact=" + result.isSourceRecompiledClassBytesSame()
+                + ", same=" + result.getSameClassBytes() + "/" + result.getOriginalAppClasses()
+                + ", different=" + result.getDifferentClassBytes()
+                + ", missing=" + result.getMissingRecompiledClasses()
+                + ", extra=" + result.getExtraRecompiledClasses()
+                + ", fallback=" + result.getCompileFallbackClasses();
+    }
+
+    private String packageFidelityText(ArtifactFidelityResult result) {
+        return "exact=" + result.isExactMatch()
+                + ", content=" + result.isContentEntriesMatch()
+                + ", classSame=" + result.getSameClassBytes()
+                + ", classDiff=" + result.getDifferentClassBytes()
+                + ", nestedDiff=" + result.getDifferentNestedLibs()
+                + ", order=" + result.isArchiveEntryOrderSame()
+                + ", metadataDiff=" + result.getArchiveMetadataDiffEntries();
+    }
+
+    private String runtimeStatusText(RuntimeSmokeRunner.SmokeRunResult smokeResult) {
+        String status = safeValue(smokeResult.getRunStatus(), "UNKNOWN");
+        int eventCount = smokeResult.getTraceResult() == null ? 0 : smokeResult.getTraceResult().getEvents().size();
+        return status + " (events=" + eventCount + ")";
+    }
+
+    private String firstCausedBy(String content) {
+        if (content == null || content.trim().isEmpty()) {
+            return null;
+        }
+        String[] lines = content.split("\\R");
+        for (String line : lines) {
+            String value = trimToNull(line);
+            if (value == null || !value.startsWith("Caused by:")) {
+                continue;
+            }
+            return trimToNull(value.substring("Caused by:".length()));
+        }
+        return null;
+    }
+
+    private String restorationScoreText(RestorationScore score) {
+        return score.getOverall() + "/100 (source=" + bucket(score, "source")
+                + ", resource=" + bucket(score, "resource")
+                + ", runtime=" + bucket(score, "runtime")
+                + ", verification=" + bucket(score, "verification") + ")";
+    }
+
+    private int bucket(RestorationScore score, String name) {
+        Map<String, Integer> breakdown = score.getBreakdown();
+        Integer value = breakdown.get(name);
+        return value == null ? 0 : value.intValue();
+    }
+
+    private String gapSummaryText(RestorationScore score, boolean positiveImpact) {
+        StringBuilder summary = new StringBuilder();
+        for (RestorationScore.GapItem gap : score.getGaps()) {
+            if (gap == null) {
+                continue;
+            }
+            if ((gap.getImpact() > 0) != positiveImpact) {
+                continue;
+            }
+            if (summary.length() > 0) {
+                summary.append("; ");
+            }
+            summary.append(safeValue(gap.getCategory(), "unknown"))
+                    .append("=")
+                    .append(gap.getImpact());
+        }
+        return summary.toString();
+    }
+
+    private String safeValue(String value, String fallback) {
+        String trimmed = trimToNull(value);
+        if (trimmed == null) {
+            return fallback;
+        }
+        return trimmed;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     public void clearData() {

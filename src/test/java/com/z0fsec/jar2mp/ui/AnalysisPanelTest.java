@@ -1,0 +1,124 @@
+package com.z0fsec.jar2mp.ui;
+
+import com.z0fsec.jar2mp.core.RuntimeSmokeRunner;
+import com.z0fsec.jar2mp.core.RuntimeTraceEvent;
+import com.z0fsec.jar2mp.core.RuntimeTraceResult;
+import com.z0fsec.jar2mp.model.ArtifactFidelityResult;
+import com.z0fsec.jar2mp.model.DecompileFinding;
+import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.SourceRebuildFidelityResult;
+import com.z0fsec.jar2mp.model.VerificationError;
+import com.z0fsec.jar2mp.model.VerificationResult;
+import org.junit.jupiter.api.Test;
+
+import javax.swing.JTable;
+import javax.swing.table.TableModel;
+import java.io.File;
+import java.lang.reflect.Field;
+import java.util.Arrays;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+
+class AnalysisPanelTest {
+
+    @Test
+    void updateAnalysisShowsBuildRuntimeAndRestorationGates() throws Exception {
+        AnalysisPanel panel = new AnalysisPanel(message -> { });
+        JarAnalysisResult result = new JarAnalysisResult();
+        result.setSourceFile(new File("sample.jar"));
+        result.setDetectedGroupId("demo");
+        result.setDetectedArtifactId("sample");
+        result.setDetectedVersion("1.0");
+
+        VerificationResult verification = new VerificationResult();
+        verification.setFailureType("NONE");
+        verification.setExitCode(0);
+        verification.getErrors().add(new VerificationError());
+        verification.getCompileFallbackClassPaths().add("demo/Broken.class");
+        result.setVerificationResult(verification);
+        SourceRebuildFidelityResult sourceRebuildFidelity = new SourceRebuildFidelityResult();
+        sourceRebuildFidelity.setOriginalAppClasses(2);
+        sourceRebuildFidelity.setRecompiledClasses(2);
+        sourceRebuildFidelity.setCommonClasses(2);
+        sourceRebuildFidelity.setSameClassBytes(2);
+        result.setSourceRebuildFidelity(sourceRebuildFidelity);
+        ArtifactFidelityResult packageFidelity = new ArtifactFidelityResult();
+        packageFidelity.setArchiveBytesSame(true);
+        packageFidelity.setSameClassBytes(3);
+        packageFidelity.setDifferentClassBytes(0);
+        packageFidelity.setSameNestedLibs(2);
+        packageFidelity.setDifferentNestedLibs(0);
+        packageFidelity.setArchiveEntryOrderSame(true);
+        packageFidelity.setArchiveMetadataDiffEntries(0);
+        result.setPackageFidelity(packageFidelity);
+        result.getDecompileFindings().add(new DecompileFinding("demo/Broken.class",
+                "src/main/original-classes/demo/Broken.class", "syntax recovery failed"));
+        result.getDecompileFindings().add(new DecompileFinding("demo/Plain.class",
+                null, "decompiler failed"));
+
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.App", "main", "startup", "main",
+                        Arrays.asList("demo.App.main")),
+                new RuntimeTraceEvent("resource", "demo.App", "getResource", "application.yml", "main",
+                        Arrays.asList("demo.App.main"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setStdout("APPLICATION FAILED TO START\n"
+                + "Caused by: org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379\n");
+        smokeResult.setTraceResult(traceResult);
+        result.setRuntimeSmokeResult(smokeResult);
+        result.setRuntimeTraceResult(traceResult);
+
+        RestorationScore score = new RestorationScore();
+        score.setOverall(100);
+        score.putBucket("source", 100);
+        score.putBucket("resource", 100);
+        score.putBucket("runtime", 100);
+        score.putBucket("verification", 100);
+        score.addGap("runtime_environment", "Runtime startup failure was detected before non-zero exit.", 0);
+        result.setRestorationScore(score);
+
+        panel.updateAnalysis(result);
+
+        TableModel model = summaryTable(panel).getModel();
+        assertEquals("100/100 (source=100, resource=100, runtime=100, verification=100)",
+                valueFor(model, "恢复评分"));
+        assertEquals("BUILD SUCCESS (NONE, exit 0)", valueFor(model, "构建验证"));
+        assertEquals("1", valueFor(model, "构建错误数"));
+        assertEquals("1", valueFor(model, "编译回退类数"));
+        assertEquals("exact=true, same=2/2, different=0, missing=0, extra=0, fallback=0",
+                valueFor(model, "源码重编译 class 字节"));
+        assertEquals("exact=true, content=true, classSame=3, classDiff=0, nestedDiff=0, order=true, metadataDiff=0",
+                valueFor(model, "字节级 package 保真"));
+        assertEquals("2", valueFor(model, "反编译失败数"));
+        assertEquals("1", valueFor(model, "保留原始 class 数"));
+        assertEquals("STARTUP_FAILED_EXIT (events=2)", valueFor(model, "运行状态"));
+        assertEquals("Runtime startup failure was detected before non-zero exit.",
+                valueFor(model, "运行失败信息"));
+        assertEquals("org.redisson.client.RedisConnectionException: "
+                        + "Unable to connect to Redis server: localhost/127.0.0.1:6379",
+                valueFor(model, "运行失败原因"));
+        assertNull(valueFor(model, "剩余缺口"));
+        assertEquals("runtime_environment=0", valueFor(model, "环境观察"));
+    }
+
+    private JTable summaryTable(AnalysisPanel panel) throws Exception {
+        Field field = AnalysisPanel.class.getDeclaredField("summaryTable");
+        field.setAccessible(true);
+        return (JTable) field.get(panel);
+    }
+
+    private String valueFor(TableModel model, String key) {
+        for (int row = 0; row < model.getRowCount(); row++) {
+            if (key.equals(model.getValueAt(row, 0))) {
+                return String.valueOf(model.getValueAt(row, 1));
+            }
+        }
+        return null;
+    }
+}

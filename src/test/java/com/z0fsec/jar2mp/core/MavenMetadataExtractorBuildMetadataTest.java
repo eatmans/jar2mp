@@ -1,0 +1,215 @@
+package com.z0fsec.jar2mp.core;
+
+import com.z0fsec.jar2mp.model.BuildPluginInfo;
+import com.z0fsec.jar2mp.model.MavenDependency;
+import com.z0fsec.jar2mp.model.PomInfo;
+import com.z0fsec.jar2mp.model.RepositoryInfo;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+import java.util.jar.JarOutputStream;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class MavenMetadataExtractorBuildMetadataTest {
+
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void extractsBuildMetadataFromEmbeddedPomXml() throws Exception {
+        Path jar = tempDir.resolve("demo.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new JarEntry("META-INF/maven/com.example/demo/pom.xml"));
+            out.write(embeddedPom().getBytes(StandardCharsets.UTF_8));
+            out.closeEntry();
+        }
+
+        PomInfo info;
+        try (JarFile jarFile = new JarFile(jar.toFile())) {
+            info = new MavenMetadataExtractor().extract(jarFile);
+        }
+
+        assertEquals("com.example", info.getGroupId());
+        assertEquals("demo", info.getArtifactId());
+        assertEquals("1.0.0", info.getVersion());
+        assertEquals("org.springframework.boot", info.getParentGroupId());
+        assertEquals("spring-boot-starter-parent", info.getParentArtifactId());
+        assertEquals("2.7.18", info.getParentVersion());
+        assertEquals("../parent/pom.xml", info.getParentRelativePath());
+        assertEquals("17", info.getProperties().get("java.version"));
+        assertEquals("true", info.getProperties().get("skipTests"));
+
+        MavenDependency managed = info.getDependencyManagement().get(0);
+        assertEquals("com.acme", managed.getGroupId());
+        assertEquals("platform-bom", managed.getArtifactId());
+        assertEquals("1.2.3", managed.getVersion());
+        assertEquals("import", managed.getScope());
+        assertEquals("pom", managed.getType());
+
+        RepositoryInfo repository = info.getRepositories().get(0);
+        assertEquals("internal", repository.getId());
+        assertEquals("https://repo.example.local/maven", repository.getUrl());
+        assertTrue(repository.getReleasesXml().contains("<enabled>true</enabled>"));
+
+        RepositoryInfo pluginRepository = info.getPluginRepositories().get(0);
+        assertEquals("plugin-internal", pluginRepository.getId());
+        assertEquals("https://repo.example.local/plugins", pluginRepository.getUrl());
+
+        BuildPluginInfo plugin = info.getBuildPlugins().get(0);
+        assertEquals("org.springframework.boot", plugin.getGroupId());
+        assertEquals("spring-boot-maven-plugin", plugin.getArtifactId());
+        assertEquals("2.7.18", plugin.getVersion());
+        assertTrue(plugin.getConfigurationXml().contains("<mainClass>com.example.DemoApplication</mainClass>"));
+        assertEquals(1, plugin.getExecutionsXml().size());
+        assertTrue(plugin.getExecutionsXml().get(0).contains("<goal>repackage</goal>"));
+
+        assertEquals(1, info.getProfilesXml().size());
+        assertTrue(info.getProfilesXml().get(0).contains("<id>prod</id>"));
+    }
+
+    @Test
+    void selectsApplicationMetadataFromFatJar() throws Exception {
+        Path jar = tempDir.resolve("factory-method-1.26.0-SNAPSHOT.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addText(out, "META-INF/maven/org.slf4j/slf4j-api/pom.properties",
+                    "groupId=org.slf4j\nartifactId=slf4j-api\nversion=2.0.17\n");
+            addText(out, "META-INF/maven/org.slf4j/slf4j-api/pom.xml",
+                    simplePom("org.slf4j", "slf4j-api", "2.0.17"));
+            addText(out, "META-INF/maven/com.iluwatar/factory-method/pom.properties",
+                    "groupId=com.iluwatar\nartifactId=factory-method\nversion=1.26.0-SNAPSHOT\n");
+            addText(out, "META-INF/maven/com.iluwatar/factory-method/pom.xml",
+                    simplePom("com.iluwatar", "factory-method", "1.26.0-SNAPSHOT"));
+            addClass(out, "org/slf4j/Logger.class");
+            addClass(out, "com/iluwatar/factory/method/App.class");
+        }
+
+        PomInfo info;
+        try (JarFile jarFile = new JarFile(jar.toFile())) {
+            info = new MavenMetadataExtractor().extract(jarFile);
+        }
+
+        assertEquals("com.iluwatar", info.getGroupId());
+        assertEquals("factory-method", info.getArtifactId());
+        assertEquals("1.26.0-SNAPSHOT", info.getVersion());
+    }
+
+    @Test
+    void extractsRelocatedSpringBootApplicationPomXml() throws Exception {
+        Path jar = tempDir.resolve("boot-app.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            addText(out, "BOOT-INF/classes/META-INF/maven/com.example/demo/pom.xml", embeddedPom());
+        }
+
+        PomInfo info;
+        try (JarFile jarFile = new JarFile(jar.toFile())) {
+            info = new MavenMetadataExtractor().extract(jarFile);
+        }
+
+        assertEquals("com.example", info.getGroupId());
+        assertEquals("demo", info.getArtifactId());
+        assertEquals("1.0.0", info.getVersion());
+        assertEquals("org.springframework.boot", info.getParentGroupId());
+        assertEquals("17", info.getProperties().get("java.version"));
+        assertEquals(1, info.getDependencyManagement().size());
+    }
+
+    private String embeddedPom() {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n" +
+                "  <modelVersion>4.0.0</modelVersion>\n" +
+                "  <parent>\n" +
+                "    <groupId>org.springframework.boot</groupId>\n" +
+                "    <artifactId>spring-boot-starter-parent</artifactId>\n" +
+                "    <version>2.7.18</version>\n" +
+                "    <relativePath>../parent/pom.xml</relativePath>\n" +
+                "  </parent>\n" +
+                "  <groupId>com.example</groupId>\n" +
+                "  <artifactId>demo</artifactId>\n" +
+                "  <version>1.0.0</version>\n" +
+                "  <properties>\n" +
+                "    <java.version>17</java.version>\n" +
+                "    <skipTests>true</skipTests>\n" +
+                "  </properties>\n" +
+                "  <dependencyManagement>\n" +
+                "    <dependencies>\n" +
+                "      <dependency>\n" +
+                "        <groupId>com.acme</groupId>\n" +
+                "        <artifactId>platform-bom</artifactId>\n" +
+                "        <version>1.2.3</version>\n" +
+                "        <type>pom</type>\n" +
+                "        <scope>import</scope>\n" +
+                "      </dependency>\n" +
+                "    </dependencies>\n" +
+                "  </dependencyManagement>\n" +
+                "  <repositories>\n" +
+                "    <repository>\n" +
+                "      <id>internal</id>\n" +
+                "      <url>https://repo.example.local/maven</url>\n" +
+                "      <releases><enabled>true</enabled></releases>\n" +
+                "    </repository>\n" +
+                "  </repositories>\n" +
+                "  <pluginRepositories>\n" +
+                "    <pluginRepository>\n" +
+                "      <id>plugin-internal</id>\n" +
+                "      <url>https://repo.example.local/plugins</url>\n" +
+                "    </pluginRepository>\n" +
+                "  </pluginRepositories>\n" +
+                "  <build>\n" +
+                "    <plugins>\n" +
+                "      <plugin>\n" +
+                "        <groupId>org.springframework.boot</groupId>\n" +
+                "        <artifactId>spring-boot-maven-plugin</artifactId>\n" +
+                "        <version>2.7.18</version>\n" +
+                "        <configuration>\n" +
+                "          <mainClass>com.example.DemoApplication</mainClass>\n" +
+                "        </configuration>\n" +
+                "        <executions>\n" +
+                "          <execution>\n" +
+                "            <goals><goal>repackage</goal></goals>\n" +
+                "          </execution>\n" +
+                "        </executions>\n" +
+                "      </plugin>\n" +
+                "    </plugins>\n" +
+                "  </build>\n" +
+                "  <profiles>\n" +
+                "    <profile>\n" +
+                "      <id>prod</id>\n" +
+                "      <properties><env>prod</env></properties>\n" +
+                "    </profile>\n" +
+                "  </profiles>\n" +
+                "</project>\n";
+    }
+
+    private String simplePom(String groupId, String artifactId, String version) {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n" +
+                "  <modelVersion>4.0.0</modelVersion>\n" +
+                "  <groupId>" + groupId + "</groupId>\n" +
+                "  <artifactId>" + artifactId + "</artifactId>\n" +
+                "  <version>" + version + "</version>\n" +
+                "</project>\n";
+    }
+
+    private void addText(JarOutputStream out, String name, String text) throws Exception {
+        out.putNextEntry(new JarEntry(name));
+        out.write(text.getBytes(StandardCharsets.UTF_8));
+        out.closeEntry();
+    }
+
+    private void addClass(JarOutputStream out, String name) throws Exception {
+        out.putNextEntry(new JarEntry(name));
+        out.write(new byte[] {
+                (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE,
+                0x00, 0x00, 0x00, 0x34,
+                0x00, 0x01
+        });
+        out.closeEntry();
+    }
+}

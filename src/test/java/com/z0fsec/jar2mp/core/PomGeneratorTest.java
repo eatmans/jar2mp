@@ -1,0 +1,1039 @@
+package com.z0fsec.jar2mp.core;
+
+import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.BuildPluginInfo;
+import com.z0fsec.jar2mp.model.ManifestInfo;
+import com.z0fsec.jar2mp.model.MavenDependency;
+import com.z0fsec.jar2mp.model.PomInfo;
+import com.z0fsec.jar2mp.model.ProjectConfig;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class PomGeneratorTest {
+
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void usesWarPackagingWhenConfigDoesNotOverrideDetectedWar() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<packaging>war</packaging>"));
+    }
+
+    @Test
+    void omitsJarPackagingWhenDetectedArtifactIsJar() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<packaging>"));
+    }
+
+    @Test
+    void usesDetectedJavaVersionWhenConfigDoesNotOverrideIt() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(17);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<maven.compiler.source>17</maven.compiler.source>"));
+        assertTrue(pomXml.contains("<maven.compiler.target>17</maven.compiler.target>"));
+    }
+
+    @Test
+    void usesManifestImplementationTitleAsProjectName() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("spring-petclinic");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(17);
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setImplementationTitle("petclinic");
+        analysis.setManifestInfo(manifestInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<name>petclinic</name>"));
+    }
+
+    @Test
+    void disablesAnnotationProcessingForRestoredCompilePom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<proc>none</proc>"));
+    }
+
+    @Test
+    void disablesGeneratedMavenDescriptorForJarPackages() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<artifactId>maven-jar-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));
+    }
+
+    @Test
+    void disablesGeneratedMavenDescriptorForWarPackages() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<artifactId>maven-war-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));
+    }
+
+    @Test
+    void regularWarPackagesOriginalNestedLibrariesFromCleanSafeSourceDirectory() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getResourceFiles().add("WEB-INF/lib/original-lib-1.0.0.jar");
+        analysis.getDetectedDependencies().add(new MavenDependency(
+                "com.example", "original-lib", "1.0.0", MavenDependency.Confidence.HIGH));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<scope>system</scope>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/WEB-INF/lib/original-lib-1.0.0.jar</systemPath>"));
+        assertTrue(pomXml.contains(
+                "<directory>${project.basedir}/src/main/original-libs/WEB-INF/lib</directory>"));
+        assertTrue(pomXml.contains("<targetPath>WEB-INF/lib</targetPath>"));
+    }
+
+    @Test
+    void springBootNestedLibrariesAreAddedAsLocalSystemDependencies() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("boot-app");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.getResourceFiles().add("BOOT-INF/lib/spring-context-6.1.14.jar");
+        analysis.getResourceFiles().add("BOOT-INF/lib/private-api-1.0-SNAPSHOT.jar");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<groupId>jar2mp.embedded</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>spring-context</artifactId>"));
+        assertTrue(pomXml.contains("<version>6.1.14</version>"));
+        assertTrue(pomXml.contains("<artifactId>private-api</artifactId>"));
+        assertTrue(pomXml.contains("<version>1.0-SNAPSHOT</version>"));
+        assertTrue(pomXml.contains("<scope>system</scope>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/spring-context-6.1.14.jar</systemPath>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/private-api-1.0-SNAPSHOT.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootRepackageIncludesOriginalSystemScopeLibrariesButExcludesCompilerFallbackJar() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("boot-app");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.getResourceFiles().add("BOOT-INF/lib/private-api-1.0-SNAPSHOT.jar");
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.launch.JarLauncher");
+        manifestInfo.getAllEntries().put("Spring-Boot-Lib", "BOOT-INF/lib/");
+        analysis.setManifestInfo(manifestInfo);
+        PomInfo pomInfo = new PomInfo();
+        MavenDependency resolvedDependency = new MavenDependency("io.projectreactor", "reactor-core", "3.6.2",
+                MavenDependency.Confidence.HIGH);
+        analysis.getDetectedDependencies().add(resolvedDependency);
+        BuildPluginInfo bootPlugin = new BuildPluginInfo();
+        bootPlugin.setGroupId("org.springframework.boot");
+        bootPlugin.setArtifactId("spring-boot-maven-plugin");
+        bootPlugin.getExecutionsXml().add("<execution><goals><goal>repackage</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(bootPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<includeSystemScope>true</includeSystemScope>"));
+        assertTrue(pomXml.contains("<groupId>com.z0fsec.jar2mp</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>compiler-fallback-classes</artifactId>"));
+        String compactPomXml = pomXml.replaceAll("\\s+", "");
+        assertTrue(compactPomXml.contains(
+                "<exclude><groupId>io.projectreactor</groupId><artifactId>reactor-core</artifactId></exclude>"));
+    }
+
+    @Test
+    void springBootEmbeddedLibrariesPreferNestedPomPropertiesCoordinates() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/org.apache.commons/commons-collections4/pom.properties",
+                "groupId=org.apache.commons\nartifactId=commons-collections4\nversion=4.4\n");
+        Path outerJar = tempDir.resolve("boot-app.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/commons-collections4-4.4.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/commons-collections4-4.4.jar");
+        analysis.setSourceFile(outerJar.toFile());
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<groupId>org.apache.commons</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>commons-collections4</artifactId>"));
+        assertTrue(pomXml.contains("<version>4.4</version>"));
+        assertFalse(pomXml.contains("<groupId>jar2mp.embedded</groupId>"));
+    }
+
+    @Test
+    void springBootEmbeddedLibrariesPreferFilenameMatchingPomPropertiesWhenWrongEntryAppearsFirst() throws Exception {
+        Path nestedJar = createNestedLibraryJar(
+                new String[] {
+                        "META-INF/maven/com.other/bar/pom.properties",
+                        "META-INF/maven/com.example/foo/pom.properties"
+                },
+                new String[] {
+                        "groupId=com.other\nartifactId=bar\nversion=9.9.9\n",
+                        "groupId=com.example\nartifactId=foo\nversion=1.2.3\n"
+                });
+        Path outerJar = tempDir.resolve("boot-wrong-first.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/foo-1.2.3.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/foo-1.2.3.jar");
+        analysis.setSourceFile(outerJar.toFile());
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        String compactPomXml = pomXml.replaceAll("\\s+", "");
+        assertTrue(compactPomXml.contains(
+                "<dependency><groupId>com.example</groupId><artifactId>foo</artifactId><version>1.2.3</version>"
+                        + "<scope>system</scope><systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/foo-1.2.3.jar</systemPath></dependency>"));
+        assertFalse(compactPomXml.contains("<groupId>com.other</groupId><artifactId>bar</artifactId>"));
+    }
+
+    @Test
+    void springBootEmbeddedLibrariesInferClassifierFromOriginalFileName() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/io.netty/netty-resolver-dns-native-macos/pom.properties",
+                "groupId=io.netty\nartifactId=netty-resolver-dns-native-macos\nversion=4.1.114.Final\n");
+        Path outerJar = tempDir.resolve("boot-native.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry(
+                    "BOOT-INF/lib/netty-resolver-dns-native-macos-4.1.114.Final-osx-aarch_64.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib(
+                "BOOT-INF/lib/netty-resolver-dns-native-macos-4.1.114.Final-osx-aarch_64.jar");
+        analysis.setSourceFile(outerJar.toFile());
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<groupId>io.netty</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>netty-resolver-dns-native-macos</artifactId>"));
+        assertTrue(pomXml.contains("<version>4.1.114.Final</version>"));
+        assertTrue(pomXml.contains("<classifier>osx-aarch_64</classifier>"));
+    }
+
+    @Test
+    void springBootRepackageKeepsResolvedDependencyWhenOriginalSystemLibraryUsesSameCoordinates() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/io.projectreactor/reactor-core/pom.properties",
+                "groupId=io.projectreactor\nartifactId=reactor-core\nversion=3.6.11\n");
+        Path outerJar = tempDir.resolve("boot-reactor.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/reactor-core-3.6.11.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactor-core-3.6.11.jar");
+        analysis.setSourceFile(outerJar.toFile());
+        analysis.getDetectedDependencies().add(new MavenDependency("io.projectreactor", "reactor-core", "3.6.2",
+                MavenDependency.Confidence.LOW));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        String compactPomXml = pomXml.replaceAll("\\s+", "");
+        assertFalse(compactPomXml.contains(
+                "<exclude><groupId>io.projectreactor</groupId><artifactId>reactor-core</artifactId></exclude>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/reactor-core-3.6.11.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootResolvedNestedLibraryDoesNotRenderDuplicateDependencyEntries() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/io.projectreactor/reactor-core/pom.properties",
+                "groupId=io.projectreactor\nartifactId=reactor-core\nversion=3.6.11\n");
+        Path outerJar = tempDir.resolve("boot-reactor-exact.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/reactor-core-3.6.11.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactor-core-3.6.11.jar");
+        analysis.setSourceFile(outerJar.toFile());
+        analysis.getDetectedDependencies().add(new MavenDependency("io.projectreactor", "reactor-core", "3.6.11",
+                MavenDependency.Confidence.HIGH));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertEquals(1, countOccurrences(pomXml, "<artifactId>reactor-core</artifactId>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/reactor-core-3.6.11.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootResolvedNestedLibraryTrustsPomPropertiesWhenFileNameDiffers() throws Exception {
+        Path nestedJar = createNestedLibraryJar("META-INF/maven/org.jacoco/org.jacoco.agent.rt/pom.properties",
+                "groupId=org.jacoco\nartifactId=org.jacoco.agent.rt\nversion=0.8.5\n");
+        Path outerJar = tempDir.resolve("boot-jacoco-runtime.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(outerJar))) {
+            out.putNextEntry(new JarEntry("BOOT-INF/lib/org.jacoco.agent-0.8.5-runtime.jar"));
+            out.write(Files.readAllBytes(nestedJar));
+            out.closeEntry();
+        }
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib(
+                "BOOT-INF/lib/org.jacoco.agent-0.8.5-runtime.jar");
+        analysis.setSourceFile(outerJar.toFile());
+        analysis.getDetectedDependencies().add(new MavenDependency("org.jacoco", "org.jacoco.agent.rt", "0.8.5",
+                MavenDependency.Confidence.HIGH));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertEquals(1, countOccurrences(pomXml, "<artifactId>org.jacoco.agent.rt</artifactId>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/org.jacoco.agent-0.8.5-runtime.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootFilenameFallbackWithUnknownGroupUsesOnlyLocalSystemDependency() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/vendor-helper-1.2.3.jar");
+        analysis.getDetectedDependencies().add(new MavenDependency("unknown", "vendor-helper", "1.2.3",
+                MavenDependency.Confidence.GUESS));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<groupId>unknown</groupId>"));
+        assertTrue(pomXml.contains("<groupId>jar2mp.embedded</groupId>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/BOOT-INF/lib/vendor-helper-1.2.3.jar</systemPath>"));
+    }
+
+    @Test
+    void springBootPackageRestoresOriginalBootLibrariesAfterRepackage() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactive-streams-1.0.4.jar");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<id>restore-original-boot-libraries</id>"));
+        assertTrue(pomXml.contains("<phase>package</phase>"));
+        assertTrue(pomXml.contains(
+                "<zip destfile=\"${jar2mp.package.overlay}\" compress=\"false\" keepcompression=\"true\">"));
+        assertTrue(pomXml.contains(
+                "<zipfileset src=\"${jar2mp.package.artifact}\" excludes=\"BOOT-INF/lib/**\" />"));
+        assertTrue(pomXml.contains(
+                "<zipfileset dir=\"${project.basedir}/src/main/original-libs/BOOT-INF/lib\" prefix=\"BOOT-INF/lib\" />"));
+        assertTrue(pomXml.contains(
+                "<move file=\"${jar2mp.package.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />"));
+    }
+
+    @Test
+    void springBootPackageRestoresOriginalBootLoaderAfterRepackage() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactive-streams-1.0.4.jar");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<id>restore-original-boot-loader</id>"));
+        assertTrue(pomXml.contains(
+                "<zip destfile=\"${jar2mp.package.bootloader.overlay}\" compress=\"false\" keepcompression=\"true\">"));
+        assertTrue(pomXml.contains(
+                "<zipfileset src=\"${jar2mp.package.artifact}\" excludes=\"org/springframework/boot/loader/**\" />"));
+        assertTrue(pomXml.contains(
+                "<zipfileset dir=\"${project.basedir}/src/main/original-boot-loader\" />"));
+        assertTrue(pomXml.contains(
+                "<move file=\"${jar2mp.package.bootloader.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />"));
+    }
+
+    @Test
+    void springBootPackageRestoresOriginalManifestAfterRepackage() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactive-streams-1.0.4.jar");
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<manifestFile>"));
+        assertTrue(pomXml.contains("<id>restore-original-boot-manifest</id>"));
+        assertTrue(pomXml.contains(
+                "<zip destfile=\"${jar2mp.package.manifest.overlay}\" compress=\"false\" keepcompression=\"true\">"));
+        assertTrue(pomXml.contains(
+                "<zipfileset src=\"${jar2mp.package.artifact}\" excludes=\"META-INF/MANIFEST.MF\" />"));
+        assertTrue(pomXml.contains(
+                "<zipfileset dir=\"${project.basedir}/src/main/resources/META-INF\" includes=\"MANIFEST.MF\" prefix=\"META-INF\" />"));
+        assertTrue(pomXml.contains(
+                "<move file=\"${jar2mp.package.manifest.overlay}\" tofile=\"${jar2mp.package.artifact}\" overwrite=\"true\" />"));
+    }
+
+    @Test
+    void byteExactSpringBootPackageSkipsNormalManifestOverlay() {
+        JarAnalysisResult analysis = springBootAnalysisWithOriginalLib("BOOT-INF/lib/reactive-streams-1.0.4.jar");
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        analysis.setSourceFile(new File("boot-app.jar"));
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertFalse(pomXml.contains("<id>restore-original-boot-manifest</id>"));
+        assertTrue(pomXml.contains("<id>restore-byte-exact-package-records</id>"));
+    }
+
+
+    @Test
+    void usesOriginalJarManifestWhenPresent() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains(
+                "<manifestFile>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</manifestFile>"));
+        assertTrue(pomXml.contains("<addDefaultEntries>false</addDefaultEntries>"));
+    }
+
+    @Test
+    void usesOriginalWarManifestWhenPresent() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains(
+                "<manifestFile>${project.basedir}/src/main/webapp/META-INF/MANIFEST.MF</manifestFile>"));
+        assertTrue(pomXml.contains("<addDefaultEntries>false</addDefaultEntries>"));
+    }
+
+    @Test
+    void doesNotOverrideSpringBootExecutableManifest() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(17);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.launch.JarLauncher");
+        manifestInfo.addEntry("Spring-Boot-Classes", "BOOT-INF/classes/");
+        analysis.setManifestInfo(manifestInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<manifestFile>"));
+        assertTrue(pomXml.contains("<artifactId>maven-jar-plugin</artifactId>"));
+    }
+
+    @Test
+    void preservesSpringBootExecutableManifestCreatedByEntry() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.JarLauncher");
+        manifestInfo.setCreatedBy("Apache Maven 3.6.0");
+        manifestInfo.addEntry("Spring-Boot-Classes", "BOOT-INF/classes/");
+        analysis.setManifestInfo(manifestInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<manifestFile>"));
+        assertTrue(pomXml.contains("<manifestEntries>"));
+        assertTrue(pomXml.contains("<Created-By>Apache Maven 3.6.0</Created-By>"));
+    }
+
+    @Test
+    void doesNotOverrideSpringBootExecutableModernJarPluginCreatedByEntry() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.launch.JarLauncher");
+        manifestInfo.setCreatedBy("Maven JAR Plugin 3.4.2");
+        manifestInfo.addEntry("Spring-Boot-Classes", "BOOT-INF/classes/");
+        analysis.setManifestInfo(manifestInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<manifestEntries>"));
+        assertFalse(pomXml.contains("<Created-By>"));
+    }
+
+    @Test
+    void replacesExistingManifestFileWithoutRegexExpansion() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo jarPlugin = new BuildPluginInfo();
+        jarPlugin.setGroupId("org.apache.maven.plugins");
+        jarPlugin.setArtifactId("maven-jar-plugin");
+        jarPlugin.setConfigurationXml(
+                "<configuration><archive><manifestFile>old/MANIFEST.MF</manifestFile></archive></configuration>");
+        pomInfo.getBuildPlugins().add(jarPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains(
+                "<manifestFile>${project.basedir}/src/main/resources/META-INF/MANIFEST.MF</manifestFile>"));
+        assertFalse(pomXml.contains("old/MANIFEST.MF"));
+    }
+
+    @Test
+    void preservesOriginalGeneratedMetadataResourcesWhenPresent() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(17);
+        analysis.getMetaInfFiles().add("META-INF/build-info.properties");
+        analysis.getMetaInfFiles().add("META-INF/sbom/application.cdx.json");
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo bootPlugin = new BuildPluginInfo();
+        bootPlugin.setGroupId("org.springframework.boot");
+        bootPlugin.setArtifactId("spring-boot-maven-plugin");
+        bootPlugin.getExecutionsXml().add(
+                "<execution><goals><goal>build-info</goal><goal>repackage</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(bootPlugin);
+        BuildPluginInfo cyclonedxPlugin = new BuildPluginInfo();
+        cyclonedxPlugin.setGroupId("org.cyclonedx");
+        cyclonedxPlugin.setArtifactId("cyclonedx-maven-plugin");
+        pomInfo.getBuildPlugins().add(cyclonedxPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<spring-boot.build-info.skip>true</spring-boot.build-info.skip>"));
+        assertTrue(pomXml.contains("<cyclonedx.skip>true</cyclonedx.skip>"));
+        assertFalse(pomXml.contains("<goal>build-info</goal>"));
+        assertTrue(pomXml.contains("<goal>repackage</goal>"));
+    }
+
+    @Test
+    void packagesOriginalClassBytesFromCleanSafeSourceDirectory() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getClassFiles().add("com/example/App.class");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<id>restore-original-class-bytes</id>"));
+        assertTrue(pomXml.contains("<phase>process-classes</phase>"));
+        assertTrue(pomXml.contains("${project.basedir}/src/main/original-classes"));
+        assertTrue(pomXml.contains("${project.build.outputDirectory}"));
+        assertTrue(pomXml.contains("preservelastmodified=\"true\""));
+    }
+
+    @Test
+    void restoresOriginalResourceMetadataFromCleanSafeSourceDirectory() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.getResourceFiles().add("META-INF/maven/com.example/demo/pom.xml");
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<id>restore-original-resource-metadata</id>"));
+        assertTrue(pomXml.contains("${project.basedir}/src/main/resources"));
+        assertTrue(pomXml.contains("${project.build.outputDirectory}"));
+        assertTrue(pomXml.contains("preservelastmodified=\"true\""));
+    }
+
+    @Test
+    void byteExactPackageAddsSkipPropertiesForStandaloneMavenPackage() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertTrue(pomXml.contains("<skipTests>true</skipTests>"));
+        assertTrue(pomXml.contains("<maven.test.skip>true</maven.test.skip>"));
+        assertTrue(pomXml.contains("<checkstyle.skip>true</checkstyle.skip>"));
+        assertTrue(pomXml.contains("<enforcer.skip>true</enforcer.skip>"));
+        assertTrue(pomXml.contains("<maven.javadoc.skip>true</maven.javadoc.skip>"));
+    }
+
+    @Test
+    void byteExactPackageUsesOriginalArtifactBaseNameAsFinalName() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(24);
+        analysis.setSourceFile(new File("demo-1.0.0-all.jar"));
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertTrue(pomXml.contains("<finalName>demo-1.0.0-all</finalName>"));
+    }
+
+    @Test
+    void byteExactPackageSkipsPackageTransformingPluginsBeforeHelperRestoresArtifact() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(8);
+        analysis.setSourceFile(new File("demo-1.0.0-all.jar"));
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo shadePlugin = new BuildPluginInfo();
+        shadePlugin.setGroupId("org.apache.maven.plugins");
+        shadePlugin.setArtifactId("maven-shade-plugin");
+        shadePlugin.setVersion("3.2.4");
+        shadePlugin.getExecutionsXml().add("<execution><phase>package</phase><goals><goal>shade</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(shadePlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+        config.setJavaVersion(24);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertFalse(pomXml.contains("<artifactId>maven-shade-plugin</artifactId>"));
+        assertFalse(pomXml.contains("<goal>shade</goal>"));
+        assertFalse(pomXml.contains("restore-byte-exact-artifact"));
+        assertTrue(pomXml.contains("restore-byte-exact-package-records"));
+        assertTrue(pomXml.contains(".jar2mp/byte-exact/raw-artifact/demo-1.0.0-all.jar"));
+        assertTrue(pomXml.contains("<finalName>demo-1.0.0-all</finalName>"));
+        assertTrue(pomXml.contains("<maven.compiler.source>24</maven.compiler.source>"));
+        assertTrue(pomXml.contains("source=\"8\" target=\"8\""));
+    }
+
+    @Test
+    void restorePackageRecordsAddsGuardedPackageRecordExecutionWithoutByteExactFinalName() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.setSourceFile(new File("demo-1.0.0-all.jar"));
+        ProjectConfig config = new ProjectConfig();
+        config.setRestorePackageRecords(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertTrue(pomXml.contains("<id>restore-package-records</id>"));
+        assertTrue(pomXml.contains(".jar2mp/package-records/raw-artifact/demo-1.0.0-all.jar"));
+        assertTrue(pomXml.contains("PackageRecordRestorer"));
+        assertFalse(pomXml.contains("<finalName>demo-1.0.0-all</finalName>"));
+        assertFalse(pomXml.contains("<id>restore-byte-exact-package-records</id>"));
+    }
+
+    @Test
+    void sanitizesManifestDerivedMavenCoordinates() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("Remko Popma");
+        analysis.setDetectedArtifactId("Picocli Code Generation");
+        analysis.setDetectedVersion("4.7.7");
+        analysis.setJavaVersion(8);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<groupId>remko.popma</groupId>"));
+        assertTrue(pomXml.contains("<artifactId>picocli-code-generation</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>Picocli Code Generation</artifactId>"));
+    }
+
+    @Test
+    void omitsSnapshotParentAndUnresolvableProjectSiblingsForStandalonePom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("io.netty");
+        analysis.setDetectedArtifactId("netty-common");
+        analysis.setDetectedVersion("4.2.15.Final-SNAPSHOT");
+        analysis.setJavaVersion(8);
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.setParentGroupId("io.netty");
+        pomInfo.setParentArtifactId("netty-parent");
+        pomInfo.setParentVersion("4.2.15.Final-SNAPSHOT");
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        analysis.getDetectedDependencies().add(new MavenDependency("org.slf4j",
+                "slf4j-api", "unknown", MavenDependency.Confidence.HIGH));
+        analysis.getDetectedDependencies().add(new MavenDependency("org.jctools",
+                "jctools-core", "4.0.5", MavenDependency.Confidence.HIGH));
+        analysis.getDetectedDependencies().add(new MavenDependency("io.netty",
+                "netty-jfr-stub", "${project.version}", MavenDependency.Confidence.HIGH));
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<parent>"));
+        assertFalse(pomXml.contains("<artifactId>slf4j-api</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>netty-jfr-stub</artifactId>"));
+        assertTrue(pomXml.contains("<artifactId>jctools-core</artifactId>"));
+        assertTrue(pomXml.contains("<version>4.0.5</version>"));
+    }
+
+    @Test
+    void omitsReactorLocalParentFromStandalonePom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("org.apache.shiro");
+        analysis.setDetectedArtifactId("shiro-core");
+        analysis.setDetectedVersion("2.0.6");
+        analysis.setJavaVersion(8);
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.setParentGroupId("org.apache.shiro");
+        pomInfo.setParentArtifactId("shiro-root");
+        pomInfo.setParentVersion("2.0.6");
+        pomInfo.setParentRelativePath("../pom.xml");
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<parent>"));
+        assertFalse(pomXml.contains("<relativePath>../pom.xml</relativePath>"));
+    }
+
+    @Test
+    void omitsSourceGenerationPluginsFromStandaloneCompilePom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("io.netty");
+        analysis.setDetectedArtifactId("netty-common");
+        analysis.setDetectedVersion("4.2.15.Final-SNAPSHOT");
+        analysis.setJavaVersion(8);
+
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo groovyPlugin = new BuildPluginInfo();
+        groovyPlugin.setGroupId("org.codehaus.gmaven");
+        groovyPlugin.setArtifactId("groovy-maven-plugin");
+        groovyPlugin.getExecutionsXml().add("<execution><phase>generate-sources</phase><goals><goal>execute</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(groovyPlugin);
+
+        BuildPluginInfo compilerPlugin = new BuildPluginInfo();
+        compilerPlugin.setGroupId("org.apache.maven.plugins");
+        compilerPlugin.setArtifactId("maven-compiler-plugin");
+        compilerPlugin.setVersion("3.11.0");
+        pomInfo.getBuildPlugins().add(compilerPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<artifactId>groovy-maven-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<artifactId>maven-compiler-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<configuration combine.self=\"override\">"));
+    }
+
+    @Test
+    void removesStrictCompilerWarningFailuresFromRestoredPom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("demo");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo compilerPlugin = new BuildPluginInfo();
+        compilerPlugin.setGroupId("org.apache.maven.plugins");
+        compilerPlugin.setArtifactId("maven-compiler-plugin");
+        compilerPlugin.setVersion("3.11.0");
+        compilerPlugin.setConfigurationXml("<configuration><compilerArgs><arg>-Xlint:all</arg><arg>-Werror</arg></compilerArgs><failOnWarning>true</failOnWarning></configuration>");
+        pomInfo.getBuildPlugins().add(compilerPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("-Werror"));
+        assertFalse(pomXml.contains("<failOnWarning>true</failOnWarning>"));
+        assertTrue(pomXml.contains("<arg>-Xlint:all</arg>"));
+        assertTrue(pomXml.contains("<failOnWarning>false</failOnWarning>"));
+    }
+
+    @Test
+    void removesErrorProneCompilerPluginArgumentsFromRestoredPom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("com.google.googlejavaformat");
+        analysis.setDetectedArtifactId("google-java-format");
+        analysis.setDetectedVersion("1.35.0");
+        analysis.setJavaVersion(17);
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.setParentGroupId("com.google.googlejavaformat");
+        pomInfo.setParentArtifactId("google-java-format-parent");
+        pomInfo.setParentVersion("1.35.0");
+        BuildPluginInfo compilerPlugin = new BuildPluginInfo();
+        compilerPlugin.setGroupId("org.apache.maven.plugins");
+        compilerPlugin.setArtifactId("maven-compiler-plugin");
+        compilerPlugin.setVersion("3.9.0");
+        compilerPlugin.setConfigurationXml("<configuration><source>17</source><target>17</target><compilerArgs><arg>-Xplugin:ErrorProne</arg><arg>-Xlint:all</arg></compilerArgs></configuration>");
+        pomInfo.getBuildPlugins().add(compilerPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<configuration combine.self=\"override\">"));
+        assertFalse(pomXml.contains("-Xplugin:ErrorProne"));
+        assertTrue(pomXml.contains("<arg>-Xlint:all</arg>"));
+        assertTrue(pomXml.contains("<proc>none</proc>"));
+    }
+
+    @Test
+    void omitsQualityGatePluginsAndUnresolvedVersionReferencesFromStandalonePom() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setDetectedGroupId("org.openapitools");
+        analysis.setDetectedArtifactId("openapi-generator-cli");
+        analysis.setDetectedVersion("7.22.0");
+        analysis.setJavaVersion(21);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+
+        analysis.getDetectedDependencies().add(new MavenDependency("org.testng",
+                "testng", "${testng.version}", MavenDependency.Confidence.HIGH));
+        analysis.getDetectedDependencies().add(new MavenDependency("org.mockito",
+                "mockito-core", "${mockito.version}", MavenDependency.Confidence.HIGH));
+        analysis.getDetectedDependencies().add(new MavenDependency("org.antlr",
+                "antlr4-runtime", "${antlr4.version}", MavenDependency.Confidence.HIGH));
+
+        PomInfo pomInfo = new PomInfo();
+        pomInfo.getProperties().put("antlr4.version", "4.9.3");
+
+        BuildPluginInfo xmlPlugin = new BuildPluginInfo();
+        xmlPlugin.setGroupId("org.codehaus.mojo");
+        xmlPlugin.setArtifactId("xml-maven-plugin");
+        xmlPlugin.getExecutionsXml().add(
+                "<execution><goals><goal>validate</goal><goal>check-format</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(xmlPlugin);
+
+        BuildPluginInfo antlrPlugin = new BuildPluginInfo();
+        antlrPlugin.setGroupId("org.antlr");
+        antlrPlugin.setArtifactId("antlr4-maven-plugin");
+        antlrPlugin.setVersion("${antlr4.version}");
+        antlrPlugin.getExecutionsXml().add("<execution><goals><goal>antlr4</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(antlrPlugin);
+
+        BuildPluginInfo replacerPlugin = new BuildPluginInfo();
+        replacerPlugin.setGroupId("com.google.code.maven-replacer-plugin");
+        replacerPlugin.setArtifactId("replacer");
+        replacerPlugin.getExecutionsXml().add("<execution><goals><goal>replace</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(replacerPlugin);
+
+        BuildPluginInfo moditectPlugin = new BuildPluginInfo();
+        moditectPlugin.setGroupId("org.moditect");
+        moditectPlugin.setArtifactId("moditect-maven-plugin");
+        moditectPlugin.getExecutionsXml().add("<execution><goals><goal>add-module-info</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(moditectPlugin);
+
+        BuildPluginInfo plexusMetadataPlugin = new BuildPluginInfo();
+        plexusMetadataPlugin.setGroupId("org.codehaus.plexus");
+        plexusMetadataPlugin.setArtifactId("plexus-component-metadata");
+        plexusMetadataPlugin.getExecutionsXml().add(
+                "<execution><goals><goal>generate-metadata</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(plexusMetadataPlugin);
+
+        BuildPluginInfo execPlugin = new BuildPluginInfo();
+        execPlugin.setGroupId("org.codehaus.mojo");
+        execPlugin.setArtifactId("exec-maven-plugin");
+        execPlugin.getExecutionsXml().add("<execution><phase>process-classes</phase>"
+                + "<goals><goal>java</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(execPlugin);
+
+        BuildPluginInfo jarPlugin = new BuildPluginInfo();
+        jarPlugin.setGroupId("org.apache.maven.plugins");
+        jarPlugin.setArtifactId("maven-jar-plugin");
+        jarPlugin.setVersion("${maven-jar-plugin.version}");
+        pomInfo.getBuildPlugins().add(jarPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertFalse(pomXml.contains("<artifactId>testng</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>mockito-core</artifactId>"));
+        assertTrue(pomXml.contains("<artifactId>antlr4-runtime</artifactId>"));
+        assertTrue(pomXml.contains("<version>${antlr4.version}</version>"));
+        assertFalse(pomXml.contains("<artifactId>xml-maven-plugin</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>antlr4-maven-plugin</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>replacer</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>moditect-maven-plugin</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>plexus-component-metadata</artifactId>"));
+        assertFalse(pomXml.contains("<artifactId>exec-maven-plugin</artifactId>"));
+        assertFalse(pomXml.contains("${maven-jar-plugin.version}"));
+        assertTrue(pomXml.contains("<artifactId>maven-jar-plugin</artifactId>"));
+        assertTrue(pomXml.contains("<addMavenDescriptor>false</addMavenDescriptor>"));
+    }
+
+    @Test
+    void usesOriginalWarLibrariesAsLocalSystemDependencies() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(true);
+        analysis.setDetectedGroupId("org.jenkins-ci.main");
+        analysis.setDetectedArtifactId("jenkins-war");
+        analysis.setDetectedVersion("2.566");
+        analysis.setJavaVersion(11);
+        analysis.getMetaInfFiles().add("META-INF/MANIFEST.MF");
+        analysis.getResourceFiles().add("WEB-INF/lib/cli-2.566.jar");
+        analysis.getResourceFiles().add("WEB-INF/lib/remoting-3355.v388858a_47b_33.jar");
+
+        analysis.getDetectedDependencies().add(new MavenDependency("org.jenkins-ci.main",
+                "cli", "2.566", MavenDependency.Confidence.HIGH));
+        MavenDependency remoting = new MavenDependency("org.jenkins-ci.main",
+                "remoting", "3355.v388858a_47b_33", MavenDependency.Confidence.HIGH);
+        remoting.setScope("provided");
+        analysis.getDetectedDependencies().add(remoting);
+
+        String pomXml = new PomGenerator().generate(analysis, new ProjectConfig());
+
+        assertTrue(pomXml.contains("<scope>system</scope>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/WEB-INF/lib/cli-2.566.jar</systemPath>"));
+        assertTrue(pomXml.contains(
+                "<systemPath>${project.basedir}/src/main/original-libs/WEB-INF/lib/remoting-3355.v388858a_47b_33.jar</systemPath>"));
+        assertFalse(pomXml.contains("<scope>provided</scope>"));
+    }
+
+    @Test
+    void omitsBundledByteExactDependencyWhenClassesAreAlreadyPresent() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(new File("dependency-track-bundled.jar"));
+        analysis.setDetectedGroupId("com.fasterxml.jackson.core");
+        analysis.setDetectedArtifactId("jackson-databind");
+        analysis.setDetectedVersion("2.21.1");
+        analysis.setJavaVersion(21);
+        analysis.getClassFiles().add("org/dependencytrack/resources/v1/ProjectResource.class");
+        analysis.getDetectedDependencies().add(new MavenDependency("org.dependencytrack",
+                "dependency-track", "4.14.2", MavenDependency.Confidence.HIGH));
+        analysis.getDetectedDependencies().add(new MavenDependency("com.example",
+                "external-helper", "1.0.0", MavenDependency.Confidence.HIGH));
+        ProjectConfig config = new ProjectConfig();
+        config.setByteExactPackage(true);
+
+        String pomXml = new PomGenerator().generate(analysis, config);
+
+        assertFalse(pomXml.contains("<artifactId>dependency-track</artifactId>"));
+        assertTrue(pomXml.contains("<artifactId>external-helper</artifactId>"));
+    }
+
+    private Path createNestedLibraryJar(String pomPropertiesPath, String pomProperties) throws Exception {
+        return createNestedLibraryJar(new String[] { pomPropertiesPath }, new String[] { pomProperties });
+    }
+
+    private Path createNestedLibraryJar(String[] pomPropertiesPaths, String[] pomPropertiesEntries) throws Exception {
+        Path nestedJar = tempDir.resolve("nested-lib-" + System.nanoTime() + ".jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(nestedJar))) {
+            for (int i = 0; i < pomPropertiesPaths.length; i++) {
+                out.putNextEntry(new JarEntry(pomPropertiesPaths[i]));
+                out.write(pomPropertiesEntries[i].getBytes(StandardCharsets.UTF_8));
+                out.closeEntry();
+            }
+        }
+        return nestedJar;
+    }
+
+    private int countOccurrences(String text, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(needle, index)) >= 0) {
+            count++;
+            index += needle.length();
+        }
+        return count;
+    }
+
+    private JarAnalysisResult springBootAnalysisWithOriginalLib(String originalLibPath) {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setWar(false);
+        analysis.setDetectedGroupId("com.example");
+        analysis.setDetectedArtifactId("boot-app");
+        analysis.setDetectedVersion("1.0.0");
+        analysis.setJavaVersion(21);
+        analysis.getResourceFiles().add(originalLibPath);
+        ManifestInfo manifestInfo = new ManifestInfo();
+        manifestInfo.setMainClass("org.springframework.boot.loader.launch.JarLauncher");
+        manifestInfo.getAllEntries().put("Spring-Boot-Lib", "BOOT-INF/lib/");
+        analysis.setManifestInfo(manifestInfo);
+        PomInfo pomInfo = new PomInfo();
+        BuildPluginInfo bootPlugin = new BuildPluginInfo();
+        bootPlugin.setGroupId("org.springframework.boot");
+        bootPlugin.setArtifactId("spring-boot-maven-plugin");
+        bootPlugin.getExecutionsXml().add("<execution><goals><goal>repackage</goal></goals></execution>");
+        pomInfo.getBuildPlugins().add(bootPlugin);
+        analysis.setEmbeddedPomInfo(pomInfo);
+        return analysis;
+    }
+}

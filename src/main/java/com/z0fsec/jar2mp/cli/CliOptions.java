@@ -14,6 +14,8 @@ public class CliOptions {
     private boolean showVersion = false;
     private String exportDepsFile;
     private String importDepsFile;
+    private String traceFile;
+    private String compareArtifactFile;
 
     public List<String> getInputFiles() { return inputFiles; }
     public void addInputFile(String file) { this.inputFiles.add(file); }
@@ -31,6 +33,10 @@ public class CliOptions {
     public void setExportDepsFile(String exportDepsFile) { this.exportDepsFile = exportDepsFile; }
     public String getImportDepsFile() { return importDepsFile; }
     public void setImportDepsFile(String importDepsFile) { this.importDepsFile = importDepsFile; }
+    public String getTraceFile() { return traceFile; }
+    public void setTraceFile(String traceFile) { this.traceFile = traceFile; }
+    public String getCompareArtifactFile() { return compareArtifactFile; }
+    public void setCompareArtifactFile(String compareArtifactFile) { this.compareArtifactFile = compareArtifactFile; }
 
     public static void printHelp() {
         System.out.println("Usage: java -jar jar2mp.jar [options] <jar-or-war-files...>");
@@ -53,11 +59,35 @@ public class CliOptions {
         System.out.println("      --include-synthetic         包含合成/桥接方法");
         System.out.println("      --export-deps <file>        导出依赖到文件");
         System.out.println("      --import-deps <file>        从文件导入依赖");
+        System.out.println("      --verify-build              生成项目后运行 Maven 构建验证");
+        System.out.println("      --verify-goal <goal>        构建验证 Maven goal（默认 compile）");
+        System.out.println("      --trace-runtime             使用 trace agent 运行原始 JAR 并生成 runtime-trace-report.md");
+        System.out.println("      --trace-args <args>         传给原始 JAR 的运行参数（可包含空格，需整体加引号）");
+        System.out.println("      --trace-timeout <seconds>   运行时追踪超时时间（默认 120 秒）");
+        System.out.println("      --smoke-only                启用运行时追踪并跳过 Maven 构建验证");
+        System.out.println("      --emit-raw-artifact         在 target/raw-artifact/ 生成原始归档的字节保真副本");
+        System.out.println("      --byte-exact-package        为 Maven package 产物安装字节级保真修复与验证");
+        System.out.println("      --restore-package-records   内容一致后回放原始 ZIP records 使 package 产物字节一致");
+        System.out.println("      --compare-artifact <file>   将输入原始归档与指定重建归档做字节保真度对比");
         System.out.println("  -f, --force                     覆盖已存在的输出目录");
         System.out.println("  -q, --quiet                     静默模式");
         System.out.println("      --verbose                   详细输出");
         System.out.println("  -h, --help                      显示帮助");
         System.out.println("      --version                   显示版本号");
+        System.out.println();
+        System.out.println("Output:");
+        System.out.println("  每个项目会生成 decompile-parity-report.md 和 resource-inventory.md。");
+        System.out.println("  decompile-parity-report.md 包含 Risk summary 和 HIGH/MEDIUM method index。");
+        System.out.println("  每个项目会生成 restoration-score.md 和 gap-summary.md。");
+        System.out.println("  启用 --verify-build 后额外生成 verification-report.md 和 verification-errors.md。");
+        System.out.println("  启用 --verify-build 且构建成功后额外生成 source-rebuild-fidelity-report.md，比较 target/classes 与原始应用 class 字节。");
+        System.out.println("  原始 .class 退回路径的可读源码会写入 decompiled-readable/，该目录不参与 Maven 编译。");
+        System.out.println("  启用 --trace-runtime 后额外生成 runtime-trace-report.md。");
+        System.out.println("  启用 --emit-raw-artifact 后额外生成 target/raw-artifact/artifact-fidelity-summary.csv。");
+        System.out.println("  启用 --byte-exact-package 后，生成项目会跳过 package-transforming 插件，并在 Maven package 执行 standalone record-level ZIP 修复。");
+        System.out.println("  --byte-exact-package 与 --verify-build 一起使用时默认验证 package，并生成 target/byte-exact-package-check/ 保真报告；显式 --verify-goal 可覆盖。");
+        System.out.println("  启用 --restore-package-records 后，生成项目会在内容 entry 校验一致后回放原始 ZIP records，并生成 target/package-record-restore-check/ 保真报告。");
+        System.out.println("  启用 --compare-artifact 后额外生成 artifact-fidelity-report.md 和 artifact-fidelity-summary.csv；内容一致但 entry 顺序、空目录 entry 或可原位恢复 ZIP 元数据不同的归档还会生成 archive-order-restored/ 候选。");
         System.out.println();
         System.out.println("Examples:");
         System.out.println("  java -jar jar2mp.jar target/app.jar");

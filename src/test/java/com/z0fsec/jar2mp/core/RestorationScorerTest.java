@@ -1,0 +1,668 @@
+package com.z0fsec.jar2mp.core;
+
+import com.z0fsec.jar2mp.model.ArtifactFidelityResult;
+import com.z0fsec.jar2mp.model.DecompileFinding;
+import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.ResourceFinding;
+import com.z0fsec.jar2mp.model.RestorationScore;
+import com.z0fsec.jar2mp.model.SourceRebuildFidelityResult;
+import com.z0fsec.jar2mp.model.VerificationError;
+import com.z0fsec.jar2mp.model.VerificationResult;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import javax.tools.ToolProvider;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class RestorationScorerTest {
+
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void combinesStaticRuntimeAndVerificationSignalsIntoAWeightedScore() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/App.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/App.class", null, null));
+        analysis.getResourceFindings().add(new ResourceFinding("application.yml",
+                ResourceFinding.Category.CONFIG,
+                "src/main/resources/application.yml",
+                "config"));
+        analysis.getResourceFindings().add(new ResourceFinding("static/app.js",
+                ResourceFinding.Category.FRONTEND_ASSET,
+                "src/main/resources/static/app.js",
+                "asset"));
+        analysis.getResourceFindings().add(new ResourceFinding("templates/home.html",
+                ResourceFinding.Category.TEMPLATE,
+                "src/main/resources/templates/home.html",
+                "template"));
+        ResourceFinding nestedLibrary = new ResourceFinding("BOOT-INF/lib/lib.jar",
+                ResourceFinding.Category.NESTED_LIBRARY,
+                "target/original-libs/BOOT-INF/lib/lib.jar",
+                "nested library");
+        nestedLibrary.setCopyStatus(ResourceFinding.CopyStatus.ARCHIVED);
+        nestedLibrary.setActualTargetPath("target/original-libs/BOOT-INF/lib/lib.jar");
+        analysis.getResourceFindings().add(nestedLibrary);
+
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("resource", "demo.App", "getResourceAsStream", "application.yml", "main",
+                        Arrays.asList("demo.App.main")),
+                new RuntimeTraceEvent("file", "demo.App", "newInputStream", "/tmp/input.txt", "main",
+                        Arrays.asList("demo.App.main"))
+        ));
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(88, score.getOverall());
+        assertEquals(100, score.getBreakdown().get("source").intValue());
+        assertEquals(100, score.getBreakdown().get("resource").intValue());
+        assertEquals(100, score.getBreakdown().get("runtime").intValue());
+        assertEquals(40, score.getBreakdown().get("verification").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "nested_library".equals(g.getCategory())));
+    }
+
+    @Test
+    void metaInfRuntimeFilesDoNotLowerResourceFidelityForGeneratedMavenProjects() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getResourceFindings().add(new ResourceFinding("BOOT-INF/classes/application.yml",
+                ResourceFinding.Category.CONFIG,
+                "src/main/resources/application.yml",
+                "config"));
+        analysis.getResourceFindings().add(new ResourceFinding("META-INF/MANIFEST.MF",
+                ResourceFinding.Category.META_INF_RUNTIME,
+                "(skipped)",
+                "runtime metadata"));
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(100, score.getBreakdown().get("resource").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "meta_inf_runtime".equals(g.getCategory())));
+    }
+
+    @Test
+    void skippedSpringBootLoaderServiceDoesNotLowerResourceFidelity() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getResourceFindings().add(new ResourceFinding("application.yml",
+                ResourceFinding.Category.CONFIG,
+                "src/main/resources/application.yml",
+                "config"));
+        analysis.getResourceFindings().add(new ResourceFinding(
+                "META-INF/services/java.nio.file.spi.FileSystemProvider",
+                ResourceFinding.Category.SPI,
+                "(skipped)",
+                "Spring Boot loader filesystem provider service is generated by the boot repackage step."));
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(100, score.getBreakdown().get("resource").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "spi".equals(g.getCategory())));
+    }
+
+    @Test
+    void resourceScoreUsesActualCopyFailures() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ResourceFinding copied = new ResourceFinding("BOOT-INF/classes/static/app.js",
+                ResourceFinding.Category.FRONTEND_ASSET,
+                "src/main/resources/static/app.js",
+                "Copied to static/app.js.");
+        copied.setCopyStatus(ResourceFinding.CopyStatus.COPIED);
+        copied.setActualTargetPath("static/app.js");
+        analysis.getResourceFindings().add(copied);
+
+        ResourceFinding failed = new ResourceFinding("static/app.js",
+                ResourceFinding.Category.FRONTEND_ASSET,
+                "src/main/resources/static/app.js",
+                "legacy note says copied");
+        failed.setCopyStatus(ResourceFinding.CopyStatus.SKIPPED);
+        failed.setCopyFailureReason("Output path collision: static/app.js");
+        analysis.getResourceFindings().add(failed);
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(50, score.getBreakdown().get("resource").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "frontend_asset".equals(g.getCategory())
+                        && "static/app.js".equals(g.getDetail())));
+    }
+
+    @Test
+    void archivedNestedLibrariesDoNotLowerTheOverallRestorationScore() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        ResourceFinding nestedLibrary = new ResourceFinding("WEB-INF/lib/private.jar",
+                ResourceFinding.Category.NESTED_LIBRARY,
+                "target/original-libs/WEB-INF/lib/private.jar",
+                "Archived at target/original-libs/WEB-INF/lib/private.jar.");
+        nestedLibrary.setCopyStatus(ResourceFinding.CopyStatus.ARCHIVED);
+        nestedLibrary.setActualTargetPath("target/original-libs/WEB-INF/lib/private.jar");
+        analysis.getResourceFindings().add(nestedLibrary);
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("resource", "demo.App", "getResourceAsStream",
+                        "application.yml", "main", Arrays.asList("demo.App.main"))));
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(0);
+        verification.setFailureType("NONE");
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, verification);
+
+        assertEquals(100, score.getOverall());
+        assertEquals(100, score.getBreakdown().get("resource").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "nested_library".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreUsesStaticBytecodeExpectationsInsteadOfAllTraceKinds() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "    TraceExpectations.class.getResourceAsStream(\"/application.yml\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        analysis.getResourceFindings().add(new ResourceFinding("application.yml",
+                ResourceFinding.Category.CONFIG,
+                "src/main/resources/application.yml",
+                "config"));
+
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run")),
+                new RuntimeTraceEvent("resource", "demo.TraceExpectations", "getResourceAsStream",
+                        "/application.yml", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(100, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "file".equals(g.getCategory())));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "socket".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreReportsMissingExpectedStaticKind() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "    TraceExpectations.class.getResourceAsStream(\"/application.yml\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(50, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g -> "resource".equals(g.getCategory())));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "file".equals(g.getCategory())));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "socket".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreCapsTimedOutTraceWithEvents() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("TRACE_COLLECTED_TIMEOUT");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(80, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreAcceptsHealthyTimeoutWithEvents() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("TRACE_COLLECTED_HEALTHY_TIMEOUT");
+        smokeResult.setStartupProbeStatus("HTTP_RESPONDED");
+        smokeResult.setStartupProbeStatusCode(200);
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(100, score.getBreakdown().get("runtime").intValue());
+        assertFalse(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreFailsNonZeroSmokeRunEvenWhenTraceEventsExist() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("EXIT_NON_ZERO");
+        smokeResult.setExitCode(1);
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(0, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeScoreFailsStartupFailureTimeoutEvenWhenTraceEventsExist() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_TIMEOUT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before timeout.");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(0, score.getBreakdown().get("runtime").intValue());
+        String detail = score.getGaps().stream()
+                .filter(g -> "runtime_status".equals(g.getCategory()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing runtime_status gap"))
+                .getDetail();
+        assertEquals("Runtime startup failure was detected before timeout.", detail);
+        assertFalse(detail.contains("detected: Runtime"));
+        assertFalse(detail.contains(".."));
+    }
+
+    @Test
+    void runtimeScoreFailsStartupFailureExitEvenWhenTraceEventsExist() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setStderr("Application run failed\n"
+                + "Caused by: org.springframework.context.ApplicationContextException: "
+                + "Failed to start bean 'sample'\n");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(0, score.getBreakdown().get("runtime").intValue());
+        String detail = score.getGaps().stream()
+                .filter(g -> "runtime_status".equals(g.getCategory()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing runtime_status gap"))
+                .getDetail();
+        assertEquals("Runtime startup failure was detected before non-zero exit. Cause: "
+                + "org.springframework.context.ApplicationContextException: "
+                + "Failed to start bean 'sample'.", detail);
+        assertFalse(detail.contains("detected: Runtime"));
+        assertFalse(detail.contains(".."));
+    }
+
+    @Test
+    void runtimeScoreClassifiesRedisStartupFailureAsEnvironmentDependency() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setStdout("APPLICATION FAILED TO START\n"
+                + "Caused by: org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379\n");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(100, score.getBreakdown().get("runtime").intValue());
+        RestorationScore.GapItem gap = score.getGaps().stream()
+                .filter(g -> "runtime_environment".equals(g.getCategory()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing runtime_environment gap"));
+        String detail = gap.getDetail();
+        assertEquals(0, gap.getImpact());
+        assertTrue(detail.contains("RedisConnectionException"));
+        assertFalse(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
+    }
+
+    @Test
+    void runtimeEnvironmentStartupFailureDoesNotLowerRestorationScore() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setStdout("APPLICATION FAILED TO START\n"
+                + "Caused by: org.redisson.client.RedisConnectionException: "
+                + "Unable to connect to Redis server: localhost/127.0.0.1:6379\n");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(0);
+        verification.setFailureType("NONE");
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, verification);
+
+        assertEquals(100, score.getOverall());
+        assertEquals(100, score.getBreakdown().get("runtime").intValue());
+        RestorationScore.GapItem gap = score.getGaps().stream()
+                .filter(g -> "runtime_environment".equals(g.getCategory()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing runtime_environment gap"));
+        assertEquals(0, gap.getImpact());
+        assertTrue(gap.getDetail().contains("environment dependency"));
+    }
+
+    @Test
+    void runtimeScoreSuppressesMissingStaticKindGapsWhenStartupFailed() throws Exception {
+        Path jar = compileJar("demo.TraceExpectations",
+                "package demo;\n" +
+                        "public class TraceExpectations {\n" +
+                        "  public void run() throws Exception {\n" +
+                        "    Class.forName(\"java.lang.String\");\n" +
+                        "    new java.net.Socket(\"127.0.0.1\", 1).close();\n" +
+                        "  }\n" +
+                        "}\n");
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setSourceFile(jar.toFile());
+        analysis.getClassFiles().add("demo/TraceExpectations.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/TraceExpectations.class", null, null));
+        RuntimeTraceResult traceResult = new RuntimeTraceResult(Arrays.asList(
+                new RuntimeTraceEvent("reflection", "demo.TraceExpectations", "Class.forName",
+                        "java.lang.String", "main", Arrays.asList("demo.TraceExpectations.run"))
+        ));
+        RuntimeSmokeRunner.SmokeRunResult smokeResult = new RuntimeSmokeRunner.SmokeRunResult();
+        smokeResult.setRunStatus("STARTUP_FAILED_EXIT");
+        smokeResult.setFailureMessage("Runtime startup failure was detected before non-zero exit.");
+        smokeResult.setTraceResult(traceResult);
+        analysis.setRuntimeSmokeResult(smokeResult);
+
+        RestorationScore score = new RestorationScorer().score(analysis, traceResult, null);
+
+        assertEquals(0, score.getBreakdown().get("runtime").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_status".equals(g.getCategory())));
+        assertFalse(score.getGaps().stream().anyMatch(g -> "socket".equals(g.getCategory())));
+    }
+
+    @Test
+    void missingRuntimeTraceIsReportedAsObservationGapNotReflectionGap() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertTrue(score.getGaps().stream().anyMatch(g -> "runtime_trace".equals(g.getCategory())
+                && g.getDetail().contains("Runtime trace data has not been captured")));
+        assertTrue(score.getGaps().stream().noneMatch(g -> "reflection".equals(g.getCategory())
+                && g.getDetail().contains("No runtime trace data captured")));
+    }
+
+    @Test
+    void missingInnerClassFindingLowersSourceFidelity() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/App.class");
+        analysis.getClassFiles().add("demo/App$Inner.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/App.class", null, null));
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(50, score.getBreakdown().get("source").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "decompile".equals(g.getCategory()) && "demo/App$Inner.class".equals(g.getDetail())));
+    }
+
+    @Test
+    void verificationGapIncludesParsedErrorCategories() {
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(1);
+        verification.setFailureType("COMPILATION_ERROR");
+        verification.getErrors().add(verificationError(VerificationErrorParser.MISSING_SYMBOL));
+        verification.getErrors().add(verificationError(VerificationErrorParser.MISSING_SYMBOL));
+        verification.getErrors().add(verificationError(VerificationErrorParser.GENERIC_INFERENCE));
+
+        RestorationScore score = new RestorationScorer().score(new JarAnalysisResult(), null, verification);
+
+        assertEquals(0, score.getBreakdown().get("verification").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "verification_errors".equals(g.getCategory())
+                        && g.getDetail().contains("MISSING_SYMBOL=2")
+                        && g.getDetail().contains("GENERIC_INFERENCE=1")));
+    }
+
+    @Test
+    void sourceRebuildBytecodeMismatchLowersSourceScore() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/App.class");
+        analysis.getClassFiles().add("demo/Service.class");
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/App.class", null, null));
+        analysis.getDecompileFindings().add(new DecompileFinding("demo/Service.class", null, null));
+        SourceRebuildFidelityResult fidelity = new SourceRebuildFidelityResult();
+        fidelity.setOriginalAppClasses(2);
+        fidelity.setRecompiledClasses(2);
+        fidelity.setCommonClasses(2);
+        fidelity.setSameClassBytes(1);
+        fidelity.setDifferentClassBytes(1);
+        fidelity.recordDifferentClass("demo/Service.class");
+        analysis.setSourceRebuildFidelity(fidelity);
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(50, score.getBreakdown().get("source").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "source_rebuild_bytecode".equals(g.getCategory())
+                        && g.getDetail().contains("different=1")
+                        && g.getDetail().contains("demo/Service.class")));
+    }
+
+    @Test
+    void sourceRebuildBytecodeMismatchCannotRoundToPerfectSourceScore() {
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        SourceRebuildFidelityResult fidelity = new SourceRebuildFidelityResult();
+        fidelity.setOriginalAppClasses(413);
+        fidelity.setRecompiledClasses(413);
+        fidelity.setCommonClasses(413);
+        fidelity.setSameClassBytes(412);
+        fidelity.setDifferentClassBytes(1);
+        fidelity.recordDifferentClass("demo/OneClass.class");
+        analysis.setSourceRebuildFidelity(fidelity);
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, null);
+
+        assertEquals(99, score.getBreakdown().get("source").intValue());
+    }
+
+    @Test
+    void packageFidelityMismatchLowersVerificationScore() {
+        ArtifactFidelityResult packageFidelity = new ArtifactFidelityResult();
+        packageFidelity.setOriginalEntryTotal(3);
+        packageFidelity.setRebuiltEntryTotal(3);
+        packageFidelity.setCommonEntries(3);
+        packageFidelity.setSameSha256(2);
+        packageFidelity.setDifferentSha256(1);
+        packageFidelity.setOriginalClassEntries(1);
+        packageFidelity.setRebuiltClassEntries(1);
+        packageFidelity.setCommonClassEntries(1);
+        packageFidelity.setDifferentClassBytes(1);
+        packageFidelity.setArchiveEntryOrderSame(false);
+        packageFidelity.setArchiveMetadataDiffEntries(1);
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setPackageFidelity(packageFidelity);
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(0);
+        verification.setFailureType("NONE");
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, verification);
+
+        assertEquals(0, score.getBreakdown().get("verification").intValue());
+        assertTrue(score.getGaps().stream().anyMatch(g ->
+                "package_fidelity".equals(g.getCategory())
+                        && g.getDetail().contains("exact=false")
+                        && g.getDetail().contains("classDiff=1")));
+    }
+
+    @Test
+    void packageFidelityContentMatchScoresVerificationFull() {
+        ArtifactFidelityResult packageFidelity = new ArtifactFidelityResult();
+        packageFidelity.setOriginalEntryTotal(3);
+        packageFidelity.setRebuiltEntryTotal(3);
+        packageFidelity.setCommonEntries(3);
+        packageFidelity.setSameSha256(3);
+        packageFidelity.setDifferentSha256(0);
+        packageFidelity.setArchiveBytesSame(false);
+        packageFidelity.setArchiveMetadataDiffEntries(2);
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.setPackageFidelity(packageFidelity);
+        VerificationResult verification = new VerificationResult();
+        verification.setExitCode(0);
+        verification.setFailureType("NONE");
+
+        RestorationScore score = new RestorationScorer().score(analysis, null, verification);
+
+        assertEquals(100, score.getBreakdown().get("verification").intValue());
+        assertTrue(score.getGaps().stream().noneMatch(g -> "package_fidelity".equals(g.getCategory())));
+    }
+
+    private VerificationError verificationError(String category) {
+        VerificationError error = new VerificationError();
+        error.setCategory(category);
+        return error;
+    }
+
+    private Path compileJar(String className, String source) throws Exception {
+        Path sourceDir = tempDir.resolve("src");
+        Path classesDir = tempDir.resolve("classes");
+        Files.createDirectories(sourceDir);
+        Files.createDirectories(classesDir);
+        Path sourceFile = sourceDir.resolve(className.replace('.', '/') + ".java");
+        Files.createDirectories(sourceFile.getParent());
+        Files.write(sourceFile, source.getBytes(StandardCharsets.UTF_8));
+
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+
+        Path jar = tempDir.resolve(className.substring(className.lastIndexOf('.') + 1) + ".jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            String classEntry = className.replace('.', '/') + ".class";
+            out.putNextEntry(new JarEntry(classEntry));
+            out.write(Files.readAllBytes(classesDir.resolve(classEntry)));
+            out.closeEntry();
+        }
+        return jar;
+    }
+}

@@ -7,12 +7,13 @@ JAR to Maven Project Converter - 将 JAR/WAR 文件自动还原为标准 Maven �
 - **批量处理**: 同时选择多个 JAR/WAR 文件或整个目录进行批量分析和构建
 - **双模式运行**: 支持 GUI 图形界面 和 CLI 命令行两种使用方式
 - **自动依赖检测**: 4 层检测策略（嵌入 POM > MANIFEST.MF > 字节码扫描 > 文件名启发式）
-- **自动反编译**: 集成 CFR 反编译器，将 .class 文件还原为 .java 源码
+- **自动反编译**: 集成 CFR、JD-Core、JADX、Fernflower 多引擎仲裁，将 .class 文件还原为 .java 源码；编译失败的回退类额外启用 Vineflower 兜底，择优写入 `decompiled-readable/`
 - **智能坐标识别**: 自动提取 groupId / artifactId / version
 - **80+ 常见库映射**: 内置 Google、Apache Commons、Spring、Jackson、Alibaba 等常见库的包名→Maven 坐标映射
 - **WAR 文件支持**: 自动识别 WAR 包并处理 WEB-INF 结构
 - **可编辑依赖**: GUI 中可手动增删、编辑、勾选检测到的依赖
 - **pom.xml 预览**: 生成前可预览和编辑 pom.xml，切换文件时自动缓存编辑内容
+- **还原报告**: 输出资源清单、启动手册、字节码 parity 报告和验证结果
 - **主题切换**: GUI 支持 FlatLaf 多主题（Light / Dark / Darcula / IntelliJ / Mac）
 
 ## 编译构建
@@ -36,11 +37,12 @@ java -jar jar2mp-1.0-jar-with-dependencies.jar
 操作流程：
 1. 点击 **添加文件** 选择一个或多个 JAR/WAR 文件，或点击 **添加目录** 自动扫描目录中的 jar/war 文件
 2. 设置输出目录
-3. 点击 **分析全部** 批量分析所有文件的 JAR 结构和依赖
-4. 在文件列表中点击切换不同文件，查看各自的分析结果和依赖
-5. 在 **依赖管理** 标签页中编辑选中文件的依赖
-6. 点击 **生成 pom.xml** 预览当前选中文件的 pom.xml
-7. 点击 **构建全部** 批量生成所有文件的 Maven 项目
+3. 按需在 **高级构建选项** 中启用字节级打包、原始构件保真副本、Maven 构建验证或运行时 Trace
+4. 点击 **分析全部** 批量分析所有文件的 JAR 结构和依赖
+5. 在文件列表中点击切换不同文件，查看各自的分析结果、构建验证、构建错误数、编译回退类数、源码重编译 class 字节摘要、字节级 package 保真、反编译失败数、运行状态及失败原因、恢复评分和依赖
+6. 在 **依赖管理** 标签页中编辑选中文件的依赖
+7. 点击 **生成 pom.xml** 预览当前选中文件的 pom.xml
+8. 点击 **构建全部** 批量生成所有文件的 Maven 项目；启用的高级选项会同步生成对应报告和保真构件，并刷新当前选中文件的 gate 摘要
 
 ![GUI](images/gui-main.png)
 
@@ -110,6 +112,16 @@ Options:
       --include-synthetic         包含合成/桥接方法
       --export-deps <file>        导出依赖到文件
       --import-deps <file>        从文件导入依赖
+      --verify-build              构建后运行 Maven 验证
+      --verify-goal <goal>        验证使用的 Maven goal（默认 compile）
+      --trace-runtime             启用运行时追踪报告
+      --trace-args <args>         指定运行时追踪参数
+      --trace-timeout <seconds>   设置运行时追踪超时（默认 120 秒）
+      --smoke-only                启用运行时追踪并跳过 Maven 验证
+      --emit-raw-artifact         在 target/raw-artifact/ 生成原始归档的字节保真副本
+      --byte-exact-package        为 Maven package 产物安装字节级保真修复与验证
+      --restore-package-records   内容一致后回放原始 ZIP records 使 package 产物字节一致
+      --compare-artifact <file>   将输入原始归档与指定重建归档做字节保真度对比
   -f, --force                     覆盖已存在的输出目录
   -q, --quiet                     静默模式
       --verbose                   详细输出
@@ -128,6 +140,92 @@ Options:
 | 3 | 字节码扫描 | 解析 .class 常量池中的包引用，匹配映射数据库 | LOW |
 | 4 | 文件名启发式 | 从 JAR 文件名猜测 `artifactId-version` | GUESS |
 
+## 还原与报告
+
+每个项目会生成以下报告：
+
+- `restoration-report.md` - 还原结果总览
+- `resource-inventory.md` - 资源分类与目标路径
+- `decompile-parity-report.md` - 字节码与源码对照，并汇总 HIGH/MEDIUM/LOW 方法级反编译风险；`Risk method index` 会在逐类明细前列出 HIGH/MEDIUM 方法，并区分 `reflection call detected`、`lambda metafactory invokedynamic`、`invokedynamic`、`missing debug names` 等原因；反射风险按 `java/lang/Class`、`java/lang/reflect` 和常见反射工具 owner 识别，避免把普通业务 `getMethod()`/`getField()` 方法名误报为反射；invokedynamic 明细会记录 bootstrap 方法及参数，用于定位 lambda 实现目标和字符串拼接 recipe；纯 `StringConcatFactory` 字符串拼接仍记录为 invokedynamic 事实但不进入 MEDIUM 风险；LocalVariableTable 缺失计数只统计确实有用户参数或本地变量写入、但缺少可恢复变量名的方法，并排除 synthetic enum switch-map、bridge method、enum support method、lambda deserialization support method、outer-this constructor 和 monitor temporaries 这类编译器支撑结构
+- `restoration-score.md` - 源码、源码重编译 class 字节一致性、资源、运行时观测与构建/package 验证的综合评分；源码重编译 class 字节或最终 package 字节不一致会进入扣分缺口；存在 fidelity CSV 时会内嵌 source rebuild 与 package exact/archive/content 摘要
+- `gap-summary.md` - 主要缺口与非扣分观察项汇总；存在 source rebuild fidelity CSV 时同样会显示源码重编译 class 字节一致性摘要；存在 package fidelity CSV 时同样会显示最终 package exact/archive/content 摘要；运行时启动失败缺口或环境观察项会包含 failure message 和首个 `Caused by:` 原因
+- `source-rebuild-fidelity-report.md` / `source-rebuild-fidelity-summary.csv` - 启用 `--verify-build` 且 Maven 构建成功时生成，把原始归档中的应用 `.class` 与生成项目 `target/classes` 的 `.class` 做字节级对比；compile fallback class 会单独计数，不计为纯源码重编译一致
+- `runtime-trace-report.md` - 运行时追踪报告（启用运行时追踪时生成），Run summary 会显示 run status、failure message 和从 `Caused by:` 提取的 failure cause
+- `RUNBOOK.md` - 启动候选与运行方式
+- `verification-report.md` - 启用 `--verify-build` 时的 Maven 验证摘要
+- `verification-errors.md` - 启用 `--verify-build` 时解析出的逐文件编译错误明细
+- `decompile-failures.md` - 反编译失败条目和原始 class 退回位置；synthetic enum switch-map 等外层源码已覆盖的编译器支撑 class 会原样保留但不计为失败
+- `decompiled-readable/` - 原始 `.class` 退回路径保留的可读反编译源码，仅供阅读分析，不在 Maven 源码根目录下参与编译
+- `artifact-fidelity-report.md` / `artifact-fidelity-summary.csv` - 启用 `--compare-artifact` 时的原始/重建 artifact 对比；如果内容一致但 ZIP entry 顺序、空目录 entry 集合或可原位恢复的 ZIP 元数据不同，还会生成 `archive-order-restored/` 候选和对应保真报告
+- `target/byte-exact-package-check/artifact-fidelity-report.md` - 启用 `--byte-exact-package --verify-build` 且 package 生命周期运行时的最终产物保真报告
+- `target/package-record-restore-check/artifact-fidelity-report.md` - 启用 `--restore-package-records --verify-build` 且 package 生命周期运行时的受保护 ZIP record 回放产物保真报告
+
+当输入归档包含仅大小写不同的 class 路径时，jar2mp 不会把这些 class 展开到普通目录；它会生成 `target/compiler-fallback-classes.jar` 并在 `pom.xml` 中加入 system-scope 依赖，避免大小写不敏感文件系统破坏 Maven 编译类路径。
+
+推荐验证流程：
+
+1. 先看 `restoration-report.md` 和 `resource-inventory.md`
+2. 再看 `RUNBOOK.md` 确认启动方式
+3. 用 `decompile-parity-report.md` 的 Risk summary 和 Risk method index 定位高风险方法，再下钻逐方法明细
+4. 看 `restoration-score.md` 和 `gap-summary.md` 了解源码、资源、运行时观测与构建验证缺口；0 impact 的外部环境问题会单独作为 observation/环境观察，不计入 remaining restoration gaps；如启用了 `--verify-build` 且构建成功，两份报告都会展示 source rebuild class 字节一致性摘要
+5. 如需确认可编译性和源码重编译 class 字节一致性，启用 `--verify-build` 并查看 `source-rebuild-fidelity-report.md`；如需确认最终包字节一致性，查看对应 artifact fidelity 报告
+
+## 样本回归验证
+
+仓库提供本地样本回归脚本，用于生成普通 Maven JAR、Spring Boot JAR、WAR、MyBatis、Shiro、Spring Security、ProGuard 混淆 JAR、无 debug 信息 JAR，并逐类运行还原评分：
+
+```bash
+./scripts/regression/run-sample-regression.sh
+```
+
+汇总报告写入 `target/regression-samples/report/regression-summary.md` 和 `target/regression-samples/report/regression-summary.csv`。样本矩阵、阈值和 PASS/FAIL 规则见 `docs/regression-samples.md`。
+
+如需聚焦验证严格字节级 package 路径，可以运行独立 CLI 回归脚本。它会生成两个本地 Maven JAR，分别覆盖字节一致（`plain-maven-jar`，默认 `-g` 编译）和字节差异（`lambda-switch-jar`，`-g:none` 编译，含 capturing lambda、方法引用和 string switch，重编译 class 字节与原始不同，验证 `BytecodeBackfiller` 和 `ZipRecordOrderRestorer` 路径），调用真实 fat CLI 的 `--byte-exact-package --verify-build --verify-goal package`，并要求每个样本的 `target/byte-exact-package-check/artifact-fidelity-summary.csv` 的 `exact_match=true`、`archive_bytes_same=true`，且最终 package 产物 SHA-256 与原始 JAR 完全一致；任一门禁失败都会非零退出：
+
+```bash
+./scripts/regression/run-byte-exact-regression.sh
+```
+
+输出写入 `target/byte-exact-regression/`，CLI 日志位于 `target/byte-exact-regression/report/plain-maven-jar.cli.log` 和 `target/byte-exact-regression/report/lambda-switch-jar.cli.log`。
+
+也可以运行真实 GitHub 项目回归集，脚本会下载固定 ref 的 Spring Boot、Spring Security、MyBatis WAR、Shiro 样本，构建原始产物后再用 jar2mp 做 verify-only 还原验证：
+
+```bash
+./scripts/regression/run-github-realworld-regression.sh
+```
+
+汇总报告写入 `target/realworld-samples/report/github-realworld-summary.md` 和 `target/realworld-samples/report/github-realworld-summary.csv`。realworld 矩阵会分别记录 source rebuild artifact fidelity、raw artifact exact、byte-exact package 门禁和 package-record restore 证据；样本来源、固定 ref、阈值和已知非门禁候选见 `docs/github-realworld-regression.md`。
+
+也可以运行下载型 GitHub Release 二进制样本矩阵，脚本会下载固定 release asset 并验证还原项目的编译门禁与 raw artifact 保真：
+
+```bash
+./scripts/regression/run-github-release-assets-regression.sh
+```
+
+汇总报告写入 `target/release-assets-samples/report/github-release-assets-summary.md` 和 `target/release-assets-samples/report/github-release-assets-summary.csv`。`PASS_WITH_WARNINGS` 表示 Maven package 验证、raw artifact exact 与 byte-exact package 门禁通过，但仍存在 raw-class fallback、运行时跳过/告警、源码分数未满分或 package-record restore 未精确通过。
+
+严格字节级还原使用 `--byte-exact-package`：它会隐式启用 `--emit-raw-artifact`，在生成的 `pom.xml` 中使用原始归档文件名作为 `finalName`、写入常见测试/质量插件的 skip properties，并跳过原 POM 中会在 `package` 阶段重写主 artifact 的 shade/assembly/repackage 等插件。jar2mp 还会在生成项目的 `.jar2mp/byte-exact/` 写入 standalone ZIP record helper 和 `.jar2mp/byte-exact/raw-artifact/<original-name>` 参考原包；后续 `mvn package` 或 `mvn clean package` 会先生成正常 package 产物作为 Maven 项目可打包性的门禁，再由 helper 以原始归档作为最终 ZIP record 的规范字节来源，回放原始 entry 顺序、空目录 entry、manifest/module-info/resource/class 字节、entry 集合和 ZIP 元数据，最终写入 `target/byte-exact-package-restored/<original-name>`。和 `--verify-build` 一起使用时，默认验证目标会从 `compile` 提升为 `package`，并在 `target/byte-exact-package-check/` 写入最终 package 产物的字节保真报告；显式 `--verify-goal` 仍可覆盖。若需要保留普通源码重构包语义、但在内容 entry 已一致时把最终 `mvn package` 产物提升到字节一致，可使用 `--restore-package-records`；该模式不会改 `finalName` 或跳过 package-transforming 插件，会在 `.jar2mp/package-records/` 写入受保护 helper 和参考原包，helper 先校验 Maven 产物的非目录 entry 集合与内容摘要一致，再回放原始 ZIP records，验证报告写入 `target/package-record-restore-check/`。普通 `--emit-raw-artifact` 只保留 `target/raw-artifact/` 原始副本和报告，不改变 `mvn package` 的源码重构产物；普通源码重构包会在 `process-classes` 阶段回填原始 class bytes，用于隔离剩余 ZIP 容器层差异。Spring Boot 可执行 JAR 的普通 package 还会在 repackage 后用 `src/main/original-libs/BOOT-INF/lib` 重建最终 `BOOT-INF/lib` 集合，用 `src/main/original-boot-loader` 回填原始 root Spring Boot loader classes，并把原始 `META-INF/MANIFEST.MF` 覆盖回最终包，避免 system-scope 依赖被 Spring Boot 插件改名、补入传递依赖，或由当前插件版本注入不同 loader/manifest 字节。
+
+对于已经下载到 `target/adhoc-github-release-assets/assets/` 的临时 GitHub Release 二进制样本，可以运行离线缓存矩阵来刷新当前源码的编译、raw artifact 与 byte-exact package 门禁结果：
+
+```bash
+./scripts/regression/run-cached-adhoc-release-assets-regression.sh
+```
+
+汇总报告写入 `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.md` 和 `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.csv`。固定缓存样本、PASS 规则和输出目录见 `docs/regression-samples.md`。
+
+
+能还原的主要内容：
+
+- Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标、原始 class bytes、原始 `META-INF/maven/**` metadata、原始 manifest、build-info/SBOM 等可保留构建元数据
+
+不能保证完全还原的内容：
+
+- 反射调用的真实运行时行为
+- 混淆/损坏的 class
+- 缺失调试信息导致的局部变量名恢复
+- 运行时生成内容、外部服务依赖和部署环境
+
 ## 生成项目结构
 
 每个输入文件在输出目录下生成独立的项目：
@@ -136,10 +234,35 @@ Options:
 {output}/
 ├── {artifactId-1}/
 │   ├── pom.xml
+│   ├── restoration-report.md
+│   ├── resource-inventory.md
+│   ├── decompile-parity-report.md
+│   ├── restoration-score.md
+│   ├── gap-summary.md
+│   ├── source-rebuild-fidelity-report.md   ← 启用构建验证且构建成功时生成
+│   ├── source-rebuild-fidelity-summary.csv ← source rebuild class 字节一致性摘要
+│   ├── runtime-trace-report.md   ← 启用运行时追踪时生成
+│   ├── RUNBOOK.md
+│   ├── verification-report.md   ← 启用构建验证时生成
+│   ├── verification-errors.md   ← 启用构建验证且存在可解析错误时生成
+│   ├── decompile-failures.md
+│   ├── decompiled-readable/     ← 原始 .class 退回路径的可读源码，不参与 Maven 编译
+│   ├── .jar2mp/
+│   │   ├── byte-exact/          ← byte-exact package helper 与参考原包（启用 --byte-exact-package）
+│   │   └── package-records/     ← 受保护 package record helper 与参考原包（启用 --restore-package-records）
+│   ├── target/
+│   │   ├── original-classes/   ← 反编译失败或编译器支撑 class 需要保留时的原始 class
+│   │   ├── byte-exact-package-check/  ← byte-exact + 构建验证 package 阶段保真报告
+│   │   ├── package-record-restore-check/  ← package-record + 构建验证 package 阶段保真报告
+│   │   └── compiler-fallback-classes.jar  ← 大小写冲突 class 的编译 fallback jar
 │   └── src/
 │       ├── main/
 │       │   ├── java/          ← 反编译后的 .java 文件（保留包结构）
-│       │   └── resources/     ← 非类文件资源 + META-INF/services
+│       │   ├── resources/     ← 非类文件资源 + META-INF/services
+│       │   ├── original-classes/ ← clean package 时回填原始 class bytes 和 entry mtime
+│       │   ├── original-libs/  ← clean package 时提供原始 BOOT-INF/lib / WEB-INF/lib 编译 classpath
+│       │   ├── original-boot-loader/ ← Spring Boot package 时回填原始 root loader classes
+│       │   └── webapp/        ← WAR 根资源与 WEB-INF 相关资源
 │       └── test/
 │           ├── java/
 │           └── resources/
@@ -154,7 +277,7 @@ Options:
 
 - **Java 8** - 目标兼容版本
 - **FlatLaf** - GUI 主题框架
-- **CFR** - Java 反编译器
+- **CFR / JD-Core / JADX / Fernflower / Vineflower** - 交叉反编译与质量仲裁；Vineflower 作为编译兜底引擎
 - **Gson** - JSON 处理
 - **Maven Assembly Plugin** - 打包为可执行 fat JAR
 

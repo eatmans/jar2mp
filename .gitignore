@@ -38,3 +38,8 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+### jar2mp generated / tooling ###
+.codegraph/
+.understand-anything/
+.nvmrc

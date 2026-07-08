@@ -8,6 +8,8 @@ import java.io.*;
 import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class DependencyDetector {
 
@@ -27,6 +29,15 @@ public class DependencyDetector {
      * Detect all dependencies from a JAR file using multiple strategies.
      */
     public List<MavenDependency> detect(JarFile jarFile, ManifestInfo manifestInfo, PomInfo pomInfo) {
+        return detect(jarFile, manifestInfo, pomInfo, null, null, null);
+    }
+
+    public List<MavenDependency> detect(JarFile jarFile,
+                                        ManifestInfo manifestInfo,
+                                        PomInfo pomInfo,
+                                        List<PomInfo> embeddedPomInfos,
+                                        List<String> applicationClassFiles,
+                                        Map<String, String> classPathMapping) {
         Map<String, MavenDependency> deps = new LinkedHashMap<>();
 
         // Strategy 1: Embedded POM dependencies (highest confidence)
@@ -36,41 +47,290 @@ public class DependencyDetector {
                 deps.put(dep.getKey(), dep);
             }
         }
+        addEmbeddedPomDependencies(deps, pomInfo, embeddedPomInfos);
 
-        // Strategy 2: MANIFEST.MF Class-Path hints
+        // Strategy 2: Spring Boot/WAR bundled dependency jars
+        addNestedLibraryDependencies(deps, jarFile);
+        boolean hasEmbeddedDependencies = !deps.isEmpty();
+
+        // Strategy 3: MANIFEST.MF Class-Path hints
         if (manifestInfo != null && manifestInfo.getClassPath() != null) {
             String[] cpEntries = manifestInfo.getClassPath().split("\\s+");
             for (String cpEntry : cpEntries) {
                 MavenDependency dep = guessFromFilename(new File(cpEntry).getName());
-                if (dep != null) {
+                if (isResolvableManifestHint(dep)) {
                     dep.setConfidence(MavenDependency.Confidence.MEDIUM);
                     deps.putIfAbsent(dep.getKey(), dep);
                 }
             }
         }
 
-        // Strategy 3: Class file scanning against package database
-        Set<String> packages = classFileScanner.scanPackages(jarFile);
+        // Strategy 4: Class file scanning against package database. When
+        // embedded metadata or bundled libs exist, use scan data to fill
+        // missing/property versions and add only external packages not already
+        // covered by higher-confidence evidence.
+        Set<String> packages = classFileScanner.scanPackages(jarFile, applicationClassFiles, classPathMapping);
         for (String pkg : packages) {
             MavenCoordinates coord = packageDb.lookup(pkg);
-            if (coord != null) {
-                String key = coord.getGroupId() + ":" + coord.getArtifactId();
-                if (!deps.containsKey(key)) {
-                    MavenDependency dep = new MavenDependency(
-                            coord.getGroupId(),
-                            coord.getArtifactId(),
-                            coord.getVersion(),
-                            MavenDependency.Confidence.LOW
-                    );
-                    deps.put(key, dep);
+            if (coord == null) {
+                continue;
+            }
+            String key = coord.getGroupId() + ":" + coord.getArtifactId();
+            MavenDependency existing = deps.get(key);
+            if (existing != null) {
+                if (!hasConcreteVersion(existing.getVersion()) && hasConcreteVersion(coord.getVersion())) {
+                    existing.setVersion(coord.getVersion());
                 }
+                continue;
+            }
+            if (hasEmbeddedDependencies && isOwnGroup(coord, pomInfo)) {
+                continue;
+            }
+            if (hasEmbeddedDependencies && isCoveredByEmbeddedDependency(coord, deps.values())) {
+                continue;
+            }
+            if (!hasEmbeddedDependencies || isExternalPackage(coord, pomInfo)) {
+                MavenDependency dep = new MavenDependency(
+                        coord.getGroupId(),
+                        coord.getArtifactId(),
+                        coord.getVersion(),
+                        MavenDependency.Confidence.LOW
+                );
+                deps.put(key, dep);
             }
         }
 
-        // Strategy 4: Filename heuristic for WAR files
+        // Strategy 5: Filename heuristic for WAR files
         // (handled separately in WarAnalyzer)
 
         return new ArrayList<>(deps.values());
+    }
+
+    private void addNestedLibraryDependencies(Map<String, MavenDependency> deps, JarFile jarFile) {
+        if (jarFile == null) {
+            return;
+        }
+        Enumeration<JarEntry> entries = jarFile.entries();
+        while (entries.hasMoreElements()) {
+            JarEntry entry = entries.nextElement();
+            String name = entry.getName();
+            if (!isNestedLibraryPath(name)) {
+                continue;
+            }
+            MavenDependency dependency = null;
+            String nestedFilename = fileName(name);
+            try (InputStream inputStream = jarFile.getInputStream(entry)) {
+                dependency = readNestedLibraryDependency(inputStream, nestedFilename);
+            } catch (IOException ignored) {
+                // Filename parsing below remains the fallback for unreadable nested JARs.
+            }
+            if (dependency == null) {
+                dependency = guessFromFilename(nestedFilename);
+            }
+            if (dependency != null) {
+                deps.putIfAbsent(dependency.getKey(), dependency);
+            }
+        }
+    }
+
+    private boolean isNestedLibraryPath(String name) {
+        return name != null
+                && (name.startsWith("BOOT-INF/lib/") || name.startsWith("WEB-INF/lib/"))
+                && name.endsWith(".jar");
+    }
+
+    private MavenDependency readNestedLibraryDependency(InputStream inputStream, String filename) throws IOException {
+        List<MavenDependency> candidates = new ArrayList<>();
+        try (ZipInputStream zipInputStream = new ZipInputStream(inputStream)) {
+            ZipEntry entry;
+            while ((entry = zipInputStream.getNextEntry()) != null) {
+                String name = entry.getName();
+                if (name == null || !name.startsWith("META-INF/maven/")
+                        || !name.endsWith("/pom.properties")) {
+                    continue;
+                }
+                Properties properties = new Properties();
+                properties.load(zipInputStream);
+                String groupId = trimToNull(properties.getProperty("groupId"));
+                String artifactId = trimToNull(properties.getProperty("artifactId"));
+                String version = trimToNull(properties.getProperty("version"));
+                if (groupId != null && artifactId != null && version != null) {
+                    candidates.add(new MavenDependency(groupId, artifactId, version, MavenDependency.Confidence.HIGH));
+                }
+            }
+        }
+        return selectNestedLibraryDependency(candidates, filename);
+    }
+
+    private MavenDependency selectNestedLibraryDependency(List<MavenDependency> candidates, String filename) {
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        String artifactId = inferArtifactId(filename);
+        String version = inferVersion(filename);
+        for (MavenDependency candidate : candidates) {
+            if (equals(candidate.getArtifactId(), artifactId) && equals(candidate.getVersion(), version)) {
+                return candidate;
+            }
+        }
+        for (MavenDependency candidate : candidates) {
+            if (equals(candidate.getArtifactId(), artifactId)) {
+                return candidate;
+            }
+        }
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+        return guessFromFilename(filename);
+    }
+
+    private String inferArtifactId(String jarName) {
+        String base = stripArchiveSuffix(jarName);
+        int split = findVersionSplit(base);
+        return split > 0 ? base.substring(0, split) : base;
+    }
+
+    private String inferVersion(String jarName) {
+        String base = stripArchiveSuffix(jarName);
+        int split = findVersionSplit(base);
+        return split > 0 ? base.substring(split + 1) : null;
+    }
+
+    private String stripArchiveSuffix(String jarName) {
+        String base = fileName(jarName);
+        int dot = base.lastIndexOf('.');
+        return dot > 0 ? base.substring(0, dot) : base;
+    }
+
+    private int findVersionSplit(String base) {
+        for (int i = base.length() - 1; i >= 0; i--) {
+            if (base.charAt(i) == '-') {
+                String version = base.substring(i + 1);
+                if (!version.isEmpty() && Character.isDigit(version.charAt(0))) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private String fileName(String path) {
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private void addEmbeddedPomDependencies(Map<String, MavenDependency> deps,
+                                            PomInfo primaryPom,
+                                            List<PomInfo> embeddedPomInfos) {
+        if (embeddedPomInfos == null || embeddedPomInfos.isEmpty()) {
+            return;
+        }
+        for (PomInfo info : embeddedPomInfos) {
+            if (info == null || !info.hasCoordinates() || sameCoordinates(info, primaryPom)) {
+                continue;
+            }
+            MavenDependency dep = new MavenDependency(
+                    info.getGroupId(),
+                    info.getArtifactId(),
+                    info.getVersion(),
+                    MavenDependency.Confidence.HIGH
+            );
+            deps.putIfAbsent(dep.getKey(), dep);
+        }
+    }
+
+    private boolean sameCoordinates(PomInfo left, PomInfo right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        return equals(left.getGroupId(), right.getGroupId())
+                && equals(left.getArtifactId(), right.getArtifactId());
+    }
+
+    private boolean equals(String left, String right) {
+        return left == null ? right == null : left.equals(right);
+    }
+
+    private boolean isResolvableManifestHint(MavenDependency dep) {
+        if (dep == null) {
+            return false;
+        }
+        return isKnown(dep.getGroupId()) && isKnown(dep.getVersion());
+    }
+
+    private boolean isKnown(String value) {
+        return value != null && !value.trim().isEmpty() && !"unknown".equalsIgnoreCase(value.trim());
+    }
+
+    private boolean hasConcreteVersion(String value) {
+        return isKnown(value) && !value.contains("${");
+    }
+
+    private boolean isOwnGroup(MavenCoordinates coord, PomInfo pomInfo) {
+        return coord != null
+                && pomInfo != null
+                && pomInfo.getGroupId() != null
+                && coord.getGroupId() != null
+                && coord.getGroupId().equals(pomInfo.getGroupId());
+    }
+
+    private boolean isExternalPackage(MavenCoordinates coord, PomInfo pomInfo) {
+        return !isOwnGroup(coord, pomInfo);
+    }
+
+    private boolean isCoveredByEmbeddedDependency(MavenCoordinates coord, Collection<MavenDependency> embeddedDeps) {
+        if (coord == null || embeddedDeps == null || embeddedDeps.isEmpty()) {
+            return false;
+        }
+        for (MavenDependency embeddedDep : embeddedDeps) {
+            if (embeddedDep == null) {
+                continue;
+            }
+            if (sameGroup(coord, embeddedDep)) {
+                return true;
+            }
+            if (isSpringBootStarter(embeddedDep) && isSpringBootManagedTransitive(coord)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean sameGroup(MavenCoordinates left, MavenCoordinates right) {
+        return left.getGroupId() != null && left.getGroupId().equals(right.getGroupId());
+    }
+
+    private boolean isSpringBootStarter(MavenCoordinates coord) {
+        return "org.springframework.boot".equals(coord.getGroupId())
+                && coord.getArtifactId() != null
+                && coord.getArtifactId().startsWith("spring-boot-starter");
+    }
+
+    private boolean isSpringBootManagedTransitive(MavenCoordinates coord) {
+        String groupId = coord.getGroupId();
+        if (groupId == null) {
+            return false;
+        }
+        return groupId.equals("org.springframework")
+                || groupId.equals("org.springframework.boot")
+                || groupId.equals("org.springframework.security")
+                || groupId.equals("org.thymeleaf")
+                || groupId.equals("org.attoparser")
+                || groupId.equals("ognl")
+                || groupId.equals("org.javassist")
+                || groupId.equals("org.slf4j")
+                || groupId.equals("ch.qos.logback")
+                || groupId.equals("org.apache.tomcat.embed")
+                || groupId.equals("com.fasterxml.jackson.core")
+                || groupId.equals("org.hibernate.validator");
     }
 
     /**
@@ -179,7 +439,6 @@ public class DependencyDetector {
                     if (major > maxMajor) maxMajor = major;
                 } catch (IOException ignored) {
                 }
-                break; // Just check one class for speed
             }
         }
 

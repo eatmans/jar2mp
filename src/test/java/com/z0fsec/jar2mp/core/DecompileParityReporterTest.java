@@ -1,0 +1,1507 @@
+package com.z0fsec.jar2mp.core;
+
+import com.z0fsec.jar2mp.model.JarAnalysisResult;
+import com.z0fsec.jar2mp.model.DecompileFinding;
+import com.z0fsec.jar2mp.util.ClassFileUtils;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import javax.tools.ToolProvider;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+import java.util.jar.JarOutputStream;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class DecompileParityReporterTest {
+
+    @TempDir
+    Path tempDir;
+
+    @Test
+    void extractsBytecodeFactsNeededToCheckDecompileParity() throws Exception {
+        Path classFile = compileReflectiveFlowClass();
+
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(Files.readAllBytes(classFile));
+        BytecodeFingerprint.MethodFingerprint method =
+                fingerprint.getMethodsByKey().get("run(Ljava/lang/String;)Ljava/lang/String;");
+
+        assertEquals("demo/ReflectiveFlow", fingerprint.getClassName());
+        assertNotNull(method);
+        assertTrue(method.getLocalVariableNames().contains("input"));
+        assertTrue(method.getLocalVariableNames().contains("message"));
+        assertTrue(method.getMethodCalls().contains("java/lang/Class.forName(Ljava/lang/String;)Ljava/lang/Class;"));
+        assertTrue(method.getStringConstants().contains("java.lang.String"));
+        assertTrue(method.getBranchOpcodeCount() > 0);
+    }
+
+    @Test
+    void extractsLocalVariableGenericTypesFromDebugMetadata() throws Exception {
+        byte[] classBytes = TestClassCompiler.compile(
+                "demo.LocalGenerics",
+                "package demo;\n"
+                        + "import java.util.ArrayList;\n"
+                        + "import java.util.List;\n"
+                        + "import java.util.Set;\n"
+                        + "import java.util.LinkedHashSet;\n"
+                        + "class LocalGenerics {\n"
+                        + "    void run() {\n"
+                        + "        List<Long> disableFailUserIdList = new ArrayList<Long>();\n"
+                        + "        Set<String> names = new LinkedHashSet<String>();\n"
+                        + "        System.out.println(disableFailUserIdList.size() + names.size());\n"
+                        + "    }\n"
+                        + "}\n");
+
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(classBytes);
+        BytecodeFingerprint.MethodFingerprint method = fingerprint.getMethodsByKey().get("run()V");
+        assertNotNull(method);
+
+        Map<String, String> genericTypes = method.getLocalVariableGenericTypes();
+        assertEquals("java.util.List<java.lang.Long>", genericTypes.get("disableFailUserIdList"));
+        assertEquals("java.util.Set<java.lang.String>", genericTypes.get("names"));
+        assertEquals(genericTypes, fingerprint.getUniqueLocalVariableGenericTypes());
+    }
+
+    @Test
+    void writesReportThatFlagsSourceCoverageAndReflectionRisks() throws Exception {
+        Path classFile = compileReflectiveFlowClass();
+        Path jarPath = tempDir.resolve("sample.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/ReflectiveFlow.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/ReflectiveFlow.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, reflectiveFlowSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/ReflectiveFlow.class");
+        DecompileFinding finding = new DecompileFinding("demo/ReflectiveFlow.class", null, null);
+        finding.setSelectedEngine("fernflower");
+        finding.setFallbackReason("cfr emitted stub-only output");
+        finding.setEngineSummary("cfr=failed(stub-only output), jd-core=70, jadx=70, fernflower=75");
+        analysis.getDecompileFindings().add(finding);
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Decompile parity report"));
+        assertTrue(report.contains("## Risk summary"));
+        assertTrue(report.contains("| Risk | Methods |"));
+        assertTrue(report.contains("| HIGH |"));
+        assertTrue(report.contains("## Risk method index"));
+        assertTrue(report.contains("| Risk | Class | Method | Reason |"));
+        assertTrue(report.contains("| HIGH | `demo/ReflectiveFlow` | `run(Ljava/lang/String;)Ljava/lang/String;` | reflection call detected |"));
+        assertTrue(report.contains("demo/ReflectiveFlow"));
+        assertTrue(report.contains("run(Ljava/lang/String;)Ljava/lang/String;"));
+        assertTrue(report.contains("Selected engine: fernflower"));
+        assertTrue(report.contains("Engine scores: cfr=failed"));
+        assertTrue(report.contains("Fallback reason: cfr emitted stub-only output"));
+        assertTrue(report.contains("Variable names: present in source"));
+        assertTrue(report.contains("java/lang/Class.forName(Ljava/lang/String;)Ljava/lang/Class;"));
+        assertTrue(report.contains("Control flow"));
+    }
+
+    @Test
+    void writesReportWithAdvancedBytecodeParityFacts() throws Exception {
+        CompiledClass advancedClass = compileAdvancedParityClass();
+        Path jarPath = tempDir.resolve("advanced.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/AdvancedParity.class"));
+            jar.write(Files.readAllBytes(advancedClass.classFile));
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry("demo/AuditMarker.class"));
+            jar.write(Files.readAllBytes(advancedClass.annotationClassFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("advanced-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/AdvancedParity.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, advancedParitySource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/AdvancedParity.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Exception handlers"));
+        assertTrue(report.contains("Invokedynamic"));
+        assertTrue(report.contains("Fields"));
+        assertTrue(report.contains("Annotations"));
+        assertTrue(report.contains("Generic signatures"));
+        assertTrue(report.contains("Thrown exceptions"));
+        assertTrue(report.contains("Risk level: MEDIUM (lambda metafactory invokedynamic)"));
+        assertTrue(report.contains("| MEDIUM | `demo/AdvancedParity` | `run(Ljava/lang/Number;)Ljava/lang/String;` | lambda metafactory invokedynamic |"));
+    }
+
+    @Test
+    void treatsStringConcatInvokedynamicAsLowRiskWhenSourceExists() throws Exception {
+        Path classFile = compileStringConcatClass();
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(Files.readAllBytes(classFile));
+        BytecodeFingerprint.MethodFingerprint method =
+                fingerprint.getMethodsByKey().get("message(Ljava/lang/String;I)Ljava/lang/String;");
+        assertNotNull(method);
+        assertTrue(method.getInvokedynamicCalls().iterator().next()
+                .contains("java/lang/invoke/StringConcatFactory.makeConcatWithConstants"));
+        assertTrue(method.getInvokedynamicCalls().iterator().next()
+                .contains("args=string:user=\\u0001, count=\\u0001"));
+
+        Path jarPath = tempDir.resolve("string-concat.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/StringConcatOnly.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("string-concat-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/StringConcatOnly.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, stringConcatSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/StringConcatOnly.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Methods with invokedynamic: 1"));
+        assertTrue(report.contains("Risk level: LOW (string-concat invokedynamic only)"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertFalse(report.contains("| MEDIUM | `demo/StringConcatOnly` | `message(Ljava/lang/String;I)Ljava/lang/String;`"));
+    }
+
+    @Test
+    void doesNotTreatStringConcatRecipeTextAsReflection() throws Exception {
+        Path classFile = compileReflectionTextStringConcatClass();
+        Path jarPath = tempDir.resolve("reflection-text-string-concat.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/ReflectionTextStringConcat.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("reflection-text-string-concat-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/ReflectionTextStringConcat.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, reflectionTextStringConcatSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/ReflectionTextStringConcat.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (string-concat invokedynamic only)"));
+        assertTrue(report.contains("args=string:literal, java/lang/Class.getMethod(\\u0001"));
+        assertFalse(report.contains("reflection call detected"));
+        assertFalse(report.contains("Reflection: detected call"));
+    }
+
+    @Test
+    void keepsMixedLambdaAndStringConcatInvokedynamicAsMediumRisk() throws Exception {
+        Path classFile = compileMixedInvokedynamicClass();
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(Files.readAllBytes(classFile));
+        BytecodeFingerprint.MethodFingerprint method =
+                fingerprint.getMethodsByKey().get("format(Ljava/lang/String;)Ljava/lang/String;");
+        assertNotNull(method);
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .allMatch(call -> call.contains(" [bootstrap=")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .filter(call -> call.startsWith("invokedynamic.apply"))
+                .count() >= 2);
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("demo/MixedInvokedynamic.lambda$format$0")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("demo/MixedInvokedynamic.lambda$format$1")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .filter(call -> call.startsWith("invokedynamic.apply"))
+                .allMatch(call -> call.contains("java/lang/invoke/LambdaMetafactory.metafactory")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .filter(call -> call.startsWith("invokedynamic.makeConcat"))
+                .allMatch(call -> call.contains("java/lang/invoke/StringConcatFactory.makeConcat")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("java/lang/invoke/StringConcatFactory.makeConcatWithConstants")));
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("java/lang/invoke/LambdaMetafactory.metafactory")));
+
+        Path jarPath = tempDir.resolve("mixed-invokedynamic.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/MixedInvokedynamic.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("mixed-invokedynamic-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/MixedInvokedynamic.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, mixedInvokedynamicSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/MixedInvokedynamic.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Methods with invokedynamic: 1"));
+        assertTrue(report.contains("Risk level: MEDIUM (lambda metafactory invokedynamic)"));
+        assertTrue(report.contains(
+                "| MEDIUM | `demo/MixedInvokedynamic` | `format(Ljava/lang/String;)Ljava/lang/String;` | lambda metafactory invokedynamic |"));
+        assertTrue(report.contains("demo/MixedInvokedynamic.lambda$format$0"));
+        assertTrue(report.contains("demo/MixedInvokedynamic.lambda$format$1"));
+        assertFalse(report.contains("Risk level: LOW (string-concat invokedynamic only)"));
+    }
+
+    @Test
+    void treatsLambdaDeserializationSupportMethodAsLowRisk() throws Exception {
+        Path classFile = compileSerializableLambdaClass();
+        BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(Files.readAllBytes(classFile));
+        BytecodeFingerprint.MethodFingerprint method =
+                fingerprint.getMethodsByKey().get("$deserializeLambda$(Ljava/lang/invoke/SerializedLambda;)Ljava/lang/Object;");
+        assertNotNull(method);
+        assertTrue(method.getInvokedynamicCalls().stream()
+                .anyMatch(call -> call.contains("LambdaMetafactory")));
+
+        Path jarPath = tempDir.resolve("serializable-lambda.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/SerializableLambdaOwner.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("serializable-lambda-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/SerializableLambdaOwner.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, serializableLambdaSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/SerializableLambdaOwner.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("### $deserializeLambda$(Ljava/lang/invoke/SerializedLambda;)Ljava/lang/Object;"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated lambda deserialization support method)"));
+        assertFalse(report.contains("| MEDIUM | `demo/SerializableLambdaOwner` | "
+                + "`$deserializeLambda$(Ljava/lang/invoke/SerializedLambda;)Ljava/lang/Object;`"));
+    }
+
+    @Test
+    void doesNotTreatOrdinaryGetMethodCallsAsReflection() throws Exception {
+        Path classFile = compileNonReflectiveGetMethodClass();
+        Path jarPath = tempDir.resolve("non-reflective-get-method.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/NonReflectiveGetMethod.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("non-reflective-get-method-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/NonReflectiveGetMethod.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, nonReflectiveGetMethodSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/NonReflectiveGetMethod.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (source and bytecode facts align for basic checks)"));
+        assertTrue(report.contains("demo/NonReflectiveGetMethod$Request.getMethod()Ljava/lang/String;"));
+        assertFalse(report.contains("reflection call detected"));
+        assertFalse(report.contains("Reflection: detected call"));
+    }
+
+    @Test
+    void doesNotTreatMethodReferenceToFieldGetterAsReflection() throws Exception {
+        Path classFile = compileNonReflectiveFieldGetterClass();
+        Path jarPath = tempDir.resolve("non-reflective-field-getter.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/NonReflectiveFieldGetter.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("non-reflective-field-getter-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/NonReflectiveFieldGetter.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, nonReflectiveFieldGetterSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/NonReflectiveFieldGetter.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: MEDIUM (lambda metafactory invokedynamic)"));
+        assertTrue(report.contains("demo/NonReflectiveFieldGetter$FieldData.getField()Ljava/lang/reflect/Field;"));
+        assertFalse(report.contains("reflection call detected"));
+        assertFalse(report.contains("Reflection: detected call"));
+    }
+
+    @Test
+    void treatsPluralClassReflectionApisAsReflection() throws Exception {
+        Path classFile = compilePluralReflectionApiClass();
+        Path jarPath = tempDir.resolve("plural-reflection-api.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/PluralReflectionApi.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("plural-reflection-api-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/PluralReflectionApi.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, pluralReflectionApiSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/PluralReflectionApi.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: HIGH (reflection call detected)"));
+        assertTrue(report.contains("java/lang/Class.getDeclaredFields()[Ljava/lang/reflect/Field;"));
+        assertTrue(report.contains("Reflection: detected call(s): java/lang/Class.getDeclaredFields()[Ljava/lang/reflect/Field;"));
+    }
+
+    @Test
+    void explainsMissingDebugNameRiskSeparatelyFromInvokedynamic() throws Exception {
+        Path classFile = compileUserVariablesClassWithoutDebug();
+        Path jarPath = tempDir.resolve("missing-debug-names.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/MissingDebugNames.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("missing-debug-names-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/MissingDebugNames.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, missingDebugNamesSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/MissingDebugNames.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: MEDIUM (missing debug names)"));
+        assertTrue(report.contains("| MEDIUM | `demo/MissingDebugNames` | `add(I)I` | missing debug names |"));
+        assertTrue(report.contains("Methods with invokedynamic: 0"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 1"));
+    }
+
+    @Test
+    void mapsInnerClassBytecodeToOuterSourceFile() throws Exception {
+        Path innerClassFile = compileInnerClass();
+        Path jarPath = tempDir.resolve("inner.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/Outer$Inner.class"));
+            jar.write(Files.readAllBytes(innerClassFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("inner-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/Outer.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, innerSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/Outer$Inner.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("## demo/Outer$Inner"));
+        assertTrue(report.contains("Source coverage: present"));
+        assertTrue(report.contains("Source: " + sourcePath));
+        assertTrue(report.contains("Methods with missing source: 0"));
+    }
+
+    @Test
+    void treatsSignatureOnlyMethodsAsLowRiskWhenSourceExists() throws Exception {
+        Path interfaceClassFile = compileNoBodyInterface();
+        Path jarPath = tempDir.resolve("interface.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/NoBody.class"));
+            jar.write(Files.readAllBytes(interfaceClassFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("interface-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/NoBody.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, noBodyInterfaceSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/NoBody.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (no bytecode body; signature-only method)"));
+        assertTrue(report.contains("No Code attribute; abstract/native/synthetic-only method."));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| HIGH | 0 |"));
+    }
+
+    @Test
+    void doesNotTreatNoDebugNoUserVariableMethodsAsMissingNameRisk() throws Exception {
+        Path classFile = compileNoUserVariablesClassWithoutDebug();
+        Path jarPath = tempDir.resolve("no-user-vars.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/NoUserVariables.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("no-user-vars-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/NoUserVariables.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, noUserVariablesSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/NoUserVariables.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; bytecode has no user parameters or local stores."));
+    }
+
+    @Test
+    void doesNotTreatSynchronizedMonitorTempSlotsAsMissingNameRisk() throws Exception {
+        Path classFile = compileStaticSynchronizedSingletonWithoutDebug();
+        Path jarPath = tempDir.resolve("synchronized-singleton.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/SynchronizedSingleton.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("synchronized-singleton-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/SynchronizedSingleton.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, synchronizedSingletonSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/SynchronizedSingleton.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; local stores are compiler-generated monitor temporaries."));
+    }
+
+    @Test
+    void treatsSyntheticSwitchMapSupportClassAsLowRisk() throws Exception {
+        Path classFile = compileSyntheticSwitchMapClassWithoutDebug();
+        Path jarPath = tempDir.resolve("switch-map.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/Outer$1.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("switch-map-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/Outer.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, outerSwitchSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/Outer$1.class");
+        DecompileFinding finding = new DecompileFinding("demo/Outer$1.class", null, null);
+        finding.setSelectedEngine("synthetic-switch-map");
+        finding.setEngineSummary("synthetic enum switch map retained as bytecode support for outer source");
+        analysis.getDecompileFindings().add(finding);
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Selected engine: synthetic-switch-map"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated synthetic switch-map support class)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("synthetic switch-map support classes, bridge methods, enum support methods, "
+                + "lambda deserialization support methods, outer-this constructors, and monitor temporaries."));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated synthetic switch-map support class."));
+    }
+
+    @Test
+    void treatsCompilerGeneratedBridgeMethodsAsLowRisk() throws Exception {
+        Path classFile = compileBridgeMethodClassWithoutDebug();
+        byte[] bridgeClass = withBridgeSyntheticMethodFlags(Files.readAllBytes(classFile), "bridge");
+        Path jarPath = tempDir.resolve("bridge-method.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/BridgeMethodSample.class"));
+            jar.write(bridgeClass);
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("bridge-method-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/BridgeMethodSample.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, bridgeMethodSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/BridgeMethodSample.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated bridge method)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated bridge method."));
+    }
+
+    @Test
+    void detectsSyntheticSwitchMapSupportClassWithoutSelectedEngineHint() throws Exception {
+        Path classFile = compileSyntheticSwitchMapClassWithoutDebug();
+        Path jarPath = tempDir.resolve("switch-map-no-hint.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/Outer$1.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("switch-map-no-hint-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/Outer.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, outerSwitchSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/Outer$1.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated synthetic switch-map support class)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated synthetic switch-map support class."));
+    }
+
+    @Test
+    void treatsImplicitEnumConstructorsAsLowRisk() throws Exception {
+        Path classFile = compileEnumClassWithoutDebug();
+        Path jarPath = tempDir.resolve("enum-constructor.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/EnumOwner$EmptyTask.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("enum-constructor-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/EnumOwner.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, enumOwnerSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/EnumOwner$EmptyTask.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated enum constructor)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated enum constructor."));
+    }
+
+    @Test
+    void treatsOuterThisOnlyInnerClassConstructorsAsLowRisk() throws Exception {
+        Path classFile = compileOuterThisInnerClassWithoutDebug();
+        Path jarPath = tempDir.resolve("outer-this-inner.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/OuterThisOnly$Inner.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("outer-this-inner-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/OuterThisOnly.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, outerThisOnlySource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/OuterThisOnly$Inner.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: LOW (compiler-generated outer-this constructor)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 0"));
+        assertTrue(report.contains("| MEDIUM | 0 |"));
+        assertTrue(report.contains("Variable names: not required; compiler-generated outer-this constructor."));
+    }
+
+    @Test
+    void keepsInnerClassConstructorsWithUserFieldWritesAsMissingDebugRisk() throws Exception {
+        Path classFile = compileOuterThisInnerClassWithUserFieldWriteWithoutDebug();
+        Path jarPath = tempDir.resolve("outer-this-inner-user-work.jar");
+        try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(jarPath))) {
+            jar.putNextEntry(new JarEntry("demo/OuterThisWithWork$Inner.class"));
+            jar.write(Files.readAllBytes(classFile));
+            jar.closeEntry();
+        }
+
+        Path outputDir = tempDir.resolve("outer-this-inner-user-work-out");
+        Path sourcePath = outputDir.resolve("src/main/java/demo/OuterThisWithWork.java");
+        Files.createDirectories(sourcePath.getParent());
+        Files.write(sourcePath, outerThisWithWorkSource().getBytes(StandardCharsets.UTF_8));
+
+        JarAnalysisResult analysis = new JarAnalysisResult();
+        analysis.getClassFiles().add("demo/OuterThisWithWork$Inner.class");
+
+        try (JarFile jarFile = new JarFile(jarPath.toFile())) {
+            new DecompileParityReporter().writeReport(jarFile, analysis, outputDir.toFile());
+        }
+
+        String report = Files.readString(outputDir.resolve("decompile-parity-report.md"));
+        assertTrue(report.contains("Risk level: MEDIUM (missing debug names)"));
+        assertTrue(report.contains("Methods without LocalVariableTable names: 1"));
+        assertTrue(report.contains("| MEDIUM | 1 |"));
+        assertFalse(report.contains("compiler-generated outer-this constructor"));
+    }
+
+    private Path compileReflectiveFlowClass() throws Exception {
+        Path sourceDir = tempDir.resolve("compile-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("ReflectiveFlow.java");
+        Files.write(sourceFile, reflectiveFlowSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("compile-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/ReflectiveFlow.class");
+    }
+
+    private String reflectiveFlowSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class ReflectiveFlow {\n" +
+                "    public String run(String input) throws Exception {\n" +
+                "        String message = input == null ? \"missing\" : input.trim();\n" +
+                "        if (message.length() > 2) {\n" +
+                "            Class<?> type = Class.forName(\"java.lang.String\");\n" +
+                "            return type.getName() + \":\" + message;\n" +
+                "        }\n" +
+                "        return message;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private CompiledClass compileAdvancedParityClass() throws Exception {
+        Path sourceDir = tempDir.resolve("advanced-src/demo");
+        Files.createDirectories(sourceDir);
+        Path annotationSource = sourceDir.resolve("AuditMarker.java");
+        Files.write(annotationSource, ("package demo;\n" +
+                "import java.lang.annotation.Retention;\n" +
+                "import java.lang.annotation.RetentionPolicy;\n" +
+                "@Retention(RetentionPolicy.RUNTIME)\n" +
+                "public @interface AuditMarker {}\n").getBytes(StandardCharsets.UTF_8));
+        Path sourceFile = sourceDir.resolve("AdvancedParity.java");
+        Files.write(sourceFile, advancedParitySource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("advanced-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                annotationSource.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return new CompiledClass(classesDir.resolve("demo/AdvancedParity.class"),
+                classesDir.resolve("demo/AuditMarker.class"));
+    }
+
+    private Path compileStringConcatClass() throws Exception {
+        Path sourceDir = tempDir.resolve("string-concat-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("StringConcatOnly.java");
+        Files.write(sourceFile, stringConcatSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("string-concat-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "--release", "17",
+                "-g",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/StringConcatOnly.class");
+    }
+
+    private Path compileReflectionTextStringConcatClass() throws Exception {
+        Path sourceDir = tempDir.resolve("reflection-text-string-concat-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("ReflectionTextStringConcat.java");
+        Files.write(sourceFile, reflectionTextStringConcatSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("reflection-text-string-concat-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "--release", "17",
+                "-g",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/ReflectionTextStringConcat.class");
+    }
+
+    private Path compileMixedInvokedynamicClass() throws Exception {
+        Path sourceDir = tempDir.resolve("mixed-invokedynamic-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("MixedInvokedynamic.java");
+        Files.write(sourceFile, mixedInvokedynamicSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("mixed-invokedynamic-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "--release", "17",
+                "-g",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/MixedInvokedynamic.class");
+    }
+
+    private Path compileSerializableLambdaClass() throws Exception {
+        Path sourceDir = tempDir.resolve("serializable-lambda-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("SerializableLambdaOwner.java");
+        Files.write(sourceFile, serializableLambdaSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("serializable-lambda-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/SerializableLambdaOwner.class");
+    }
+
+    private Path compileNonReflectiveGetMethodClass() throws Exception {
+        Path sourceDir = tempDir.resolve("non-reflective-get-method-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("NonReflectiveGetMethod.java");
+        Files.write(sourceFile, nonReflectiveGetMethodSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("non-reflective-get-method-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/NonReflectiveGetMethod.class");
+    }
+
+    private Path compileNonReflectiveFieldGetterClass() throws Exception {
+        Path sourceDir = tempDir.resolve("non-reflective-field-getter-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("NonReflectiveFieldGetter.java");
+        Files.write(sourceFile, nonReflectiveFieldGetterSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("non-reflective-field-getter-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "--release", "17",
+                "-g",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/NonReflectiveFieldGetter.class");
+    }
+
+    private Path compilePluralReflectionApiClass() throws Exception {
+        Path sourceDir = tempDir.resolve("plural-reflection-api-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("PluralReflectionApi.java");
+        Files.write(sourceFile, pluralReflectionApiSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("plural-reflection-api-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/PluralReflectionApi.class");
+    }
+
+    private Path compileInnerClass() throws Exception {
+        Path sourceDir = tempDir.resolve("inner-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("Outer.java");
+        Files.write(sourceFile, innerSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("inner-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/Outer$Inner.class");
+    }
+
+    private Path compileNoBodyInterface() throws Exception {
+        Path sourceDir = tempDir.resolve("interface-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("NoBody.java");
+        Files.write(sourceFile, noBodyInterfaceSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("interface-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/NoBody.class");
+    }
+
+    private Path compileNoUserVariablesClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("no-user-vars-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("NoUserVariables.java");
+        Files.write(sourceFile, noUserVariablesSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("no-user-vars-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/NoUserVariables.class");
+    }
+
+    private Path compileStaticSynchronizedSingletonWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("synchronized-singleton-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("SynchronizedSingleton.java");
+        Files.write(sourceFile, synchronizedSingletonSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("synchronized-singleton-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/SynchronizedSingleton.class");
+    }
+
+    private Path compileSyntheticSwitchMapClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("switch-map-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("Outer$1.java");
+        Files.write(sourceFile, syntheticSwitchMapSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("switch-map-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/Outer$1.class");
+    }
+
+    private Path compileBridgeMethodClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("bridge-method-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("BridgeMethodSample.java");
+        Files.write(sourceFile, bridgeMethodSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("bridge-method-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/BridgeMethodSample.class");
+    }
+
+    private Path compileEnumClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("enum-constructor-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("EnumOwner.java");
+        Files.write(sourceFile, enumOwnerSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("enum-constructor-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        Path classFile = classesDir.resolve("demo/EnumOwner$EmptyTask.class");
+        assertEquals(0, result);
+        assertTrue(Files.exists(classFile));
+        return classFile;
+    }
+
+    private Path compileOuterThisInnerClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("outer-this-inner-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("OuterThisOnly.java");
+        Files.write(sourceFile, outerThisOnlySource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("outer-this-inner-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        Path classFile = classesDir.resolve("demo/OuterThisOnly$Inner.class");
+        assertEquals(0, result);
+        assertTrue(Files.exists(classFile));
+        return classFile;
+    }
+
+    private Path compileOuterThisInnerClassWithUserFieldWriteWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("outer-this-inner-user-work-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("OuterThisWithWork.java");
+        Files.write(sourceFile, outerThisWithWorkSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("outer-this-inner-user-work-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        Path classFile = classesDir.resolve("demo/OuterThisWithWork$Inner.class");
+        assertEquals(0, result);
+        assertTrue(Files.exists(classFile));
+        return classFile;
+    }
+
+    private Path compileUserVariablesClassWithoutDebug() throws Exception {
+        Path sourceDir = tempDir.resolve("missing-debug-names-src/demo");
+        Files.createDirectories(sourceDir);
+        Path sourceFile = sourceDir.resolve("MissingDebugNames.java");
+        Files.write(sourceFile, missingDebugNamesSource().getBytes(StandardCharsets.UTF_8));
+
+        Path classesDir = tempDir.resolve("missing-debug-names-classes");
+        Files.createDirectories(classesDir);
+        int result = ToolProvider.getSystemJavaCompiler().run(
+                null,
+                null,
+                null,
+                "-g:none",
+                "-source", "8",
+                "-target", "8",
+                "-d", classesDir.toString(),
+                sourceFile.toString());
+        assertEquals(0, result);
+        return classesDir.resolve("demo/MissingDebugNames.class");
+    }
+
+    private String innerSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class Outer {\n" +
+                "    public static class Inner {\n" +
+                "        public String value(String input) {\n" +
+                "            String trimmed = input.trim();\n" +
+                "            return trimmed;\n" +
+                "        }\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String noBodyInterfaceSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public interface NoBody {\n" +
+                "    String map(String input);\n" +
+                "}\n";
+    }
+
+    private String noUserVariablesSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class NoUserVariables {\n" +
+                "    static {\n" +
+                "        System.setProperty(\"demo.noUserVariables\", \"true\");\n" +
+                "    }\n" +
+                "\n" +
+                "    public NoUserVariables() {\n" +
+                "    }\n" +
+                "\n" +
+                "    public static int value() {\n" +
+                "        return 7;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String synchronizedSingletonSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class SynchronizedSingleton {\n" +
+                "    private static volatile SynchronizedSingleton instance;\n" +
+                "\n" +
+                "    private SynchronizedSingleton() {\n" +
+                "    }\n" +
+                "\n" +
+                "    public static SynchronizedSingleton getInstance() {\n" +
+                "        if (instance == null) {\n" +
+                "            synchronized (SynchronizedSingleton.class) {\n" +
+                "                if (instance == null) {\n" +
+                "                    instance = new SynchronizedSingleton();\n" +
+                "                }\n" +
+                "            }\n" +
+                "        }\n" +
+                "        return instance;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String syntheticSwitchMapSource() {
+        return "package demo;\n" +
+                "\n" +
+                "class Outer$1 {\n" +
+                "    static final int[] $SwitchMap$demo$Outer$Kind;\n" +
+                "    static {\n" +
+                "        $SwitchMap$demo$Outer$Kind = new int[Outer.Kind.values().length];\n" +
+                "        try {\n" +
+                "            $SwitchMap$demo$Outer$Kind[Outer.Kind.FIRST.ordinal()] = 1;\n" +
+                "        } catch (NoSuchFieldError ex) {\n" +
+                "        }\n" +
+                "    }\n" +
+                "}\n" +
+                "\n" +
+                "class Outer {\n" +
+                "    enum Kind { FIRST }\n" +
+                "}\n";
+    }
+
+    private String outerSwitchSource() {
+        return "package demo;\n" +
+                "\n" +
+                "class Outer {\n" +
+                "    enum Kind { FIRST }\n" +
+                "}\n";
+    }
+
+    private String bridgeMethodSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class BridgeMethodSample {\n" +
+                "    public void bridge(Object value) {\n" +
+                "        System.setProperty(\"demo.bridge\", String.valueOf(value));\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String enumOwnerSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class EnumOwner {\n" +
+                "    enum EmptyTask { FIRST, SECOND }\n" +
+                "}\n";
+    }
+
+    private String outerThisOnlySource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class OuterThisOnly {\n" +
+                "    class Inner {\n" +
+                "        Inner() {\n" +
+                "        }\n" +
+                "\n" +
+                "        int value() {\n" +
+                "            return 7;\n" +
+                "        }\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String outerThisWithWorkSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class OuterThisWithWork {\n" +
+                "    class Inner {\n" +
+                "        private int value;\n" +
+                "\n" +
+                "        Inner() {\n" +
+                "            value = 7;\n" +
+                "        }\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String missingDebugNamesSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class MissingDebugNames {\n" +
+                "    public int add(int input) {\n" +
+                "        int doubled = input * 2;\n" +
+                "        return doubled + 1;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String advancedParitySource() {
+        return "package demo;\n" +
+                "\n" +
+                "import java.io.IOException;\n" +
+                "import java.util.concurrent.Callable;\n" +
+                "\n" +
+                "@AuditMarker\n" +
+                "public class AdvancedParity<T extends Number> {\n" +
+                "    private String state;\n" +
+                "\n" +
+                "    @AuditMarker\n" +
+                "    public String run(T input) throws IOException {\n" +
+                "        Callable<String> callable = () -> String.valueOf(input);\n" +
+                "        try {\n" +
+                "            this.state = callable.call();\n" +
+                "            return this.state;\n" +
+                "        } catch (Exception ex) {\n" +
+                "            throw new IOException(ex);\n" +
+                "        } finally {\n" +
+                "            this.state = String.valueOf(this.state);\n" +
+                "        }\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String stringConcatSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class StringConcatOnly {\n" +
+                "    public String message(String input, int count) {\n" +
+                "        return \"user=\" + input + \", count=\" + count;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String reflectionTextStringConcatSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class ReflectionTextStringConcat {\n" +
+                "    public String message(String input) {\n" +
+                "        return \"literal, java/lang/Class.getMethod(\" + input;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String mixedInvokedynamicSource() {
+        return "package demo;\n" +
+                "\n" +
+                "import java.util.function.Function;\n" +
+                "\n" +
+                "public class MixedInvokedynamic {\n" +
+                "    public String format(String input) {\n" +
+                "        Function<String, String> normalizer = value -> value.trim();\n" +
+                "        Function<String, String> lowercase = value -> value.toLowerCase();\n" +
+                "        return \"user=\" + normalizer.apply(input) + \", lower=\" + lowercase.apply(input);\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String serializableLambdaSource() {
+        return "package demo;\n" +
+                "\n" +
+                "import java.io.Serializable;\n" +
+                "\n" +
+                "public class SerializableLambdaOwner {\n" +
+                "    @FunctionalInterface\n" +
+                "    interface Task extends Serializable {\n" +
+                "        String run(String value);\n" +
+                "    }\n" +
+                "\n" +
+                "    public Task task() {\n" +
+                "        return value -> value.trim();\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String nonReflectiveGetMethodSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class NonReflectiveGetMethod {\n" +
+                "    interface Request {\n" +
+                "        String getMethod();\n" +
+                "    }\n" +
+                "\n" +
+                "    public String read(Request request) {\n" +
+                "        return request.getMethod();\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String nonReflectiveFieldGetterSource() {
+        return "package demo;\n" +
+                "\n" +
+                "import java.lang.reflect.Field;\n" +
+                "import java.util.function.Function;\n" +
+                "\n" +
+                "public class NonReflectiveFieldGetter {\n" +
+                "    static class FieldData {\n" +
+                "        Field getField() {\n" +
+                "            return null;\n" +
+                "        }\n" +
+                "    }\n" +
+                "\n" +
+                "    public Function<FieldData, Field> accessor() {\n" +
+                "        return FieldData::getField;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private String pluralReflectionApiSource() {
+        return "package demo;\n" +
+                "\n" +
+                "public class PluralReflectionApi {\n" +
+                "    public int countFields(Class<?> type) {\n" +
+                "        return type.getDeclaredFields().length;\n" +
+                "    }\n" +
+                "}\n";
+    }
+
+    private byte[] withBridgeSyntheticMethodFlags(byte[] classBytes, String methodName) {
+        byte[] patched = classBytes.clone();
+        String[] constantPool = new String[ClassFileUtils.readU2(classBytes, 8)];
+        int offset = 10;
+        for (int i = 1; i < constantPool.length; i++) {
+            int tag = ClassFileUtils.readU1(classBytes, offset);
+            switch (tag) {
+                case 1:
+                    int length = ClassFileUtils.readU2(classBytes, offset + 1);
+                    constantPool[i] = new String(classBytes, offset + 3, length, StandardCharsets.UTF_8);
+                    offset += 3 + length;
+                    break;
+                case 3:
+                case 4:
+                case 9:
+                case 10:
+                case 11:
+                case 12:
+                case 17:
+                case 18:
+                    offset += 5;
+                    break;
+                case 5:
+                case 6:
+                    offset += 9;
+                    i++;
+                    break;
+                case 7:
+                case 8:
+                case 16:
+                case 19:
+                case 20:
+                    offset += 3;
+                    break;
+                case 15:
+                    offset += 4;
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported constant-pool tag: " + tag);
+            }
+        }
+
+        offset += 6;
+        int interfaces = ClassFileUtils.readU2(classBytes, offset);
+        offset += 2 + interfaces * 2;
+        offset = skipMembers(classBytes, offset);
+
+        int methods = ClassFileUtils.readU2(classBytes, offset);
+        offset += 2;
+        for (int i = 0; i < methods; i++) {
+            int accessOffset = offset;
+            int accessFlags = ClassFileUtils.readU2(classBytes, offset);
+            String name = constantPool[ClassFileUtils.readU2(classBytes, offset + 2)];
+            offset += 6;
+            if (methodName.equals(name)) {
+                writeU2(patched, accessOffset, accessFlags | 0x0040 | 0x1000);
+            }
+            int attributes = ClassFileUtils.readU2(classBytes, offset);
+            offset += 2;
+            for (int j = 0; j < attributes; j++) {
+                offset += 2;
+                offset += 4 + ClassFileUtils.readU4(classBytes, offset);
+            }
+        }
+        return patched;
+    }
+
+    private int skipMembers(byte[] classBytes, int offset) {
+        int members = ClassFileUtils.readU2(classBytes, offset);
+        offset += 2;
+        for (int i = 0; i < members; i++) {
+            offset += 6;
+            int attributes = ClassFileUtils.readU2(classBytes, offset);
+            offset += 2;
+            for (int j = 0; j < attributes; j++) {
+                offset += 2;
+                offset += 4 + ClassFileUtils.readU4(classBytes, offset);
+            }
+        }
+        return offset;
+    }
+
+    private void writeU2(byte[] bytes, int offset, int value) {
+        bytes[offset] = (byte)((value >>> 8) & 0xFF);
+        bytes[offset + 1] = (byte)(value & 0xFF);
+    }
+
+    private static class CompiledClass {
+        private final Path classFile;
+        private final Path annotationClassFile;
+
+        private CompiledClass(Path classFile, Path annotationClassFile) {
+            this.classFile = classFile;
+            this.annotationClassFile = annotationClassFile;
+        }
+    }
+}

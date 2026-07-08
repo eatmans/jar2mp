@@ -5,8 +5,11 @@ import com.z0fsec.jar2mp.model.*;
 import com.z0fsec.jar2mp.util.ClassFileUtils;
 
 import java.io.*;
+import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
@@ -15,10 +18,21 @@ public class JarAnalyzer {
 
     private final ManifestParser manifestParser = new ManifestParser();
     private final MavenMetadataExtractor metadataExtractor = new MavenMetadataExtractor();
+    private final FrameworkDetector frameworkDetector = new FrameworkDetector();
+    private final ResourceClassifier resourceClassifier = new ResourceClassifier();
+    private final StartupDetector startupDetector = new StartupDetector();
     private final DependencyDetector dependencyDetector;
+    private final PackagePrefixDatabase packageDb;
+    private final ProjectConfig config;
 
     public JarAnalyzer(PackagePrefixDatabase packageDb) {
+        this(packageDb, null);
+    }
+
+    public JarAnalyzer(PackagePrefixDatabase packageDb, ProjectConfig config) {
+        this.packageDb = packageDb;
         this.dependencyDetector = new DependencyDetector(packageDb);
+        this.config = config;
     }
 
     public interface ProgressCallback {
@@ -35,6 +49,9 @@ public class JarAnalyzer {
         try (JarFile jf = new JarFile(jarFile)) {
             int totalEntries = 0;
             long totalSize = 0;
+            boolean hasBootApplicationClasses = false;
+            boolean hasWebApplicationClasses = false;
+            java.util.List<String> rawClassEntries = new java.util.ArrayList<>();
             Enumeration<JarEntry> entries = jf.entries();
 
             // Phase 1: Categorize entries
@@ -48,10 +65,11 @@ public class JarAnalyzer {
                 String name = entry.getName();
 
                 if (name.endsWith(".class")) {
-                    String strippedName = stripClassPathPrefix(name);
-                    result.getClassFiles().add(strippedName);
-                    if (!strippedName.equals(name)) {
-                        result.getClassPathMapping().put(strippedName, name);
+                    rawClassEntries.add(name);
+                    if (name.startsWith("BOOT-INF/classes/")) {
+                        hasBootApplicationClasses = true;
+                    } else if (name.startsWith("WEB-INF/classes/")) {
+                        hasWebApplicationClasses = true;
                     }
                 } else if (name.startsWith("META-INF/")) {
                     result.getMetaInfFiles().add(name);
@@ -73,19 +91,35 @@ public class JarAnalyzer {
             // Phase 3: Extract embedded Maven metadata
             if (callback != null) callback.onProgress("Extracting Maven metadata...", 50);
 
-            PomInfo pomInfo = metadataExtractor.extract(jf);
+            List<String> pomClassNames = new ArrayList<>();
+            List<String> metadataWarnings = new ArrayList<>();
+            List<PomInfo> embeddedPomInfos = metadataExtractor.extractAll(jf, pomClassNames, metadataWarnings);
+            result.getEmbeddedPomInfos().addAll(embeddedPomInfos);
+            result.getMetadataWarnings().addAll(metadataWarnings);
+            PomInfo pomInfo = metadataExtractor.selectPrimary(embeddedPomInfos, pomClassNames, jf.getName());
             result.setEmbeddedPomInfo(pomInfo);
 
-            // Phase 4: Detect dependencies
-            if (callback != null) callback.onProgress("Detecting dependencies...", 70);
+            determineCoordinates(result, jarFile);
+            populateClassFiles(result, rawClassEntries, hasBootApplicationClasses,
+                    hasWebApplicationClasses, manifestInfo, pomInfo, embeddedPomInfos);
+            populateBytecodeFingerprints(result, jf);
 
-            List<MavenDependency> deps = dependencyDetector.detect(jf, manifestInfo, pomInfo);
-            result.getDetectedDependencies().addAll(deps);
+            // Phase 4: Detect dependencies
+            if (shouldDetectDependencies()) {
+                if (callback != null) callback.onProgress("Detecting dependencies...", 70);
+                List<MavenDependency> deps = dependencyDetector.detect(jf, manifestInfo, pomInfo,
+                        embeddedPomInfos, result.getClassFiles(), result.getClassPathMapping());
+                result.getDetectedDependencies().addAll(deps);
+            } else if (callback != null) {
+                callback.onProgress("Skipping dependency detection...", 70);
+            }
+
+            result.getFrameworkFindings().addAll(frameworkDetector.detect(result));
+            result.getResourceFindings().addAll(resourceClassifier.classify(result));
+            result.getStartupFindings().addAll(startupDetector.detect(result));
 
             // Phase 5: Determine project coordinates
             if (callback != null) callback.onProgress("Determining project coordinates...", 85);
-
-            determineCoordinates(result, jarFile);
 
             // Phase 6: Detect Java version
             if (callback != null) callback.onProgress("Detecting Java version...", 95);
@@ -96,6 +130,167 @@ public class JarAnalyzer {
         }
 
         return result;
+    }
+
+    private void populateClassFiles(JarAnalysisResult result,
+                                    List<String> rawClassEntries,
+                                    boolean hasBootApplicationClasses,
+                                    boolean hasWebApplicationClasses,
+                                    ManifestInfo manifestInfo,
+                                    PomInfo primaryPom,
+                                    List<PomInfo> embeddedPomInfos) {
+        Set<String> applicationPrefixes = applicationPrefixes(result, manifestInfo, primaryPom);
+        Set<String> dependencyPrefixes = dependencyPrefixes(primaryPom, embeddedPomInfos);
+        boolean filterEmbeddedDependencies = !hasBootApplicationClasses
+                && !hasWebApplicationClasses
+                && !applicationPrefixes.isEmpty()
+                && !dependencyPrefixes.isEmpty();
+        for (String rawClassEntry : rawClassEntries) {
+            if ((hasBootApplicationClasses || hasWebApplicationClasses) && isSpringBootLoaderClass(rawClassEntry)) {
+                continue;
+            }
+            String strippedName = stripClassPathPrefix(rawClassEntry);
+            String normalizedName = normalizeVersionedClassPath(strippedName);
+            if (filterEmbeddedDependencies) {
+                addDatabaseDependencyPrefix(dependencyPrefixes, normalizedName, applicationPrefixes);
+                result.getEmbeddedDependencyPrefixes().addAll(dependencyPrefixes);
+            }
+            if (filterEmbeddedDependencies
+                    && startsWithAny(normalizedName, dependencyPrefixes)
+                    && !startsWithAny(normalizedName, applicationPrefixes)) {
+                result.getSkippedDependencyClassFiles().add(strippedName);
+                result.getSkippedDependencyClassReasons().put(strippedName,
+                        "Embedded dependency class inferred from Maven metadata.");
+                continue;
+            }
+            result.getClassFiles().add(strippedName);
+            if (!strippedName.equals(rawClassEntry)) {
+                result.getClassPathMapping().put(strippedName, rawClassEntry);
+            }
+        }
+    }
+
+    private Set<String> applicationPrefixes(JarAnalysisResult result, ManifestInfo manifestInfo, PomInfo primaryPom) {
+        Set<String> prefixes = new LinkedHashSet<>();
+        addGroupPrefix(prefixes, primaryPom == null ? null : primaryPom.getGroupId());
+        addGroupPrefix(prefixes, result.getDetectedGroupId());
+        if (manifestInfo != null) {
+            addClassPackagePrefix(prefixes, manifestInfo.getMainClass());
+            addClassPackagePrefix(prefixes, manifestInfo.getAllEntries().get("Start-Class"));
+        }
+        return prefixes;
+    }
+
+    private Set<String> dependencyPrefixes(PomInfo primaryPom, List<PomInfo> embeddedPomInfos) {
+        Set<String> prefixes = new LinkedHashSet<>();
+        if (embeddedPomInfos == null || embeddedPomInfos.size() < 2) {
+            return prefixes;
+        }
+        for (PomInfo info : embeddedPomInfos) {
+            if (info == null || !info.hasCoordinates() || sameCoordinates(info, primaryPom)) {
+                continue;
+            }
+            addGroupPrefix(prefixes, info.getGroupId());
+        }
+        return prefixes;
+    }
+
+    private void addGroupPrefix(Set<String> prefixes, String groupId) {
+        if (!isKnownCoordinateValue(groupId) || "com.unknown".equals(groupId)) {
+            return;
+        }
+        prefixes.add(groupId.replace('.', '/') + "/");
+    }
+
+    private void addClassPackagePrefix(Set<String> prefixes, String className) {
+        if (className == null || !className.contains(".")) {
+            return;
+        }
+        int lastDot = className.lastIndexOf('.');
+        String packageName = className.substring(0, lastDot);
+        if (isKnownCoordinateValue(packageName)) {
+            prefixes.add(packageName.replace('.', '/') + "/");
+        }
+    }
+
+    private boolean sameCoordinates(PomInfo left, PomInfo right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        return equals(left.getGroupId(), right.getGroupId())
+                && equals(left.getArtifactId(), right.getArtifactId());
+    }
+
+    private boolean startsWithAny(String value, Set<String> prefixes) {
+        if (value == null) {
+            return false;
+        }
+        for (String prefix : prefixes) {
+            if (value.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void addDatabaseDependencyPrefix(Set<String> dependencyPrefixes,
+                                             String normalizedClassPath,
+                                             Set<String> applicationPrefixes) {
+        if (packageDb == null || normalizedClassPath == null || !normalizedClassPath.endsWith(".class")) {
+            return;
+        }
+        String packageName = packageName(normalizedClassPath);
+        if (packageName == null) {
+            return;
+        }
+        MavenCoordinates coordinates = packageDb.lookup(packageName);
+        if (coordinates == null || !hasCoordinatePrefix(dependencyPrefixes, coordinates.getGroupId())) {
+            return;
+        }
+        String matchedPrefix = packageDb.lookupPrefix(packageName);
+        if (!isKnownCoordinateValue(matchedPrefix)) {
+            return;
+        }
+        String classPrefix = matchedPrefix.replace('.', '/') + "/";
+        if (!startsWithAny(classPrefix, applicationPrefixes)) {
+            dependencyPrefixes.add(classPrefix);
+        }
+    }
+
+    private String packageName(String classPath) {
+        int slash = classPath.lastIndexOf('/');
+        if (slash <= 0) {
+            return null;
+        }
+        return classPath.substring(0, slash).replace('/', '.');
+    }
+
+    private boolean hasCoordinatePrefix(Set<String> prefixes, String groupId) {
+        if (!isKnownCoordinateValue(groupId)) {
+            return false;
+        }
+        return prefixes.contains(groupId.replace('.', '/') + "/");
+    }
+
+    private String normalizeVersionedClassPath(String classPath) {
+        String prefix = "META-INF/versions/";
+        if (classPath == null || !classPath.startsWith(prefix)) {
+            return classPath;
+        }
+        int start = prefix.length();
+        int slash = classPath.indexOf('/', start);
+        if (slash < 0) {
+            return classPath;
+        }
+        return classPath.substring(slash + 1);
+    }
+
+    private boolean isKnownCoordinateValue(String value) {
+        return value != null && !value.trim().isEmpty() && !"unknown".equalsIgnoreCase(value.trim());
+    }
+
+    private boolean equals(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     private void determineCoordinates(JarAnalysisResult result, File jarFile) {
@@ -189,5 +384,45 @@ public class JarAnalyzer {
             return entryName.substring("WEB-INF/classes/".length());
         }
         return entryName;
+    }
+
+    private static boolean isSpringBootLoaderClass(String entryName) {
+        return entryName != null && entryName.startsWith("org/springframework/boot/loader/");
+    }
+
+    private void populateBytecodeFingerprints(JarAnalysisResult result, JarFile jf) {
+        for (String classPath : result.getClassFiles()) {
+            String rawEntryPath = result.getClassPathMapping().get(classPath);
+            if (rawEntryPath == null) {
+                rawEntryPath = classPath;
+            }
+            JarEntry entry = jf.getJarEntry(rawEntryPath);
+            if (entry == null) {
+                continue;
+            }
+            try {
+                byte[] bytes = readClassBytes(jf, entry);
+                BytecodeFingerprint fingerprint = BytecodeFingerprint.fromClassFile(bytes);
+                result.getClassBytecodeFingerprints().put(classPath, fingerprint);
+            } catch (Exception ignored) {
+                // Best-effort; skip classes that cannot be fingerprinted
+            }
+        }
+    }
+
+    private static byte[] readClassBytes(JarFile jf, JarEntry entry) throws IOException {
+        try (java.io.InputStream in = jf.getInputStream(entry);
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n);
+            }
+            return out.toByteArray();
+        }
+    }
+
+    private boolean shouldDetectDependencies() {
+        return config == null || config.isDetectDependencies();
     }
 }
