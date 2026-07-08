@@ -7,7 +7,7 @@ JAR to Maven Project Converter - 将 JAR/WAR 文件自动还原为标准 Maven �
 - **批量处理**: 同时选择多个 JAR/WAR 文件或整个目录进行批量分析和构建
 - **双模式运行**: 支持 GUI 图形界面 和 CLI 命令行两种使用方式
 - **自动依赖检测**: 4 层检测策略（嵌入 POM > MANIFEST.MF > 字节码扫描 > 文件名启发式）
-- **自动反编译**: 集成 CFR、JD-Core、JADX、Fernflower 多引擎仲裁，将 .class 文件还原为 .java 源码
+- **自动反编译**: 集成 CFR、JD-Core、JADX、Fernflower 多引擎仲裁，将 .class 文件还原为 .java 源码；编译失败的回退类额外启用 Vineflower 兜底，择优写入 `decompiled-readable/`
 - **智能坐标识别**: 自动提取 groupId / artifactId / version
 - **80+ 常见库映射**: 内置 Google、Apache Commons、Spring、Jackson、Alibaba 等常见库的包名→Maven 坐标映射
 - **WAR 文件支持**: 自动识别 WAR 包并处理 WEB-INF 结构
@@ -180,13 +180,13 @@ Options:
 
 汇总报告写入 `target/regression-samples/report/regression-summary.md` 和 `target/regression-samples/report/regression-summary.csv`。样本矩阵、阈值和 PASS/FAIL 规则见 `docs/regression-samples.md`。
 
-如需聚焦验证严格字节级 package 路径，可以运行独立 CLI 回归脚本。它会生成一个干净的 plain Maven JAR，调用真实 fat CLI 的 `--byte-exact-package --verify-build --verify-goal package`，并要求 `target/byte-exact-package-check/artifact-fidelity-summary.csv` 的 `exact_match=true`、`archive_bytes_same=true`，且最终 package 产物 SHA-256 与原始 JAR 完全一致；任一门禁失败都会非零退出：
+如需聚焦验证严格字节级 package 路径，可以运行独立 CLI 回归脚本。它会生成两个本地 Maven JAR，分别覆盖字节一致（`plain-maven-jar`，默认 `-g` 编译）和字节差异（`lambda-switch-jar`，`-g:none` 编译，含 capturing lambda、方法引用和 string switch，重编译 class 字节与原始不同，验证 `BytecodeBackfiller` 和 `ZipRecordOrderRestorer` 路径），调用真实 fat CLI 的 `--byte-exact-package --verify-build --verify-goal package`，并要求每个样本的 `target/byte-exact-package-check/artifact-fidelity-summary.csv` 的 `exact_match=true`、`archive_bytes_same=true`，且最终 package 产物 SHA-256 与原始 JAR 完全一致；任一门禁失败都会非零退出：
 
 ```bash
 ./scripts/regression/run-byte-exact-regression.sh
 ```
 
-输出写入 `target/byte-exact-regression/`，其中 CLI 日志位于 `target/byte-exact-regression/report/plain-maven-jar.cli.log`。
+输出写入 `target/byte-exact-regression/`，CLI 日志位于 `target/byte-exact-regression/report/plain-maven-jar.cli.log` 和 `target/byte-exact-regression/report/lambda-switch-jar.cli.log`。
 
 也可以运行真实 GitHub 项目回归集，脚本会下载固定 ref 的 Spring Boot、Spring Security、MyBatis WAR、Shiro 样本，构建原始产物后再用 jar2mp 做 verify-only 还原验证：
 
@@ -277,7 +277,7 @@ Options:
 
 - **Java 8** - 目标兼容版本
 - **FlatLaf** - GUI 主题框架
-- **CFR / JD-Core / JADX / Fernflower** - 交叉反编译与质量仲裁
+- **CFR / JD-Core / JADX / Fernflower / Vineflower** - 交叉反编译与质量仲裁；Vineflower 作为编译兜底引擎
 - **Gson** - JSON 处理
 - **Maven Assembly Plugin** - 打包为可执行 fat JAR
 
